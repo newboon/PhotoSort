@@ -8,7 +8,7 @@
 
 That's why I built PhotoSort. As a dad who loves taking pictures (often in RAW+JPG!), I needed a faster way to sift through shots, pick the keepers, and maybe find the *really* good ones for editing later. Lightroom felt too heavy for just the initial sorting, and I couldn't find a lightweight tool that handled JPG+RAW pairs easily.
 
-So, {as a near-total coding beginner, I somehow managed to build this app!} It's simple, does one job well, and now I'm sharing it, hoping it helps someone else too.
+So, as a near-total coding beginner, I somehow managed to build this app with AI! It's simple, does one job well, and now I'm sharing it, hoping it helps someone else too.
 
 PhotoSort helps you quickly categorize photos into folders (I use "Keep," "Maybe," "Delete Later," hence the 3 slots). It's designed to show your photos as large as possible while keeping the interface clean.
 
