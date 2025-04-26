@@ -5178,6 +5178,10 @@ class PhotoSortApp(QMainWindow):
         self.raw_folder = folder_path
         self.raw_files = temp_raw_files
         self.raw_folder_path_label.setText(folder_path)
+
+        # --- RAW 파일 매칭 시 자동으로 이동 체크박스 ON 설정 ---
+        self.move_raw_files = True
+        
         # --- RAW 폴더 레이블 스타일 및 X 버튼/토글 상태 업데이트 추가 ---
         self.update_raw_folder_ui_state() # 성공 시 X 버튼, 레이블 스타일, 토글 업데이트
         self.update_match_raw_button_state()
@@ -5739,6 +5743,10 @@ class PhotoSortApp(QMainWindow):
             else:
                 self.current_image_index = -1
                 self.display_current_image() # 빈 화면 표시
+                # 미니맵 숨기기 추가
+                if self.minimap_visible:
+                    self.minimap_widget.hide()
+                    self.minimap_visible = False
                 self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("완료"), LanguageManager.translate("모든 이미지가 분류되었습니다."))
 
         except Exception as e:
@@ -6995,6 +7003,10 @@ class PhotoSortApp(QMainWindow):
                 self.grid_mode = "Off"
                 self.grid_off_radio.setChecked(True)
                 self.update_grid_view()
+                # 미니맵 숨기기 추가
+                if self.minimap_visible:
+                    self.minimap_widget.hide()
+                    self.minimap_visible = False
                 self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("완료"), LanguageManager.translate("모든 이미지가 분류되었습니다."))
 
             self.update_counters()
@@ -7465,6 +7477,11 @@ class PhotoSortApp(QMainWindow):
             # 방향 정보 초기화
             self.previous_image_orientation = None
             self.current_image_orientation = None
+
+            # 미니맵 숨기기 추가
+            if self.minimap_visible:
+                self.minimap_widget.hide()
+                self.minimap_visible = False
             return
                 
         try:
