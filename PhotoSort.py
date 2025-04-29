@@ -17,7 +17,10 @@ import logging.handlers
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import Process, Queue, cpu_count, freeze_support
+
+
 from pathlib import Path
+import platform
 
 # Third-party imports
 import numpy as np
@@ -25,6 +28,8 @@ import piexif
 import psutil
 import rawpy
 from PIL import Image, ImageQt
+
+
 
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
@@ -37,7 +42,30 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                               QMainWindow, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
-                              QVBoxLayout, QWidget)
+                              QVBoxLayout, QWidget, QToolTip)
+# QRLinkLabel 클래스 정의 (툴팁을 위한 예시)
+class QRLinkLabel(QLabel):
+    def __init__(self, text, qr_path=None, size=100, parent=None):
+        super().__init__(text, parent)
+        # Store QR path and size for tooltip
+        self._qr_path = qr_path
+        self._qr_size = size
+
+    def enterEvent(self, event):
+        """Mac용: 마우스 오버 시 이미지 툴팁 표시"""
+        if platform.system() == "Darwin" and self._qr_path:
+            # HTML 툴팁으로 이미지 표시
+            html = f'<img src="{self._qr_path}" width="{self._qr_size}">'
+            QToolTip.showText(event.globalPos(), html)
+        else:
+            super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """툴팁 사라지도록 처리"""
+        if platform.system() == "Darwin":
+            QToolTip.hideText()
+        else:
+            super().leaveEvent(event)
 
 
 
@@ -1553,7 +1581,7 @@ class ImageLoader(QObject):
                             with rawpy.imread(file_path) as raw:
                                 rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
                                 # 디코딩 성공 시 decode 전략 유지
-                                logging.info(f"전략 확인: 디코딩 성공")
+                                logging.warning(f"전략 확인: 디코딩 성공")
                         except Exception as e_decode_check:
                             # 디코딩 실패 시 preview 전략으로 변경
                             logging.warning(f"전략 변경: 디코딩 실패 ({e_decode_check}), preview로 전환")
@@ -1600,7 +1628,7 @@ class ImageLoader(QObject):
                         with rawpy.imread(file_path) as raw:
                             rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
                             # 디코딩 성공 시 decode 전략 유지
-                            logging.info(f"전략 확인: 디코딩 성공")
+                            logging.warning(f"전략 확인: 디코딩 성공")
                     except Exception as e_decode_check:
                         # 디코딩 실패 시 preview 전략으로 변경
                         logging.warning(f"전략 변경: 디코딩 실패 ({e_decode_check}), preview로 전환")
@@ -1884,7 +1912,16 @@ class ImageLoader(QObject):
                         else:
                             # 아직 전략이 결정되지 않은 경우
                             logging.warning(f"전략이 결정되지 않음, 기본 'preview' 사용: ({file_path_obj.name})")
-                            
+                            # 기본 preview 전략으로 설정 후 전역 초기화
+                            self._raw_load_strategy = "preview"
+                            ImageLoader._global_raw_strategy = "preview"
+                            ImageLoader._strategy_initialized = True
+                            try:
+                                parent = self.parent()
+                                if hasattr(parent, 'save_state'):
+                                    parent.save_state()
+                            except Exception as e:
+                                logging.error(f"설정 저장 중 오류: {e}")
                     # 전략에 따른 처리 (이 부분은 기존 코드 유지)
                     preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
                     if preview_pixmap_result and not preview_pixmap_result.isNull():
@@ -2009,41 +2046,52 @@ class ImageLoader(QObject):
             for file_name, _ in to_remove:
                 del self.recently_decoded[file_name]
 
+    # def show_compatibility_message(self):
+    #     """호환성 문제 메시지를 표시 (디코딩 실패 시)"""
+        
+    #     # 메인 스레드에서 실행되는 슬롯 함수로 만들기 
+    #     def show_message_box_on_main_thread():
+    #         msg_box = QMessageBox()
+    #         msg_box.setWindowTitle(LanguageManager.translate("호환성 문제"))
+    #         msg_box.setText(LanguageManager.translate("RAW 디코딩 실패. 미리보기를 대신 사용합니다."))
+    #         msg_box.setIcon(QMessageBox.Warning)
+    #         msg_box.exec_()
+        
+    #     # 올바르게 메인 스레드에서 메시지 박스 표시 함수 호출
+    #     QMetaObject.invokeMethod(
+    #         self, 
+    #         "show_message_box_on_main_thread",  # 실제 호출할 함수명
+    #         Qt.QueuedConnection
+    # )
+
     def show_compatibility_message(self):
         """호환성 문제 메시지를 표시 (디코딩 실패 시)"""
         
-        # 메인 스레드에서 실행되는 슬롯 함수로 만들기 
-        def show_message_box_on_main_thread():
+        def show_message():
             msg_box = QMessageBox()
             msg_box.setWindowTitle(LanguageManager.translate("호환성 문제"))
             msg_box.setText(LanguageManager.translate("RAW 디코딩 실패. 미리보기를 대신 사용합니다."))
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.exec_()
         
-        # 올바르게 메인 스레드에서 메시지 박스 표시 함수 호출
-        QMetaObject.invokeMethod(
-            self, 
-            "show_message_box_on_main_thread",  # 실제 호출할 함수명
-            Qt.QueuedConnection
-    )
+        # QTimer를 사용하면 메타 객체 시스템을 거치지 않고도 메인 스레드에서 실행 가능
+        QTimer.singleShot(0, show_message)
+
         
     def show_preview_failure_message(self):
         """'매우 빠름' 모드에서 미리보기 추출 실패 시 메시지 표시"""
         
-        # 메인 스레드에서 실행되는 슬롯 함수 정의
-        def show_message_box_on_main_thread():
+        def show_message():
             msg_box = QMessageBox()
             msg_box.setWindowTitle(LanguageManager.translate("미리보기 추출 실패"))
             msg_box.setText(LanguageManager.translate("미리보기 이미지 추출 실패. RAW 파일 처리 설정을 바꿔보세요"))
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.exec_()
         
-        # 메인 스레드에서 메시지 박스 표시 함수 호출
-        QMetaObject.invokeMethod(
-            self, 
-            "show_message_box_on_main_thread",  # 실제 호출할 함수명
-            Qt.QueuedConnection
-        )
+        # QTimer를 사용하면 메타 객체 시스템을 거치지 않고도 메인 스레드에서 실행 가능
+        QTimer.singleShot(0, show_message)
+    
+
 
     def preload_page(self, image_files, page_start_index, cells_per_page):
         """특정 페이지의 이미지를 미리 로딩"""
@@ -2779,7 +2827,8 @@ class PhotoSortApp(QMainWindow):
 
         # ExifTool 가용성 확인
         self.exiftool_available = False
-        self.exiftool_path = self.get_bundled_exiftool_path()  # 인스턴스 변수로 저장
+        #self.exiftool_path = self.get_bundled_exiftool_path()  # 인스턴스 변수로 저장 
+        self.exiftool_path = self.get_exiftool_path()  #수정 추가
         try:
             if Path(self.exiftool_path).exists():
                 result = subprocess.run([self.exiftool_path, "-ver"], capture_output=True, text=True, check=False)
@@ -3036,22 +3085,43 @@ class PhotoSortApp(QMainWindow):
         button_layout.setContentsMargins(0, 10, 0, 0)
         
         self.settings_popup.confirm_button = QPushButton(LanguageManager.translate("확인"))
-        self.settings_popup.confirm_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 100px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-            }}
-        """)
+        
+        if platform.system() == "Darwin":
+            self.settings_popup.confirm_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #444444;
+                    color: #D8D8D8;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    min-width: 100px;
+                }
+                QPushButton:hover {
+                    background-color: #555555;
+                }
+                QPushButton:pressed {
+                    background-color: #222222;
+                }
+            """)
+        else:
+            # Windows/Linux 등
+            self.settings_popup.confirm_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    color: {ThemeManager.get_color('text')};
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    min-width: 100px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.get_color('accent_hover')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.get_color('accent_pressed')};
+                }}
+            """)
+
         self.settings_popup.confirm_button.clicked.connect(self.settings_popup.accept)
         
         button_layout.addStretch(1)
@@ -3770,7 +3840,15 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'grid_group'):
             for button in self.grid_group.buttons():
                 button.setStyleSheet(radio_style)
-    
+                
+    def resource_path(self, relative_path: str) -> str:
+        """개발 환경과 PyInstaller 번들 환경 모두에서 리소스 경로 반환"""
+        try:
+            base = Path(sys._MEIPASS)
+        except Exception:
+            base = Path(__file__).parent
+        return str(base / relative_path)
+
     def update_label_styles(self):
         """라벨 스타일을 현재 테마에 맞게 업데이트"""
         # 기본 라벨 스타일
@@ -4014,7 +4092,7 @@ class PhotoSortApp(QMainWindow):
                 donation_content_layout.setContentsMargins(0, 0, 0, 0)
                 
                 # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
-                coffee_icon_path = str(Path(__file__).parent / "resources" / "coffee_icon.png")  # 이미지 파일 경로 지정
+                coffee_icon_path = self.resource_path("resources/coffee_icon.png")  # 이미지 파일 경로 지정
                 coffee_icon = QPixmap(coffee_icon_path)
                 coffee_emoji = QLabel()
                 if not coffee_icon.isNull():
@@ -4041,7 +4119,7 @@ class PhotoSortApp(QMainWindow):
                 
                 # 바이미어커피 링크
                 bmc_url = "https://buymeacoffee.com/ffamilist"
-                qr_path = str(Path(__file__).parent / "resources" / "bmc_qr.png")
+                qr_path = self.resource_path("resources/bmc_qr.png")
                 bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path, size=250)
                 bmc_label.setAlignment(Qt.AlignCenter)
                 
@@ -5082,6 +5160,8 @@ class PhotoSortApp(QMainWindow):
             self.image_files = unique_raw_files # 메인 리스트를 RAW 파일로 교체
             
             # 명시적으로 첫 번째 RAW 파일로 전략 결정 - 개선
+        
+            
             if self.image_files:
                 first_raw_file = str(self.image_files[0])
                 
@@ -5092,8 +5172,12 @@ class PhotoSortApp(QMainWindow):
                     logging.info("새 RAW 폴더 로드: 전역 전략 초기화됨")
                 
                 # 이제 전략 결정 로직 호출
+                logging.warning(f"json 경로! {first_raw_file}")
+                logging.warning(f"json 경로! {first_raw_file}")
+                logging.warning(f"json 경로! {first_raw_file}")
+
                 self.image_loader.determine_raw_strategy(first_raw_file)
-                logging.info(f"첫 번째 RAW 파일 ({Path(first_raw_file).name})로 전략 결정 완료")
+                logging.warning(f"첫 번째 RAW 파일 ({Path(first_raw_file).name})로 전략 결정 완료")
             
             self.raw_folder = folder_path # RAW 폴더 경로 저장
             self.is_raw_only_mode = True # RAW 전용 모드 활성화
@@ -5202,24 +5286,43 @@ class PhotoSortApp(QMainWindow):
         # 1. 먼저 새 구조의 exiftool 폴더 내에서 확인
         exiftool_path = app_dir / "exiftool" / "exiftool.exe"
         if exiftool_path.exists():
-            print(f"ExifTool 발견: {exiftool_path}")
+            # print(f"ExifTool 발견: {exiftool_path}")
+            logging.info(f"ExifTool 발견: {exiftool_path}")
             return str(exiftool_path)
         
         # 2. 이전 구조의 resources 폴더에서 확인 (호환성 유지)
         exiftool_path = app_dir / "resources" / "exiftool.exe"
         if exiftool_path.exists():
             print(f"ExifTool 발견(레거시 경로): {exiftool_path}")
+            logging.info(f"ExifTool 발견(레거시 경로): {exiftool_path}")
             return str(exiftool_path)
         
         # 3. 애플리케이션 기본 폴더 내에서 직접 확인
         exiftool_path = app_dir / "exiftool.exe" 
         if exiftool_path.exists():
-            print(f"ExifTool 발견(기본 폴더): {exiftool_path}")
+            # print(f"ExifTool 발견(기본 폴더): {exiftool_path}")
+            logging.info(f"ExifTool 발견: {exiftool_path}")
             return str(exiftool_path)
         
         # 4. PATH 환경변수에서 검색 가능하도록 이름만 반환 (선택적)
         logging.warning("ExifTool을 찾을 수 없습니다. PATH에 있다면 기본 이름으로 시도합니다.")
         return "exiftool.exe"
+
+    #추가 수정
+    def get_exiftool_path(self) -> str:
+        """운영체제별로 exiftool 경로를 반환합니다."""
+        system = platform.system()
+        if system == "Darwin":
+            # macOS 번들 내부 exiftool 사용
+            logging.info(f"맥 전용 exiftool사용")
+            bundle_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.argv[0]))
+            return os.path.join(bundle_dir, "exiftool")
+        elif system == "Windows":
+            # Windows: 기존 get_bundled_exiftool_path 로 경로 확인
+            return self.get_bundled_exiftool_path()
+        else:
+            # 기타 OS: 시스템 PATH에서 exiftool 호출
+            return "exiftool"
 
     def show_themed_message_box(self, icon, title, text, buttons=QMessageBox.Ok, default_button=QMessageBox.NoButton):
         """스타일 및 제목 표시줄 다크 테마가 적용된 QMessageBox 표시"""
@@ -7818,6 +7921,8 @@ class PhotoSortApp(QMainWindow):
 
     def load_state(self):
         """JSON 파일에서 애플리케이션 상태 불러오기"""
+        logging.warning(f"111111")
+
         load_path = self.get_script_dir() / self.STATE_FILE
 
         # 첫 실행 감지 - 상태 파일이 없을 때
@@ -7836,6 +7941,8 @@ class PhotoSortApp(QMainWindow):
             with open(load_path, 'r', encoding='utf-8') as f:
                 loaded_data = json.load(f)
             logging.info(f"상태 불러오기 완료: {load_path}")
+            logging.warning(f"22222")
+            logging.warning(f"로드된 상태 데이터(파일 경로: {load_path}): {loaded_data}")
 
             # 먼저 설정 부터 복원
             language = loaded_data.get("language", "ko")
@@ -7848,6 +7955,8 @@ class PhotoSortApp(QMainWindow):
             DateFormatManager.set_date_format(date_format)
             ThemeManager.set_theme(theme)
             RawProcessingStrategyManager.set_strategy(raw_strategy)  # RAW 처리 전략 적용
+            logging.warning(f"22222")
+            logging.warning(f"RawProcessingStrategyManager 현재 전략(파일 경로: {load_path}): {RawProcessingStrategyManager.get_current_strategy()}")
 
             # ========== 컨트롤 패널 위치 로드 ==========
             # UI 업데이트 전에 상태 변수 먼저 로드
@@ -9434,7 +9543,7 @@ def main():
     window = PhotoSortApp()
     window.load_state()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec()) #수정
 
 if __name__ == "__main__":
     main()
