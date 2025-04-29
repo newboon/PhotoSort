@@ -16,7 +16,7 @@ PhotoSort helps you quickly categorize photos into folders (I use "Keep," "Maybe
 
 *   **JPG+RAW Aware:** Optionally handles paired RAW files when you move JPGs.
 *   **RAW Direct Load:** Load and sort RAW files directly if you prefer.
-*   **Fast Sorting:** Use keys `1`, `2`, `3` to instantly move photos to designated folders.
+*   **Fast Sorting:** Use WASD or arrow keys to flip through photos, and press 1, 2, or 3 to move the current photo into a preset folder. 
 *   **Flexible Viewing:** Single view, 2x2/3x3 grids (F1-F3), Zoom/Pan, and a helpful Minimap.
 *   **Safe:** **No delete function!** Photos are only *moved*, never deleted by the app.
 *   **Simple & Clean:** Focused on the core sorting task.
