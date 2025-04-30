@@ -25,7 +25,7 @@ PhotoSort helps you quickly categorize photos into folders (I use "Keep," "Maybe
 
 **Current Status:**
 
-*   **Windows Only:** Honestly, I don't own a Mac, so I couldn't test or build for it.
+*   **From version 25.04.29, you can download both Mac and Windows versions.
 *   **Tested Resolutions:** Works well on my and my wife's laptops (2560x1600 & 1920x1080). Might look a bit off on 4K+ screens, haven't tested!
 *   **Performance Note:** Loading RAW files directly might be slower on less powerful computers.
 *   **Windows Defender Note:** Defender might flag the `.exe` (e.g., `Trojan:Win32/Sabsik.FL.A!ml`). This is likely a false positive due to the way Python apps are packaged (using Nuitka). I've reported it to Microsoft. The app is safe, and the source code is here for review. [VirusTotal Scan Result](https://www.virustotal.com/gui/file/781d5039b8f0b2104a2f030c159aeffb3253d688729ca96a0737aa7f61ceeea9)
