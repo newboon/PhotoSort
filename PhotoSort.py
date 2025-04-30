@@ -110,7 +110,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.04.26)")
+    logging.info("PhotoSort 시작 (버전: 25.04.29)")
     
     return logger
 
@@ -4270,7 +4270,7 @@ class PhotoSortApp(QMainWindow):
 
         info_text = f"""
         <h2>PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.04.26</p>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.04.29</p>
         <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
