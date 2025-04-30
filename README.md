@@ -61,3 +61,4 @@ This project is licensed under the **MIT License**. See the `LICENSE` file for d
 ## Support
 
 Found a bug or have a suggestion? Please open an **[Issue](https://github.com/newboon/PhotoSort/issues)**.
+
