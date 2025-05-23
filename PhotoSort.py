@@ -2191,48 +2191,73 @@ class FilenameLabel(QLabel):
 
     def __init__(self, text="", fixed_height_padding=40, parent=None):
         super().__init__(parent=parent)
-        self.full_filename = "" # 전체 파일명 저장
+        self._raw_display_text = "" # 아이콘 포함될 수 있는, 화면 표시용 전체 텍스트
+        self._actual_filename_for_opening = "" # 더블클릭 시 열어야 할 실제 파일명 (아이콘X)
+        
         self.setCursor(Qt.PointingHandCursor)
-        self.setAlignment(Qt.AlignCenter) # 가운데 정렬
+        self.setAlignment(Qt.AlignCenter)
 
-        # 폰트 설정 (Arial, 12pt, Bold)
         font = QFont("Arial", UIScaleManager.get("filename_font_size"))
-        font.setBold(True) # Bold 설정 추가
+        font.setBold(True)
         self.setFont(font)
 
-        # 폰트 메트릭스를 이용해 2줄 높이 계산(현재는 1줄)
         fm = QFontMetrics(font)
         line_height = fm.height()
         fixed_height = line_height + fixed_height_padding
         self.setFixedHeight(fixed_height)
-        self.setFixedHeight(fixed_height)
 
-        self.setWordWrap(True) # 자동 줄바꿈 활성화
-        self.setStyleSheet(f"color: {ThemeManager.get_color('text')};") # 기본 텍스트 색상
+        self.setWordWrap(True)
+        self.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed) # 크기 정책
-        self.setText(text) # 초기 텍스트 설정 (setText 오버라이드 사용)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        
+        # 초기 텍스트 설정 (만약 text에 아이콘이 있다면 분리 필요)
+        self.set_display_and_actual_filename(text, text.replace("🔗", "")) # 아이콘 제거 시도
 
-    def setText(self, text: str):
-        """텍스트 설정 메서드 오버라이드 (파일명 생략 기능 추가)"""
-        self.full_filename = text # 전체 파일명 저장
-        self.setToolTip(text) # 툴팁에 전체 파일명 설정
+    def set_display_and_actual_filename(self, display_text: str, actual_filename: str):
+        """표시용 텍스트와 실제 열릴 파일명을 별도로 설정"""
+        self._raw_display_text = display_text # 아이콘 포함 가능성 있는 전체 표시 텍스트
+        self._actual_filename_for_opening = actual_filename # 아이콘 없는 순수 파일명
 
-        if len(text) > 17:
-            # "앞A자...뒤B자" 형식으로 생략
-            display_text = text[:6] + " ... " + text[-10:]
+        self.setToolTip(self._raw_display_text) # 툴팁에는 전체 표시 텍스트
+
+        # 화면 표시용 텍스트 생략 처리 (아이콘 포함된 _raw_display_text 기준)
+        if len(self._raw_display_text) > 17: # 아이콘 길이를 고려하여 숫자 조정 필요 가능성
+            # 아이콘이 있다면 아이콘은 유지하면서 앞부분만 생략
+            if "🔗" in self._raw_display_text:
+                name_part = self._raw_display_text.replace("🔗", "")
+                if len(name_part) > 15: # 아이콘 제외하고 15자 초과 시
+                    display_text_for_label = name_part[:6] + "..." + name_part[-7:] + "🔗"
+                else:
+                    display_text_for_label = self._raw_display_text
+            else: # 아이콘 없을 때
+                display_text_for_label = self._raw_display_text[:6] + " ... " + self._raw_display_text[-10:]
         else:
-            display_text = text
+            display_text_for_label = self._raw_display_text
 
-        super().setText(display_text) # 화면 표시 업데이트
+        super().setText(display_text_for_label)
 
-    def text(self) -> str:
+    # setText는 이제 set_display_and_actual_filename을 사용하도록 유도하거나,
+    # 이전 setText의 역할을 유지하되 내부적으로 _actual_filename_for_opening을 관리해야 함.
+    # 여기서는 set_display_and_actual_filename을 주 사용 메서드로 가정.
+    def setText(self, text: str): # 이 메서드는 PhotoSortApp에서 직접 호출 시 주의
+        # 아이콘 유무에 따라 실제 열릴 파일명 결정
+        actual_name = text.replace("🔗", "")
+        self.set_display_and_actual_filename(text, actual_name)
+
+    def text(self) -> str: # 화면에 표시되는 텍스트 반환 (생략된 텍스트)
         return super().text()
 
+    def raw_display_text(self) -> str: # 아이콘 포함된 전체 표시 텍스트 반환
+        return self._raw_display_text
+
+    def actual_filename_for_opening(self) -> str: # 실제 열릴 파일명 반환
+        return self._actual_filename_for_opening
+
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        """더블클릭 시 full_filename으로 시그널 발생"""
-        if self.full_filename:
-            self.doubleClicked.emit(self.full_filename)
+        """더블클릭 시 _actual_filename_for_opening으로 시그널 발생"""
+        if self._actual_filename_for_opening:
+            self.doubleClicked.emit(self._actual_filename_for_opening) # 아이콘 없는 파일명 전달
 
 
 class QRLinkLabel(QLabel):
@@ -5280,6 +5305,25 @@ class PhotoSortApp(QMainWindow):
         # 매칭 결과 팝업 표시 (매칭된 경우에만)
         self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("RAW 파일 매칭 결과"), f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {len(self.image_files)}")
     
+        # --- 현재 표시 중인 파일 정보 즉시 업데이트 로직 추가 ---
+        current_displaying_image_path_str = None
+        if self.grid_mode == "Off":
+            if 0 <= self.current_image_index < len(self.image_files):
+                current_displaying_image_path_str = str(self.image_files[self.current_image_index])
+        else: # Grid 모드
+            grid_selected_index = self.grid_page_start_index + self.current_grid_index
+            if 0 <= grid_selected_index < len(self.image_files):
+                current_displaying_image_path_str = str(self.image_files[grid_selected_index])
+        
+        if current_displaying_image_path_str:
+            logging.debug(f"RAW 매칭 후 현재 파일 정보 업데이트 시도: {current_displaying_image_path_str}")
+            # update_file_info_display를 호출하면 내부에서 self.raw_files를 참조하여
+            # 링크 이모지를 포함한 파일명을 info_filename_label에 설정하고,
+            # EXIF 정보도 다시 로드(또는 캐시 사용)합니다.
+            self.update_file_info_display(current_displaying_image_path_str)
+        # --- 즉시 업데이트 로직 끝 ---
+
+
     def get_bundled_exiftool_path(self):
         """애플리케이션 폴더 구조에서 ExifTool 경로 찾기"""
         # 애플리케이션 기본 디렉토리 확인
@@ -7451,39 +7495,40 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addWidget(self.info_focal_label)       # 4. 초점거리
 
     def update_file_info_display(self, image_path):
-        """파일 정보 표시 - 비동기 버전"""
-        # 정보 초기화
+        """파일 정보 표시 - 비동기 버전, RAW 연결 아이콘 추가"""
         if not image_path:
+            # FilenameLabel의 setText는 아이콘 유무를 판단하므로 '-'만 전달해도 됨
             self.info_filename_label.setText("-")
             self.info_resolution_label.setText("-")
             self.info_camera_label.setText("-")
             self.info_datetime_label.setText("-")
             self.info_focal_label.setText("-")
-            self.current_exif_path = None  # 현재 처리 중인 경로 초기화
+            self.current_exif_path = None
             return
         
-        # 파일명은 즉시 표시 (비동기 처리 필요 없음)
-        filename = Path(image_path).name
-        self.info_filename_label.setText(filename)
+        file_path_obj = Path(image_path)
+        actual_filename = file_path_obj.name # 아이콘 없는 순수 파일명
+        display_filename = actual_filename   # 표시용 파일명 초기값
+
+        if not self.is_raw_only_mode and file_path_obj.suffix.lower() in ['.jpg', '.jpeg']:
+            base_name = file_path_obj.stem
+            if self.raw_files and base_name in self.raw_files:
+                display_filename += "🔗" # 표시용 파일명에만 아이콘 추가
         
-        # 현재 처리 중인 EXIF 경로 업데이트
+        # FilenameLabel에 표시용 텍스트와 실제 열릴 파일명 전달
+        self.info_filename_label.set_display_and_actual_filename(display_filename, actual_filename)
+        
         self.current_exif_path = image_path
-        
-        # 로딩 중 표시 (영어/한국어 언어 감지)
         loading_text = "▪ ···"
         self.info_resolution_label.setText(loading_text)
         self.info_camera_label.setText(loading_text)
         self.info_datetime_label.setText(loading_text)
         self.info_focal_label.setText(loading_text)
         
-        # 캐시 확인
         if image_path in self.exif_cache:
-            # 캐시에 있으면 바로 표시
             self.update_info_ui_from_exif(self.exif_cache[image_path], image_path)
             return
         
-        # 캐시에 없으면 비동기 처리 시작
-        # QMetaObject.invokeMethod 대신 시그널 사용
         self.exif_worker.request_process.emit(image_path)
 
     def on_exif_info_ready(self, exif_data, image_path):
