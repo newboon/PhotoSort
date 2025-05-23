@@ -4627,8 +4627,11 @@ class PhotoSortApp(QMainWindow):
         # JPG 파일 검색 - 대소문자 구분 없이 중복 방지
         target_path = Path(folder_path)
 
-        # 하나의 패턴으로 통합하여 검색 (대소문자 구분 없이)
-        all_jpg_files = list(target_path.glob("*.jpg")) + list(target_path.glob("*.jpeg"))
+        # 대소문자 구분 없이 JPG 파일 검색
+        all_jpg_files = []
+        for file_path in target_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in ['.jpg', '.jpeg']:
+                all_jpg_files.append(file_path)
 
         # 파일명을 소문자로 변환하여 set으로 중복 제거 후 원본 경로 유지
         seen_files = set()
