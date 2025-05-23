@@ -33,7 +33,7 @@ from PIL import Image, ImageQt
 
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
-                           QThread, QTimer, QUrl, Signal, Q_ARG)
+                           QThread, QTimer, QUrl, Signal, Q_ARG, QRect)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, 
                           QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, 
                           QPen, QPixmap, QWheelEvent, QFontMetrics)
@@ -2419,6 +2419,8 @@ class PhotoSortApp(QMainWindow):
         # 그리드 로딩 시 빠른 표시를 위한 플레이스홀더 이미지
         self.placeholder_pixmap = QPixmap(100, 100)
         self.placeholder_pixmap.fill(QColor("#222222"))
+
+        self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
         
         # 다크 테마 적용
         self.setup_dark_theme()
@@ -6550,6 +6552,48 @@ class PhotoSortApp(QMainWindow):
 
         self.control_layout.addWidget(grid_container)
 
+        # --- "파일명" 토글 체크박스 추가 ---
+        self.filename_toggle_grid = QCheckBox(LanguageManager.translate("파일명")) # "파일명" 키를 translations에 추가 필요
+        self.filename_toggle_grid.setChecked(self.show_grid_filenames) # 초기 상태 반영
+        self.filename_toggle_grid.toggled.connect(self.on_filename_toggle_changed)
+
+        # 미니맵 토글과 동일한 스타일 적용
+        checkbox_style = f"""
+            QCheckBox {{
+                color: {ThemeManager.get_color('text')};
+                padding: 2px;
+            }}
+            QCheckBox::indicator {{
+                width: 11px;
+                height: 11px;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {ThemeManager.get_color('accent')};
+                border: 2px solid {ThemeManager.get_color('accent')};
+                border-radius: 1px;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border: 2px solid {ThemeManager.get_color('border')};
+                border-radius: 1px;
+            }}
+            QCheckBox::indicator:unchecked:hover {{
+                border: 2px solid {ThemeManager.get_color('text_disabled')};
+            }}
+        """
+        self.filename_toggle_grid.setStyleSheet(checkbox_style)
+
+        # 파일명 토글을 중앙에 배치하기 위한 컨테이너
+        filename_toggle_container = QWidget()
+        filename_toggle_layout = QHBoxLayout(filename_toggle_container)
+        filename_toggle_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백 약간 추가
+        filename_toggle_layout.addStretch()
+        filename_toggle_layout.addWidget(self.filename_toggle_grid)
+        filename_toggle_layout.addStretch()
+
+        self.control_layout.addWidget(filename_toggle_container)
+        # --- "파일명" 토글 체크박스 추가 끝 ---
+
     def on_grid_changed(self, button):
         """Grid 모드 변경 처리"""
         previous_grid_mode = self.grid_mode
@@ -6705,76 +6749,54 @@ class PhotoSortApp(QMainWindow):
     
     def update_grid_view(self):
         """Grid 모드에 따라 이미지 뷰 업데이트"""
-
-        # 현재 스크롤 영역에 있는 위젯 가져오기
         current_widget = self.scroll_area.widget()
 
         if self.grid_mode == "Off":
-            # === Grid Off 모드로 전환 또는 유지 ===
             if current_widget is not self.image_container:
-                # 이전 위젯(아마도 그리드 컨테이너) 제거 및 삭제 예약
                 old_widget = self.scroll_area.takeWidget()
-                if old_widget and old_widget is not self.image_container: # image_container는 삭제하면 안됨
+                if old_widget and old_widget is not self.image_container:
                     old_widget.deleteLater()
-                # 레이아웃과 레이블 리스트 정리 (참조만 제거)
-                self.grid_layout = None
+                self.grid_layout = None # QGridLayout 참조 해제
+                # self.grid_labels 리스트는 GridCellWidget 인스턴스를 저장하게 됨
+                for widget in self.grid_labels: # 이전 그리드 위젯들 삭제
+                    if widget: widget.deleteLater()
                 self.grid_labels.clear()
-
-            # 스크롤 영역에 단일 이미지 컨테이너 설정 (이미 설정되어 있어도 호출)
             if current_widget is not self.image_container:
                 self.scroll_area.setWidget(self.image_container)
-
-            # 현재 선택된 이미지 표시 (current_image_index는 on_grid_changed에서 설정됨)
-            # 그리드 모드에서 전환된 경우 강제 새로고침이 필요할 수 있음
             if getattr(self, 'force_refresh', False):
-                # 이미 force_refresh 플래그가 설정되어 있으면 적용
-                # display_current_image()가 이를 처리
                 pass
             else:
-                # 그리드에서 Off로 전환될 때 명시적으로 설정
                 self.force_refresh = True
-                
             self.display_current_image()
-            return # Off 모드 처리는 여기서 종료
+            return
 
-        # === Grid On 모드로 전환 또는 유지 ('2x2' 또는 '3x3') ===
-
-        # 이전 위젯 처리
         if current_widget is self.image_container:
-            # 단일 이미지 컨테이너였으면 그냥 제거 (삭제는 안 함)
             self.scroll_area.takeWidget()
         elif current_widget is not None:
-             # 이전 그리드 컨테이너였으면 제거하고 삭제 예약
              old_widget = self.scroll_area.takeWidget()
-             old_widget.deleteLater()
+             old_widget.deleteLater() # 이전 그리드 컨테이너 삭제
 
-        # --- 새 Grid 생성 시작 ---
-        # 레이아웃과 레이블 리스트 초기화 (항상 새로 만듦)
-        self.grid_layout = None
+        # self.grid_labels 리스트는 GridCellWidget 인스턴스를 저장하게 됨
+        for widget in self.grid_labels: # 이전 그리드 위젯들 삭제
+            if widget: widget.deleteLater()
         self.grid_labels.clear()
+        self.grid_layout = None # QGridLayout 참조 해제
 
-        # 새 Grid 레이아웃 및 컨테이너 위젯 생성
         rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
         num_cells = rows * cols
-
-        self.grid_layout = QGridLayout() # 새 레이아웃 객체
+        self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(0)
         self.grid_layout.setContentsMargins(0, 0, 0, 0)
-
-        grid_container_widget = QWidget() # 새 컨테이너 위젯
+        grid_container_widget = QWidget() # 이 컨테이너는 여전히 필요
         grid_container_widget.setLayout(self.grid_layout)
         grid_container_widget.setStyleSheet("background-color: black;")
-
-        # 스크롤 영역에 새 그리드 컨테이너 설정
         self.scroll_area.setWidget(grid_container_widget)
-        self.scroll_area.setWidgetResizable(True) # 리사이즈 가능 설정 유지
+        self.scroll_area.setWidgetResizable(True)
 
-        # 이미지 로드 및 레이블 생성/추가
         start_idx = self.grid_page_start_index
         end_idx = min(start_idx + num_cells, len(self.image_files))
         images_to_display = self.image_files[start_idx:end_idx]
 
-        # current_grid_index가 새 페이지의 유효 범위를 벗어나는 경우 조정
         if self.current_grid_index >= len(images_to_display) and len(images_to_display) > 0:
              self.current_grid_index = len(images_to_display) - 1
         elif len(images_to_display) == 0:
@@ -6783,137 +6805,169 @@ class PhotoSortApp(QMainWindow):
         for i in range(num_cells):
             row, col = divmod(i, cols)
 
-            cell_label = QLabel() # 항상 새 레이블 생성
-            cell_label.setAlignment(Qt.AlignCenter)
-            cell_label.setStyleSheet("border: 1px solid #555555;") # 기본 테두리
-            cell_label.setMinimumSize(1, 1)
-            
-            # 클릭 이벤트와 더블클릭 이벤트 처리
-            cell_label.mousePressEvent = lambda event, label=cell_label, index=i: self.on_grid_cell_clicked(label, index) # 인덱스 전달
-            cell_label.mouseDoubleClickEvent = lambda event, label=cell_label, index=i: self.on_grid_cell_double_clicked(label, index) # 더블클릭 처리 추가
+            # GridCellWidget 사용
+            cell_widget = GridCellWidget()
+            # 클릭/더블클릭 이벤트를 PhotoSortApp에서 처리하기 위해 인덱스 정보 등을 연결
+            # GridCellWidget 자체에 시그널을 만들거나, PhotoSortApp에서 위젯을 직접 참조
+            cell_widget.mousePressEvent = lambda event, widget=cell_widget, index=i: self.on_grid_cell_clicked(widget, index)
+            cell_widget.mouseDoubleClickEvent = lambda event, widget=cell_widget, index=i: self.on_grid_cell_double_clicked(widget, index)
+            # cell_widget.setProperty("cell_index", i) # PhotoSortApp에서 식별하기 위한 정보
+
+            current_image_path = None
+            filename_text = ""
 
             if i < len(images_to_display):
-                current_image_path = str(images_to_display[i])
-                cell_label.setProperty("image_path", current_image_path)
-                cell_label.setProperty("loaded", False) # 초기 상태는 로드 안됨
+                current_image_path_obj = images_to_display[i]
+                current_image_path = str(current_image_path_obj)
+                cell_widget.setProperty("image_path", current_image_path) # 경로 저장
+                cell_widget.setProperty("loaded", False) # 초기 로드 상태
 
-                # --- ImageLoader 캐시 확인 및 이미지 설정 (원래 방식과 유사하게) ---
-                # ImageLoader의 캐시를 직접 접근하기보다, preload_page가 처리하도록 유도
-                # 여기서는 우선 플레이스홀더를 설정
-                cell_label.setPixmap(self.placeholder_pixmap)
+                if self.show_grid_filenames:
+                    filename = current_image_path_obj.name
+                    # 파일명 축약 (GridCellWidget의 paintEvent에서 처리하는 것이 더 정확할 수 있음)
+                    # 여기서는 간단히
+                    if len(filename) > 20:
+                        filename = filename[:10] + "..." + filename[-7:]
+                    filename_text = filename
+                
+                cell_widget.setText(filename_text) # 파일명 설정
+                cell_widget.setShowFilename(self.show_grid_filenames) # 파일명 표시 여부 전달
 
-                # ***********************************************************************
-                # 중요: ImageLoader 캐시 확인 로직 추가 (선택적이지만 성능 향상에 도움)
-                # ImageLoader 내부에 캐시가 있다면 즉시 가져와서 표시 시도
-                cached_original = self.image_loader.cache.get(current_image_path) # 직접 캐시 접근 (주의)
+                # 이미지 로딩 (플레이스홀더 또는 캐시된 이미지)
+                cached_original = self.image_loader.cache.get(current_image_path)
                 if cached_original and not cached_original.isNull():
-                    try:
-                        cell_label.setProperty("original_pixmap", cached_original)
-                        # 캐시된 원본을 현재 셀 크기에 맞게 리사이즈 (Smooth 사용)
-                        if cell_label.width() > 10 and cell_label.height() > 10:
-                            scaled_pixmap = cached_original.scaled(
-                                cell_label.size(),
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation # 여기서 Smooth 사용
-                            )
-                            cell_label.setPixmap(scaled_pixmap)
-                            cell_label.setProperty("loaded", True)
-                            # print(f"ImageLoader 캐시 사용 및 리사이즈: {Path(current_image_path).name}")
-                        else: # 레이블 크기가 아직 유효하지 않으면 플레이스홀더 유지
-                            pass
-                    except Exception as e:
-                        logging.error(f"그리드 뷰에서 캐시 이미지 리사이즈 오류: {e}")
-                # ***********************************************************************
-
+                    cell_widget.setProperty("original_pixmap_ref", cached_original) # 원본 픽스맵 참조 저장
+                    cell_widget.setPixmap(cached_original) # setPixmap은 내부적으로 스케일링된 복사본을 사용하게 될 것
+                    cell_widget.setProperty("loaded", True)
+                else:
+                    cell_widget.setPixmap(self.placeholder_pixmap) # 플레이스홀더
             else:
-                cell_label.setText("") # 빈 셀
-            self.grid_layout.addWidget(cell_label, row, col)
-            self.grid_labels.append(cell_label) # 새 레이블 리스트에 추가
+                # 빈 셀
+                cell_widget.setPixmap(QPixmap())
+                cell_widget.setText("")
+                cell_widget.setShowFilename(False)
 
-        # 선택 상태 및 제목 업데이트
-        self.update_grid_selection_border() # 테두리 업데이트 (새 레이블에 적용됨)
+            self.grid_layout.addWidget(cell_widget, row, col)
+            self.grid_labels.append(cell_widget) # 이제 GridCellWidget 인스턴스 저장
+
+        self.update_grid_selection_border() # 선택 상태 업데이트
         self.update_window_title_with_selection()
-
-        # 비동기 이미지 로딩 시작 (페이지당 셀 수)
         self.image_loader.preload_page(self.image_files, self.grid_page_start_index, num_cells)
-
-        # Grid 이미지 리사이즈 예약 (UI가 그려진 후 실행되도록)
-        QTimer.singleShot(0, self.resize_grid_images)
-
-        # --- 파일 정보 UI 업데이트 추가 (update_grid_view 끝) ---
+        QTimer.singleShot(0, self.resize_grid_images) # 리사이즈는 여전히 필요
         selected_image_list_index_gw = self.grid_page_start_index + self.current_grid_index
         if 0 <= selected_image_list_index_gw < len(self.image_files):
             self.update_file_info_display(str(self.image_files[selected_image_list_index_gw]))
         else:
-            self.update_file_info_display(None) # 유효하지 않으면 초기화
-        # --- 업데이트 끝 ---
+            self.update_file_info_display(None)
+        self.update_counters()
 
-        self.update_counters() # 카운터 업데이트
+
+    def on_filename_toggle_changed(self, checked):
+        """그리드 파일명 표시 토글 상태 변경 시 호출"""
+        self.show_grid_filenames = checked
+        logging.debug(f"Grid Filename Toggle: {'On' if checked else 'Off'}")
+
+        # Grid 모드이고, 그리드 라벨(이제 GridCellWidget)들이 존재할 때만 업데이트
+        if self.grid_mode != "Off" and self.grid_labels:
+            for cell_widget in self.grid_labels:
+                # 1. 각 GridCellWidget에 파일명 표시 상태를 설정합니다.
+                cell_widget.setShowFilename(checked)
+                
+                # 2. (중요) 파일명 텍스트를 다시 설정합니다.
+                #    show_grid_filenames 상태가 변경되었으므로,
+                #    표시될 텍스트 내용 자체가 바뀔 수 있습니다 (보이거나 안 보이거나).
+                #    이 로직은 resize_grid_images나 update_grid_view에서 가져올 수 있습니다.
+                image_path = cell_widget.property("image_path")
+                filename_text = ""
+                if image_path and checked: # checked (self.show_grid_filenames) 상태를 사용
+                    filename = Path(image_path).name
+                    # 파일명 축약 로직 (GridCellWidget의 paintEvent에서 하는 것이 더 정확할 수 있으나, 여기서도 처리)
+                    # font_metrics를 여기서 가져오기 어려우므로, 간단한 길이 기반 축약 사용
+                    if len(filename) > 20: # 예시 길이
+                        filename = filename[:10] + "..." + filename[-7:]
+                    filename_text = filename
+                cell_widget.setText(filename_text) # 파일명 텍스트 업데이트
+
+                # 3. 각 GridCellWidget의 update()를 호출하여 즉시 다시 그리도록 합니다.
+                #    setShowFilename 내부에서 update()를 호출했다면 이 줄은 필요 없을 수 있지만,
+                #    명시적으로 호출하여 확실하게 합니다.
+                #    (GridCellWidget의 setShowFilename, setText 메서드에서 이미 update()를 호출한다면 중복될 수 있으니 확인 필요)
+                cell_widget.update() # paintEvent를 다시 호출하게 함
+
+        # Grid Off 모드에서는 이 설정이 현재 뷰에 직접적인 영향을 주지 않으므로
+        # 별도의 즉각적인 뷰 업데이트는 필요하지 않습니다.
+        # (다음에 Grid On으로 전환될 때 self.show_grid_filenames 상태가 반영됩니다.)
 
     def on_image_loaded(self, cell_index, pixmap, img_path):
-        """비동기 이미지 로딩 완료 시 호출되는 슬롯"""
-        if self.grid_mode == "Off" or not self.grid_labels:
-            return
-            
-        if 0 <= cell_index < len(self.grid_labels):
-            cell_label = self.grid_labels[cell_index]
-            if cell_label.property("image_path") == img_path:
-                # --- "original_pixmap" 속성 설정 추가/복원 ---
-                cell_label.setProperty("original_pixmap", pixmap)
-                # --- 추가/복원 끝 ---
-                cell_label.setProperty("loaded", True) # 로드됨 상태 설정
+            """비동기 이미지 로딩 완료 시 호출되는 슬롯"""
+            if self.grid_mode == "Off" or not self.grid_labels:
+                return
+                
+            if 0 <= cell_index < len(self.grid_labels):
+                cell_widget = self.grid_labels[cell_index] # 이제 GridCellWidget
+                # GridCellWidget의 경로와 일치하는지 확인
+                if cell_widget.property("image_path") == img_path:
+                    cell_widget.setProperty("original_pixmap_ref", pixmap) # 원본 참조 저장
+                    cell_widget.setPixmap(pixmap) # setPixmap 호출 (내부에서 update 트리거)
+                    cell_widget.setProperty("loaded", True)
 
-                # 현재 표시 크기에 맞게 스케일링 (SmoothTransformation 사용)
-                if cell_label.width() > 10 and cell_label.height() > 10:
-                    scaled_pixmap = pixmap.scaled(
-                        cell_label.size(),
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
-                    )
-                    cell_label.setPixmap(scaled_pixmap)
-                else:
-                    cell_label.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.FastTransformation))
+                    # 파일명도 여기서 다시 설정해줄 수 있음 (선택적)
+                    if self.show_grid_filenames:
+                        filename = Path(img_path).name
+                        if len(filename) > 20:
+                            filename = filename[:10] + "..." + filename[-7:]
+                        cell_widget.setText(filename)
+                    cell_widget.setShowFilename(self.show_grid_filenames) # 파일명 표시 상태 업데이트
 
     def resize_grid_images(self):
-        """그리드 셀 크기에 맞춰 이미지 리사이징 (고품질)"""
-        if not self.grid_labels or self.grid_mode == "Off": # source:457
-            return # source:457
-
-        for label in self.grid_labels: # source:457
-            image_path = label.property("image_path")
-            # if label.property("loaded") and image_path: # 로드된 상태이고 경로가 있을 때만
-            if image_path: # 경로가 있으면 무조건 시도 (캐시에 있을 수 있으므로)
-                # ImageLoader 캐시에서 원본 이미지를 가져옴
-                original_pixmap = self.image_loader.cache.get(image_path)
-
-                if original_pixmap and isinstance(original_pixmap, QPixmap) and not original_pixmap.isNull(): # source:458
-                    # QLabel의 현재 크기에 맞춰 고품질 스케일링 (SmoothTransformation)
-                    try:
-                        scaled_pixmap = original_pixmap.scaled(
-                            label.size(), # 현재 QLabel 크기 사용 (source:458)
-                            Qt.KeepAspectRatio, # source:459
-                            Qt.SmoothTransformation # 고품질 스케일링 (source:459)
-                        )
-                        # 현재 표시된 것과 다를 경우에만 업데이트 (선택적 최적화)
-                        # if label.pixmap() is None or label.pixmap().size() != scaled_pixmap.size():
-                        label.setPixmap(scaled_pixmap) # source:459
-                    except Exception as e:
-                        logging.error(f"resize_grid_images 오류 ({Path(image_path).name}): {e}")
-                # else: 캐시에 없거나 로드 실패한 경우 그대로 둠
-
-    def update_grid_selection_border(self):
-        """현재 선택된 그리드 셀의 테두리 업데이트"""
+        """그리드 셀 크기에 맞춰 이미지 리사이징 (고품질) 및 파일명 업데이트"""
         if not self.grid_labels or self.grid_mode == "Off":
             return
 
-        for i, label in enumerate(self.grid_labels):
-            # 셀에 이미지가 없어도 테두리는 업데이트 (이동 가능하게)
-            if i == self.current_grid_index:
-                # 선택된 셀 테두리 두께 1px로 변경
-                label.setStyleSheet("border: 1px solid white;")
+        for cell_widget in self.grid_labels: # 이제 GridCellWidget
+            image_path = cell_widget.property("image_path")
+            original_pixmap_ref = cell_widget.property("original_pixmap_ref") # 저장된 원본 참조 가져오기
+
+            if image_path and original_pixmap_ref and isinstance(original_pixmap_ref, QPixmap) and not original_pixmap_ref.isNull():
+                # GridCellWidget의 setPixmap은 내부적으로 update()를 호출하므로,
+                # 여기서 setPixmap을 다시 호출하면 paintEvent가 실행되어 스케일링된 이미지가 그려짐.
+                # paintEvent에서 rect.size()를 사용하므로 별도의 스케일링 호출은 불필요.
+                # cell_widget.setPixmap(original_pixmap_ref) # 이렇게만 해도 paintEvent에서 처리
+                cell_widget.update() # 강제 리페인트 요청으로도 충분할 수 있음
+            elif image_path:
+                # 플레이스홀더가 이미 설정되어 있거나, 다시 설정
+                # cell_widget.setPixmap(self.placeholder_pixmap)
+                cell_widget.update()
             else:
-                # 기본 셀 테두리 두께 1px로 변경
-                label.setStyleSheet("border: 1px solid #555555;")
+                # cell_widget.setPixmap(QPixmap())
+                cell_widget.update()
+
+            # 파일명 업데이트 (필요시) - GridCellWidget의 paintEvent에서 처리하므로 여기서 직접 할 필요는 없을 수도 있음
+            if self.show_grid_filenames and image_path:
+                filename = Path(image_path).name
+                # 파일명 축약은 GridCellWidget.paintEvent 내에서 하는 것이 더 정확함
+                # (현재 위젯 크기를 알 수 있으므로)
+                # 여기서는 setShowFilename 상태만 전달
+                if len(filename) > 20:
+                    filename = filename[:10] + "..." + filename[-7:]
+                cell_widget.setText(filename) # 텍스트 설정
+            else:
+                cell_widget.setText("")
+            cell_widget.setShowFilename(self.show_grid_filenames) # 상태 전달
+            # cell_widget.update() # setShowFilename 후에도 업데이트
+
+        self.update_grid_selection_border() # 테두리 업데이트는 별도
+
+    def update_grid_selection_border(self):
+            """현재 선택된 그리드 셀의 테두리 업데이트"""
+            if not self.grid_labels or self.grid_mode == "Off":
+                return
+
+            for i, cell_widget in enumerate(self.grid_labels): # 이제 GridCellWidget
+                if i == self.current_grid_index:
+                    cell_widget.setSelected(True)
+                else:
+                    cell_widget.setSelected(False)
 
     def update_window_title_with_selection(self):
         """Grid 모드에서 창 제목 업데이트 ("PhotoSort - 파일명" 형식)"""
@@ -7123,18 +7177,27 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {str(e)}")
     
-    def on_grid_cell_double_clicked(self, clicked_label, clicked_index):
+    def on_grid_cell_double_clicked(self, clicked_widget, clicked_index): # 파라미터 이름을 clicked_widget으로
         """그리드 셀 더블클릭 시 Grid Off 모드로 전환"""
         if self.grid_mode == "Off" or not self.grid_labels:
+            logging.debug("Grid Off 모드이거나 그리드 레이블이 없어 더블클릭 무시")
             return
         
         try:
-            # 유효한 이미지가 있는 셀인지 확인
+            # 현재 페이지에 실제로 표시될 수 있는 이미지의 총 개수
             current_page_image_count = min(len(self.grid_labels), len(self.image_files) - self.grid_page_start_index)
             
+            # 클릭된 인덱스가 유효한 범위 내에 있고, 해당 인덱스에 해당하는 이미지가 실제로 존재하는지 확인
             if 0 <= clicked_index < current_page_image_count:
-                # 해당 셀에 이미지가 있는지 확인
-                if clicked_label.property("original_pixmap"):
+                # clicked_widget은 GridCellWidget 인스턴스여야 합니다.
+                # 해당 셀에 연결된 image_path가 있는지 확인하여 유효한 이미지 셀인지 판단합니다.
+                image_path_property = clicked_widget.property("image_path")
+
+                if image_path_property: # 이미지 경로가 있다면 유효한 셀로 간주
+                    logging.debug(f"셀 더블클릭: index {clicked_index}, path {image_path_property}")
+                    # 해당 셀에 이미지가 있는지 확인 (실제 픽스맵이 로드되었는지는 여기서 중요하지 않음)
+                    # GridCellWidget의 pixmap()이 null이 아닌지 확인할 수도 있지만, image_path로 충분
+                    
                     # 현재 인덱스 저장 (Grid Off 모드로 전환 시 사용)
                     self.current_image_index = self.grid_page_start_index + clicked_index
                     
@@ -7151,31 +7214,42 @@ class PhotoSortApp(QMainWindow):
                     
                     # Grid Off 모드로 변경
                     self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
+                    self.grid_off_radio.setChecked(True) # 라디오 버튼 상태 업데이트
                     
                     # Grid Off 모드로 변경 및 이미지 표시
+                    # update_grid_view()가 내부적으로 display_current_image() 호출
                     self.update_grid_view()
                     
                     # 이미지 로더의 캐시 확인하여 이미 메모리에 있으면 즉시 적용을 시도
-                    image_path = str(self.image_files[self.current_image_index])
-                    if image_path in self.image_loader.cache:
-                        cached_pixmap = self.image_loader.cache[image_path]
-                        if cached_pixmap and not cached_pixmap.isNull():
-                            # 캐시된 이미지가 있으면 즉시 적용 시도
-                            self.original_pixmap = cached_pixmap
-                            if self.zoom_mode == "Fit":
-                                self.apply_zoom_to_image()
+                    # (display_current_image 내에서 이미 처리될 수 있지만, 명시적으로도 가능)
+                    if 0 <= self.current_image_index < len(self.image_files):
+                        image_path = str(self.image_files[self.current_image_index])
+                        if image_path in self.image_loader.cache:
+                            cached_pixmap = self.image_loader.cache[image_path]
+                            if cached_pixmap and not cached_pixmap.isNull():
+                                self.original_pixmap = cached_pixmap
+                                # Fit 모드인 경우 apply_zoom_to_image를 호출하여 즉시 반영
+                                if self.zoom_mode == "Fit":
+                                    self.apply_zoom_to_image()
                     
                     # 줌 라디오 버튼 상태 업데이트 (활성화)
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout() # 레이아웃 업데이트 호출
                     
-                    # 이중 이벤트 방지를 위해 클릭 이벤트 상태 초기화
-                    self.click_timer = None
+                    # 이중 이벤트 방지를 위해 클릭 이벤트 상태 초기화 (이 부분은 원래 없었으므로 제거 가능)
+                    # self.click_timer = None
+                else:
+                    logging.debug(f"빈 셀 더블클릭됨 (이미지 경로 없음): index {clicked_index}")
+            else:
+                 logging.debug(f"유효하지 않은 셀 더블클릭됨 (인덱스 범위 초과): index {clicked_index}, page_img_count {current_page_image_count}")
+
         except Exception as e:
             logging.error(f"그리드 셀 더블클릭 처리 중 오류 발생: {e}")
+            import traceback
+            traceback.print_exc() # 상세 오류 로깅
         finally:
-            self.update_counters()
+            # self.update_counters() # update_counter_layout() 내부에서 호출되므로 중복 가능성 있음
+            pass
 
     def image_mouse_double_click_event(self, event):
         """이미지 컨테이너 더블클릭 이벤트"""
@@ -7817,16 +7891,27 @@ class PhotoSortApp(QMainWindow):
             if offset <= 3:
                 logging.debug(f"Preloading: {direction_type} {offset} (priority: {priority}): {Path(img_path).name}")
 
-    def on_grid_cell_clicked(self, clicked_label, clicked_index):
+    def on_grid_cell_clicked(self, clicked_widget, clicked_index): # 파라미터 이름을 clicked_widget으로 명확히
         """그리드 셀 클릭 이벤트 핸들러"""
         if self.grid_mode == "Off" or not self.grid_labels:
             return
 
         try:
+            # 현재 페이지에 실제로 표시될 수 있는 이미지의 총 개수
             current_page_image_count = min(len(self.grid_labels), len(self.image_files) - self.grid_page_start_index)
 
+            # 클릭된 인덱스가 유효한 범위 내에 있고, 해당 인덱스에 해당하는 이미지가 실제로 존재하는지 확인
             if 0 <= clicked_index < current_page_image_count:
-                if clicked_label.property("original_pixmap"):
+                # clicked_widget은 GridCellWidget 인스턴스여야 합니다.
+                # GridCellWidget에 'image_path' 속성이 있고, 그 경로가 유효한지,
+                # 그리고 setPixmap으로 인해 pixmap이 설정되었는지 (null이 아닌지) 확인합니다.
+                # GridCellWidget의 pixmap() 메서드를 사용하거나, 내부 _pixmap 변수를 직접 확인 (캡슐화 위배 가능성)
+                # 여기서는 GridCellWidget에 pixmap() 메서드가 있다고 가정합니다.
+                
+                # 가장 확실한 방법은 해당 셀에 연결된 image_path가 있는지 확인하는 것입니다.
+                image_path_property = clicked_widget.property("image_path")
+
+                if image_path_property: # 이미지 경로가 있다면 유효한 셀로 간주
                     self.current_grid_index = clicked_index
                     self.update_grid_selection_border()
                     self.update_window_title_with_selection()
@@ -7839,15 +7924,17 @@ class PhotoSortApp(QMainWindow):
                     else:
                         self.update_file_info_display(None) # 유효하지 않으면 초기화
                 else:
-                    print("빈 셀 클릭됨")
-                    self.update_file_info_display(None) # 빈 셀 클릭 시 정보 초기화
+                    # 이미지 경로 속성이 없는 경우 (예: 마지막 페이지의 완전히 빈 셀)
+                    logging.debug(f"빈 셀 클릭됨 (이미지 경로 없음): index {clicked_index}")
+                    self.update_file_info_display(None)
             else:
-                 print(f"유효하지 않은 셀 클릭됨: index {clicked_index}, image_count {current_page_image_count}")
-                 self.update_file_info_display(None) # 유효하지 않은 셀 클릭 시 정보 초기화
+                # 클릭된 인덱스가 현재 페이지의 유효한 이미지 범위를 벗어난 경우
+                logging.debug(f"유효하지 않은 셀 클릭됨 (인덱스 범위 초과): index {clicked_index}, page_img_count {current_page_image_count}")
+                self.update_file_info_display(None)
 
         except Exception as e:
              logging.error(f"셀 클릭 처리 중 오류 발생: {e}")
-             self.update_file_info_display(None) # 오류 시 초기화
+             self.update_file_info_display(None)
 
     def update_image_count_label(self):
         """이미지 및 페이지 카운트 레이블 업데이트"""
@@ -7894,27 +7981,38 @@ class PhotoSortApp(QMainWindow):
 
     def save_state(self):
         """현재 애플리케이션 상태를 JSON 파일에 저장"""
+        
+        # --- 현재 실제로 선택/표시된 이미지의 '전체 리스트' 인덱스 계산 ---
+        actual_current_image_list_index = -1
+        if self.grid_mode != "Off":
+            if self.image_files and 0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files):
+                actual_current_image_list_index = self.grid_page_start_index + self.current_grid_index
+        else: # Grid Off 모드
+            if self.image_files and 0 <= self.current_image_index < len(self.image_files):
+                actual_current_image_list_index = self.current_image_index
+        # --- 계산 끝 ---
+
         state_data = {
             "current_folder": str(self.current_folder) if self.current_folder else "",
             "raw_folder": str(self.raw_folder) if self.raw_folder else "",
-            # raw_files: Path 객체를 문자열로 변환하여 저장
             "raw_files": {k: str(v) for k, v in self.raw_files.items()},
             "move_raw_files": self.move_raw_files,
             "target_folders": [str(f) if f else "" for f in self.target_folders],
-            # folder_count는 저장하지 않음 (항상 3개 사용)
             "zoom_mode": self.zoom_mode,
-            "minimap_visible": self.minimap_toggle.isChecked(), # 체크박스 상태 저장
+            "minimap_visible": self.minimap_toggle.isChecked(),
             "grid_mode": self.grid_mode,
-            "current_image_index": self.current_image_index,
-            "current_grid_index": self.current_grid_index,
-            "grid_page_start_index": self.grid_page_start_index,
+            # "current_image_index": self.current_image_index, # 이전 방식
+            "current_image_index": actual_current_image_list_index, # <<< 수정: 실제로 보고 있던 이미지의 전역 인덱스 저장
+            "current_grid_index": self.current_grid_index, # Grid 모드일 때의 페이지 내 인덱스 (복원 시 참고용)
+            "grid_page_start_index": self.grid_page_start_index, # Grid 모드일 때의 페이지 시작 인덱스 (복원 시 참고용)
             "previous_grid_mode": self.previous_grid_mode,
             "language": LanguageManager.get_current_language(),
             "date_format": DateFormatManager.get_current_format(),
             "theme": ThemeManager.get_current_theme_name(),
             "is_raw_only_mode": self.is_raw_only_mode,
             "control_panel_on_right": getattr(self, 'control_panel_on_right', False),
-            "raw_strategy": RawProcessingStrategyManager.get_current_strategy(),  # RAW 처리 전략 저장
+            "raw_strategy": RawProcessingStrategyManager.get_current_strategy(),
+            "show_grid_filenames": self.show_grid_filenames, # 파일명 표시 상태 추가
         }
 
         save_path = self.get_script_dir() / self.STATE_FILE
@@ -7927,222 +8025,263 @@ class PhotoSortApp(QMainWindow):
 
     def load_state(self):
         """JSON 파일에서 애플리케이션 상태 불러오기"""
-        logging.warning(f"111111")
+        logging.info(f"PhotoSortApp.load_state: 상태 불러오기 시작")
 
         load_path = self.get_script_dir() / self.STATE_FILE
-
-        # 첫 실행 감지 - 상태 파일이 없을 때
         is_first_run = not load_path.exists()
 
         if is_first_run:
-            logging.info("첫 실행 감지: 초기 상태로 설정합니다.")
-            # 상태 파일 없을 때도 초기 UI 상태 업데이트
-            self.update_jpg_folder_ui_state()
+            logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
+            # 첫 실행 시 UI 기본 상태 설정
+            self.update_jpg_folder_ui_state() # 폴더 레이블 "폴더 경로"로, 버튼 상태 등
             self.update_raw_folder_ui_state()
-            # 첫 실행 설정 팝업 표시
-            self.show_first_run_settings_popup()
+            self.update_folder_buttons()      # 분류 폴더 레이블 "폴더 경로"로
+
+            self.show_grid_filenames = False # 첫 실행 시 파일명 표시 기본값 Off
+            if hasattr(self, 'filename_toggle_grid'):
+                self.filename_toggle_grid.setChecked(self.show_grid_filenames)
+            
+            # 다른 기본 설정값들 (언어, 테마 등은 팝업에서 선택 후 저장되거나, 기본값 유지)
+            LanguageManager.set_language("ko") # 예시: 기본 한국어
+            ThemeManager.set_theme("default")  # 예시: 기본 테마
+            RawProcessingStrategyManager.set_strategy("fast") # 예시: 기본 RAW 전략
+            DateFormatManager.set_date_format("yyyy-mm-dd") # 예시: 기본 날짜 형식
+
+            self.show_first_run_settings_popup() # 설정 팝업 표시 (여기서 사용자가 설정 후 저장)
+            
+            QTimer.singleShot(0, self._apply_panel_position) # 패널 위치 적용
+            self.setFocus()
             return
 
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
                 loaded_data = json.load(f)
-            logging.info(f"상태 불러오기 완료: {load_path}")
-            logging.warning(f"22222")
-            logging.warning(f"로드된 상태 데이터(파일 경로: {load_path}): {loaded_data}")
+            logging.info(f"PhotoSortApp.load_state: 상태 파일 로드 완료 ({load_path})")
+            logging.debug(f"PhotoSortApp.load_state: 로드된 데이터: {loaded_data}")
 
-            # 먼저 설정 부터 복원
+            # 1. 기본 설정 복원 (언어, 날짜 형식, 테마, RAW 전략, 패널 위치, 파일명 표시 여부 등)
             language = loaded_data.get("language", "ko")
-            date_format = loaded_data.get("date_format", "yyyy-mm-dd")
-            theme = loaded_data.get("theme", "default")
-            raw_strategy = loaded_data.get("raw_strategy", "high_quality")  # RAW 처리 전략 로드
-            
-            # 설정 적용
             LanguageManager.set_language(language)
+
+            date_format = loaded_data.get("date_format", "yyyy-mm-dd")
             DateFormatManager.set_date_format(date_format)
+
+            theme = loaded_data.get("theme", "default")
             ThemeManager.set_theme(theme)
-            RawProcessingStrategyManager.set_strategy(raw_strategy)  # RAW 처리 전략 적용
-            logging.warning(f"22222")
-            logging.warning(f"RawProcessingStrategyManager 현재 전략(파일 경로: {load_path}): {RawProcessingStrategyManager.get_current_strategy()}")
+            
+            self.loaded_raw_strategy = loaded_data.get("raw_strategy", "fast")
+            # RAW 전략은 ImageLoader 초기화 후, 그리고 이미지 로드 전에 적용될 수 있도록 처리
 
-            # ========== 컨트롤 패널 위치 로드 ==========
-            # UI 업데이트 전에 상태 변수 먼저 로드
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
-            logging.info(f"load_state: 컨트롤 패널 오른쪽 로드됨 = {self.control_panel_on_right}")
-            # ==========================================
+            self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
 
-            # 내부 변수 복원 (오류 방지를 위해 .get 사용)
-            loaded_current_folder = loaded_data.get("current_folder", "")
-            self.raw_folder = loaded_data.get("raw_folder", "")
-            # raw_files: 문자열 경로를 다시 Path 객체로 변환
-            raw_files_str = loaded_data.get("raw_files", {})
-            # 값(경로 문자열)이 존재하고, 해당 경로가 실제로 존재하는지 확인 후 Path 객체로 변환
-            self.raw_files = {k: Path(v) for k, v in raw_files_str.items() if v and Path(v).exists()}
+            # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
+            if hasattr(self, 'language_group'):
+                lang_button_id = 0 if language == "en" else 1
+                button_to_check = self.language_group.button(lang_button_id)
+                if button_to_check: button_to_check.setChecked(True)
+            
+            if hasattr(self, 'date_format_combo'):
+                idx = self.date_format_combo.findData(date_format)
+                if idx >= 0: self.date_format_combo.setCurrentIndex(idx)
 
-            # self.move_raw_files 는 update_raw_toggle_state 에서 사용됨
+            if hasattr(self, 'theme_combo'):
+                idx = self.theme_combo.findText(theme.capitalize())
+                if idx >= 0: self.theme_combo.setCurrentIndex(idx)
+            
+            if hasattr(self, 'strategy_group') and hasattr(self, 'strategy_radio_buttons'):
+                radio_to_check = self.strategy_radio_buttons.get(self.loaded_raw_strategy)
+                if radio_to_check: radio_to_check.setChecked(True)
+                else:
+                    default_radio = self.strategy_radio_buttons.get("fast")
+                    if default_radio: default_radio.setChecked(True)
+            
+            if hasattr(self, 'panel_position_group'):
+                panel_button_id = 1 if self.control_panel_on_right else 0
+                panel_button_to_check = self.panel_position_group.button(panel_button_id)
+                if panel_button_to_check: panel_button_to_check.setChecked(True)
+
+            if hasattr(self, 'filename_toggle_grid'):
+                self.filename_toggle_grid.setChecked(self.show_grid_filenames)
+            
             self.move_raw_files = loaded_data.get("move_raw_files", True)
-            loaded_target_folders = loaded_data.get("target_folders", ["", "", ""])
-            self.target_folders = [f for f in loaded_target_folders] # 복사본 생성
-
-            # 항상 3개 폴더 사용 (folder_count 로드 안 함)
-            self.folder_count = 3
+            # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
 
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
-            minimap_visible_loaded = loaded_data.get("minimap_visible", True)
-            self.grid_mode = loaded_data.get("grid_mode", "Off")
-            self.is_raw_only_mode = loaded_data.get("is_raw_only_mode", False)
-            # current_image_index 등은 이미지 로드 후 유효성 검사 필요
-            loaded_current_image_index = loaded_data.get("current_image_index", -1)
-            loaded_current_grid_index = loaded_data.get("current_grid_index", 0)
-            loaded_grid_page_start_index = loaded_data.get("grid_page_start_index", 0)
-            self.previous_grid_mode = loaded_data.get("previous_grid_mode", None)
-            
-            self.current_folder = loaded_current_folder
-
-            # --- 중요: 상태 변수 복원 후, 이미지 로드 전에 UI 상태 업데이트 ---
-            # 폴더 경로 UI 업데이트 (폴더 유효성 검사는 load_images_from_folder 등에서 수행)
-            self.folder_path_label.setText(loaded_current_folder if loaded_current_folder else LanguageManager.translate("폴더 경로"))
-            self.raw_folder_path_label.setText(self.raw_folder if self.raw_folder else LanguageManager.translate("폴더 경로"))
-            # 분류 폴더 레이블 업데이트
-            for i, folder in enumerate(self.target_folders):
-                self.folder_path_labels[i].setText(folder if folder else LanguageManager.translate("폴더 경로"))
-
-            # 기타 UI 컨트롤 상태 업데이트 (버튼 텍스트/활성화, 토글 등)
-            self.update_jpg_folder_ui_state() # 여기서 folder_path_label 스타일/활성화 재설정
-            self.update_raw_folder_ui_state() # 여기서 raw_folder_path_label 스타일/활성화 재설정 및 토글 상태 업데이트
-            self.update_folder_buttons()      # 여기서 분류 폴더 레이블 스타일/활성화 재설정
-            self.update_match_raw_button_state() # <--- 버튼 텍스트/상태 업데이트 호출!
-            self.update_zoom_radio_buttons_state() # Grid 모드에 따라 Zoom 버튼 상태 조정
-
-            # Zoom 라디오 버튼 업데이트
             if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
             elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
             elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+            
+            self.minimap_toggle.setChecked(loaded_data.get("minimap_visible", True))
 
-            # Grid 라디오 버튼 업데이트
-            if self.grid_mode == "Off": self.grid_off_radio.setChecked(True)
-            elif self.grid_mode == "2x2": self.grid_2x2_radio.setChecked(True)
-            elif self.grid_mode == "3x3": self.grid_3x3_radio.setChecked(True)
+            # 3. 폴더 경로 및 파일 목록 관련 '상태 변수' 우선 설정
+            self.current_folder = loaded_data.get("current_folder", "")
+            self.raw_folder = loaded_data.get("raw_folder", "")
+            raw_files_str = loaded_data.get("raw_files", {})
+            self.raw_files = {k: Path(v) for k, v in raw_files_str.items() if v and Path(v).exists()} # 경로 유효성 검사 후
+            self.target_folders = [str(f) if f else "" for f in loaded_data.get("target_folders", ["", "", ""])]
+            self.is_raw_only_mode = loaded_data.get("is_raw_only_mode", False)
+            self.previous_grid_mode = loaded_data.get("previous_grid_mode", None)
 
-            # 미니맵 토글 업데이트
-            self.minimap_toggle.setChecked(minimap_visible_loaded)
+            # ===> 폴더 경로 상태 변수가 설정된 직후, UI 레이블에 '저장된 경로'를 먼저 반영 <===
+            if self.current_folder and Path(self.current_folder).is_dir():
+                self.folder_path_label.setText(self.current_folder)
+            else:
+                self.current_folder = "" # 유효하지 않으면 상태 변수도 비움
+                self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
 
-            # --- 이미지 목록 로드 (RAW 모드 우선 확인) ---
+            if self.raw_folder and Path(self.raw_folder).is_dir():
+                self.raw_folder_path_label.setText(self.raw_folder)
+            else:
+                self.raw_folder = ""
+                self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+            
+            for i, folder_path_str in enumerate(self.target_folders):
+                if folder_path_str and Path(folder_path_str).is_dir():
+                    self.folder_path_labels[i].setText(folder_path_str)
+                else:
+                    self.target_folders[i] = "" # 유효하지 않으면 상태 변수도 비움
+                    self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
+            # ===> 경로 레이블 반영 끝 <===
+
+            # 4. 이미지 목록 로드 시도
             images_loaded_successfully = False
-            if self.is_raw_only_mode: # <--- RAW 모드인지 먼저 확인
-                # RAW 모드 상태 복원 시도
+            if self.is_raw_only_mode:
                 if self.raw_folder and Path(self.raw_folder).is_dir():
-                    print(f"저장된 상태(RAW 모드) 복원 시도: {self.raw_folder}")
+                    logging.info(f"PhotoSortApp.load_state: RAW 전용 모드 복원 시도 - 폴더: {self.raw_folder}")
                     images_loaded_successfully = self.reload_raw_files_from_state(self.raw_folder)
+                    # reload_raw_files_from_state 내부에서 self.raw_folder_path_label.setText(self.raw_folder)가 이미 호출될 수 있음
+                    # 여기서는 self.raw_folder_path_label.setText(self.raw_folder)를 다시 호출하지 않음
                     if not images_loaded_successfully:
-                        logging.warning("RAW 파일 리로드 실패. 모드를 초기화합니다.")
-                        self.is_raw_only_mode = False # 실패 시 모드 리셋
-                        self.raw_folder = ""          # RAW 폴더 정보도 클리어
-                        self.image_files = []         # 이미지 목록 클리어
-                        self.update_raw_folder_ui_state() # 관련 UI 업데이트
-                        self.update_match_raw_button_state()
+                        logging.warning(f"PhotoSortApp.load_state: RAW 전용 모드 폴더({self.raw_folder})에서 파일 로드 실패.")
+                        self.is_raw_only_mode = False
+                        self.raw_folder = ""
+                        self.image_files = []
+                        self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 실패 시 초기화
+            elif self.current_folder and Path(self.current_folder).is_dir(): # JPG 모드
+                logging.info(f"PhotoSortApp.load_state: JPG 모드 복원 시도 - 폴더: {self.current_folder}")
+                images_loaded_successfully = self.load_images_from_folder(self.current_folder) # 내부에서 folder_path_label 업데이트
+                if images_loaded_successfully:
+                    if self.raw_folder and Path(self.raw_folder).is_dir():
+                        # self.raw_folder_path_label.setText(self.raw_folder) # 이미 위에서 설정됨
+                        # self.match_raw_files(self.raw_folder) # 필요시 호출 또는 저장된 raw_files 사용
+                        pass # raw_files는 이미 로드됨
+                    else:
+                        self.raw_folder = ""
+                        self.raw_files = {}
+                        self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
                 else:
-                    # RAW 모드였지만 폴더 정보가 유효하지 않은 경우
-                    logging.warning("저장된 RAW 폴더 경로가 유효하지 않아 모드를 초기화합니다.")
-                    self.is_raw_only_mode = False # 모드 리셋
-                    self.raw_folder = ""          # RAW 폴더 정보 클리어
-                    self.image_files = []         # 이미지 목록 클리어
-                    self.update_raw_folder_ui_state() # 관련 UI 업데이트
-                    self.update_match_raw_button_state()
+                    logging.warning(f"PhotoSortApp.load_state: JPG 모드 폴더({self.current_folder})에서 파일 로드 실패.")
+                    self.current_folder = ""
+                    self.image_files = []
+                    self.folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 실패 시 초기화
+            else:
+                logging.info("PhotoSortApp.load_state: 저장된 폴더 정보가 없거나 유효하지 않아 이미지 로드 건너뜀.")
+                self.image_files = []
 
-            # elif는 RAW 모드가 아니고, 저장된 JPG 폴더 경로(loaded_current_folder)가 유효할 때 실행되어야 합니다.
-            elif not self.is_raw_only_mode and loaded_current_folder and Path(loaded_current_folder).is_dir(): # <--- loaded_current_folder 사용으로 수정
-                 # JPG 모드 상태 복원 시도 (RAW 모드가 아닐 때)
-                print(f"저장된 상태(JPG 모드) 복원 시도: {loaded_current_folder}")
-                # loaded_current_folder 경로로 이미지를 로드합니다.
-                # load_images_from_folder 내부에서 self.current_folder가 설정됩니다.
-                images_loaded_successfully = self.load_images_from_folder(loaded_current_folder) # <--- 로드 함수에 loaded_current_folder 전달
+            # --- 로드 후 폴더 관련 UI '상태'(활성화, 버튼 텍스트 등) 최종 업데이트 ---
+            self.update_jpg_folder_ui_state() # JPG 폴더 레이블 스타일/X버튼, JPG 로드 버튼 상태
+            self.update_raw_folder_ui_state() # RAW 폴더 레이블 스타일/X버튼, RAW 이동 토글 상태
+            self.update_folder_buttons()      # 분류 폴더 레이블 스타일/X버튼
+            self.update_match_raw_button_state()# RAW 관련 버튼 텍스트/상태
 
-            # else: 로드할 폴더 정보가 없는 경우 images_loaded_successfully = False 유지
-
-            # --- 중요: 뷰 상태 복원 (이미지 로드 성공 시) ---
-            if images_loaded_successfully:
+            # 5. 뷰 상태 복원 (이미지 로드 성공 시)
+            if images_loaded_successfully and self.image_files:
                 total_images = len(self.image_files)
+                
+                self.grid_mode = loaded_data.get("grid_mode", "Off")
+                if self.grid_mode == "Off": self.grid_off_radio.setChecked(True)
+                elif self.grid_mode == "2x2": self.grid_2x2_radio.setChecked(True)
+                elif self.grid_mode == "3x3": self.grid_3x3_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
 
-                # 저장된 인덱스 로드 (뷰 상태 복원 전에 로드해야 함)
-                loaded_current_image_index = loaded_data.get("current_image_index", -1)
-                loaded_current_grid_index = loaded_data.get("current_grid_index", 0)
-                loaded_grid_page_start_index = loaded_data.get("grid_page_start_index", 0)
+                loaded_actual_current_image_index = loaded_data.get("current_image_index", -1)
+                logging.info(f"PhotoSortApp.load_state: 복원 시도할 전역 이미지 인덱스: {loaded_actual_current_image_index}")
 
-                if self.grid_mode != "Off":
-                    # Grid 모드 상태 복원
-                    rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-                    num_cells = rows * cols
-                    max_page_start_index = ((total_images + num_cells - 1) // num_cells - 1) * num_cells
-                    if loaded_grid_page_start_index >= 0 and loaded_grid_page_start_index % num_cells == 0 and loaded_grid_page_start_index <= max_page_start_index:
-                       self.grid_page_start_index = loaded_grid_page_start_index
+                # ImageLoader 및 RAW 전략 적용
+                if hasattr(self, 'image_loader') and hasattr(self, 'loaded_raw_strategy'):
+                    RawProcessingStrategyManager.set_strategy(self.loaded_raw_strategy)
+                    logging.info(f"PhotoSortApp.load_state: 저장된 RAW 전략 '{self.loaded_raw_strategy}' 적용됨.")
+                    # (선택적) 첫 파일로 전략 재결정 로직
+                    if self.image_files and (self.is_raw_only_mode or (self.raw_files and not self.is_raw_only_mode)) : # RAW 파일이 있는 경우
+                        first_file_for_strategy = str(self.image_files[0]) # 현재 image_files의 첫번째 (RAW이거나 JPG)
+                        # RAW 전용 모드가 아니면서, RAW 파일이 연결되어 있다면, 첫 JPG에 매칭되는 RAW로 테스트해야 할 수도 있음
+                        if not self.is_raw_only_mode and self.raw_files:
+                            first_jpg_stem = Path(self.image_files[0]).stem
+                            if first_jpg_stem in self.raw_files:
+                                first_file_for_strategy = str(self.raw_files[first_jpg_stem])
+                        
+                        if Path(first_file_for_strategy).suffix.lower() in self.raw_extensions:
+                            logging.info(f"PhotoSortApp.load_state: RAW 전략 재결정 시도 파일: {first_file_for_strategy}")
+                            with ImageLoader._strategy_lock: # ImageLoader의 클래스 변수 접근 시 락 사용
+                                ImageLoader._strategy_initialized = False # 강제 재설정
+                                ImageLoader._global_raw_strategy = "undetermined"
+                            self.image_loader.determine_raw_strategy(first_file_for_strategy)
+
+
+                if 0 <= loaded_actual_current_image_index < total_images:
+                    if self.grid_mode != "Off":
+                        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                        num_cells = rows * cols
+                        self.grid_page_start_index = (loaded_actual_current_image_index // num_cells) * num_cells
+                        self.current_grid_index = loaded_actual_current_image_index % num_cells
+                        logging.info(f"PhotoSortApp.load_state: Grid 모드 복원 - page_start={self.grid_page_start_index}, grid_idx={self.current_grid_index}")
+                        self.update_grid_view()
+                    else: # Grid Off
+                        self.current_image_index = loaded_actual_current_image_index
+                        logging.info(f"PhotoSortApp.load_state: Grid Off 모드 복원 - current_idx={self.current_image_index}")
+                        self.display_current_image()
+                elif total_images > 0:
+                    logging.warning("PhotoSortApp.load_state: 저장된 이미지 인덱스가 유효하지 않아 첫 이미지로 설정합니다.")
+                    if self.grid_mode != "Off":
+                        self.grid_page_start_index = 0
+                        self.current_grid_index = 0
+                        self.update_grid_view()
                     else:
-                       self.grid_page_start_index = 0 # 유효하지 않으면 0
-                    current_page_image_count = min(num_cells, total_images - self.grid_page_start_index)
-                    if loaded_current_grid_index >= 0 and loaded_current_grid_index < current_page_image_count:
-                        self.current_grid_index = loaded_current_grid_index
-                    else:
-                        self.current_grid_index = 0 # 유효하지 않으면 0
-
-                    self.update_grid_view() # Grid 뷰 표시
-
+                        self.current_image_index = 0
+                        self.display_current_image()
                 else:
-                    # Grid Off 모드 상태 복원
-                    if loaded_current_image_index >= 0 and loaded_current_image_index < total_images:
-                        self.current_image_index = loaded_current_image_index
-                    elif total_images > 0:
-                        self.current_image_index = 0 # 유효하지 않지만 이미지 있으면 0
-                    else:
-                        self.current_image_index = -1 # 이미지 없으면 -1
+                    self.current_image_index = -1
+                    self.grid_page_start_index = 0
+                    self.current_grid_index = 0
+                    if self.grid_mode != "Off": self.update_grid_view()
+                    else: self.display_current_image()
 
-                    self.display_current_image() # 단일 이미지 표시
-
-                # 카운터 및 미니맵 업데이트 (로드 성공 후)
-                self.update_counter_layout() # 레이아웃 재조정 및 카운터 업데이트
-                self.toggle_minimap(self.minimap_toggle.isChecked()) # 미니맵 상태 복원
-
-                # Grid Off 모드이고 이미지 로딩 성공 시 백그라운드 로딩 시작
+                self.update_counter_layout()
+                self.toggle_minimap(self.minimap_toggle.isChecked())
                 if self.grid_mode == "Off":
                     self.start_background_image_preloading()
-
             else:
-                # 이미지 로드 실패 또는 로드할 폴더 없음 (기존 로직 유지)
-                logging.warning("이미지 목록 로드 실패 또는 대상 폴더 없음. 초기 화면 표시.")
+                logging.warning("PhotoSortApp.load_state: 이미지 목록 로드 실패 또는 대상 폴더에 파일 없음. UI 초기화.")
                 self.image_files = []
                 self.current_image_index = -1
-                self.current_grid_index = 0
                 self.grid_page_start_index = 0
-                if self.grid_mode != "Off":
-                    self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
-                    self.update_zoom_radio_buttons_state()
+                self.current_grid_index = 0
+                self.grid_mode = "Off"
+                self.grid_off_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
                 self.update_grid_view()
                 self.update_file_info_display(None)
                 self.update_counter_layout()
                 self.toggle_minimap(False)
-                # --- 중요: 모든 상태 로드 및 이미지 로드 시도 후 최종 레이아웃 적용 ---
-                # ========== 초기 패널 위치 및 크기 적용 ==========
-                # 위젯 추가는 __init__에서 조건부로 이미 처리되었거나 여기서 다시 처리 필요
-                # 여기서는 _apply_panel_position 호출하여 순서 및 크기 재조정
-                QTimer.singleShot(0, self._apply_panel_position) # 이벤트 루프 시작 후 실행되도록 Timer 사용
-                # =============================================
-
-            # load_state 끝에서 포커스 설정 등 필요한 마무리 작업
+            
+            # 6. 최종 UI 조정 및 포커스 설정
+            QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-
+            logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
 
         except json.JSONDecodeError as e:
-            error_msg = LanguageManager.translate("저장된 상태 파일을 읽는 중 오류가 발생했습니다. 기본 설정으로 시작합니다.")
-            logging.error(f"상태 파일 읽기 오류 (JSON 형식): {e}")
-            self.show_themed_message_box(QMessageBox.Warning, 
-                                        LanguageManager.translate("상태 로드 오류"), 
-                                        error_msg)
+            logging.error(f"PhotoSortApp.load_state: 상태 파일 JSON 디코딩 오류: {e}. 기본 설정으로 시작합니다.")
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("상태 로드 오류"), LanguageManager.translate("저장된 상태 파일을 읽는 중 오류가 발생했습니다. 기본 설정으로 시작합니다."))
+            # 첫 실행과 유사한 초기화 로직 호출 또는 플래그 설정
+            self.is_first_run = True # 임시 플래그로 첫 실행 로직 유도
+            QTimer.singleShot(0, self.load_state) # 재시도 (첫 실행 로직으로)
         except Exception as e:
-            error_msg = LanguageManager.translate("상태를 불러오는 중 오류가 발생했습니다")
-            logging.error(f"상태 불러오기 중 예상치 못한 오류: {e}")
-            self.show_themed_message_box(QMessageBox.Critical, 
-                                        LanguageManager.translate("상태 로드 오류"), 
-                                        f"{error_msg}: {e}")
-        # self.showMaximized()
+            logging.error(f"PhotoSortApp.load_state: 상태 불러오는 중 예외 발생: {e}")
+            import traceback
+            traceback.print_exc()
+            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("상태 로드 오류"), f"{LanguageManager.translate('상태를 불러오는 중 오류가 발생했습니다')}: {e}")
+            # 안전하게 기본 상태로 초기화하는 로직 필요 시 추가
 
     def reload_raw_files_from_state(self, folder_path):
         """ 저장된 RAW 폴더 경로에서 파일 목록을 다시 로드 """
@@ -9023,6 +9162,10 @@ class PhotoSortApp(QMainWindow):
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
 
+        # "파일명" 토글 체크박스 텍스트 업데이트 추가 
+        if hasattr(self, 'filename_toggle_grid'): # 위젯이 생성되었는지 확인
+            self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
+
         # RAW 처리 전략 라디오 버튼 텍스트 업데이트 추가
         if hasattr(self, 'strategy_radio_buttons'):
             current_lang = LanguageManager.get_current_language()
@@ -9448,6 +9591,177 @@ class FileListDialog(QDialog):
                                  LanguageManager.translate("오류"), 
                                  LanguageManager.translate("내부 오류로 인해 이미지로 이동할 수 없습니다."))
 
+class GridCellWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap = QPixmap()
+        self._filename = ""
+        self._show_filename = False
+        self._is_selected = False
+        self.setMinimumSize(1, 1) # 최소 크기 설정 중요
+
+        # 내부 QLabel을 사용하여 이미지와 텍스트를 분리하는 방법도 고려했으나,
+        # QPainter가 더 직접적인 제어를 제공합니다.
+
+    def setPixmap(self, pixmap):
+        if pixmap is None:
+            self._pixmap = QPixmap()
+        else:
+            self._pixmap = pixmap
+        self.update() # 위젯을 다시 그리도록 요청
+
+    def setText(self, text):
+        if self._filename != text: # 텍스트가 실제로 변경될 때만 업데이트
+            self._filename = text
+            self.update() # 변경 시 다시 그리기
+
+    def setShowFilename(self, show):
+        if self._show_filename != show: # 상태가 실제로 변경될 때만 업데이트
+            self._show_filename = show
+            self.update() # 변경 시 다시 그리기
+
+    def setSelected(self, selected):
+        self._is_selected = selected
+        self.update()
+
+    def pixmap(self):
+        return self._pixmap
+
+    def text(self):
+        return self._filename
+
+    # 파일명 상단 중앙
+    # def paintEvent(self, event):
+    #     painter = QPainter(self)
+    #     painter.setRenderHint(QPainter.Antialiasing, True)
+    #     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+    #     rect = self.rect() # 현재 위젯의 전체 영역
+
+    #     # 1. 배경색 설정 (기본 검정)
+    #     painter.fillRect(rect, QColor("black"))
+
+    #     # 2. 이미지 그리기 (비율 유지, 중앙 정렬)
+    #     if not self._pixmap.isNull():
+    #         # 위젯 크기에 맞춰 픽스맵 스케일링 (Qt.KeepAspectRatio)
+    #         scaled_pixmap = self._pixmap.scaled(rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+    #         # 중앙에 그리기 위한 위치 계산
+    #         x = (rect.width() - scaled_pixmap.width()) / 2
+    #         y = (rect.height() - scaled_pixmap.height()) / 2
+    #         painter.drawPixmap(int(x), int(y), scaled_pixmap)
+
+    #     # 3. 파일명 그리기 (show_filename이 True이고 filename이 있을 때)
+    #     if self._show_filename and self._filename:
+    #         # 텍스트 배경 (이미지 위에 반투명 검정)
+    #         # 파일명 길이에 따라 배경 너비 조절 가능 또는 셀 상단 전체에 고정 너비
+    #         font_metrics = QFontMetrics(painter.font())
+    #         text_width = font_metrics.horizontalAdvance(self._filename)
+    #         text_height = font_metrics.height()
+            
+    #         # 배경 사각형 위치 및 크기 (상단 중앙)
+    #         bg_rect_height = text_height + 4 # 상하 패딩
+    #         bg_rect_y = 1 # 테두리 바로 아래부터 시작하도록 수정 (테두리 두께 1px 가정)
+    #         # 배경 너비는 텍스트 너비에 맞추거나, 셀 너비에 맞출 수 있음
+    #         # 여기서는 텍스트 너비 + 좌우 패딩으로 설정
+    #         bg_rect_width = min(text_width + 10, rect.width() - 4) # 셀 너비 초과하지 않도록
+    #         bg_rect_x = (rect.width() - bg_rect_width) / 2
+            
+    #         text_bg_rect = QRect(int(bg_rect_x), bg_rect_y, int(bg_rect_width), bg_rect_height)
+    #         painter.fillRect(text_bg_rect, QColor(0, 0, 0, 150)) # 반투명 검정 (alpha 150)
+
+    #         # 텍스트 그리기 설정
+    #         painter.setPen(QColor("white"))
+    #         font = QFont("Arial", 10) # 파일명 폰트
+    #         painter.setFont(font)
+            
+    #         # 텍스트를 배경 사각형 중앙에 그리기
+    #         # QPainter.drawText()는 다양한 오버로드가 있음
+    #         # QRectF와 플래그를 사용하는 것이 정렬에 용이
+    #         text_rect = QRect(int(bg_rect_x + 2), bg_rect_y + 2, int(bg_rect_width - 4), text_height) # 패딩 고려
+    #         painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignVCenter, self._filename)
+
+
+    #     # 4. 테두리 그리기 (선택 상태에 따라 다름)
+    #     pen_color = QColor("white") if self._is_selected else QColor("#555555")
+    #     pen = QPen(pen_color)
+    #     pen.setWidth(1) # 테두리 두께
+    #     painter.setPen(pen)
+    #     painter.drawRect(rect.adjusted(0, 0, -1, -1)) # adjusted로 테두리가 위젯 안쪽에 그려지도록
+
+    #     painter.end()
+
+    # 마우스 이벤트 처리를 위해 기존 QLabel과 유사하게 이벤트 핸들러 추가 가능
+    # (PhotoSortApp의 on_grid_cell_clicked 등에서 사용하기 위해)
+    # 하지만 GridCellWidget 자체가 이벤트를 직접 처리하도록 하는 것이 더 일반적입니다.
+    # 여기서는 PhotoSortApp에서 처리하는 방식을 유지하기 위해 추가하지 않겠습니다.
+    # 대신, GridCellWidget에 인덱스나 경로 정보를 저장하고,
+    # PhotoSortApp에서 클릭된 GridCellWidget을 식별하는 방식이 필요합니다.
+
+    # 파일명 상단 좌측
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        rect = self.rect()
+
+        painter.fillRect(rect, QColor("black"))
+
+        if not self._pixmap.isNull():
+            scaled_pixmap = self._pixmap.scaled(rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            x = (rect.width() - scaled_pixmap.width()) / 2
+            y = (rect.height() - scaled_pixmap.height()) / 2
+            painter.drawPixmap(int(x), int(y), scaled_pixmap)
+
+        if self._show_filename and self._filename:
+            font = QFont("Arial", 10) # 파일명 폰트 먼저 설정
+            painter.setFont(font)   # painter에 폰트 적용
+            font_metrics = QFontMetrics(painter.font()) # painter에 적용된 폰트로 metrics 가져오기
+            
+            # 파일명 축약 (elidedText 사용)
+            # 셀 너비에서 좌우 패딩(예: 각 5px)을 뺀 값을 기준으로 축약
+            available_text_width = rect.width() - 10 
+            elided_filename_for_paint = font_metrics.elidedText(self._filename, Qt.ElideRight, available_text_width)
+
+            text_height = font_metrics.height()
+            
+            # 배경 사각형 위치 및 크기 (상단 좌측)
+            bg_rect_height = text_height + 4 # 상하 패딩
+            bg_rect_y = 1 # 테두리 바로 아래부터
+            
+            # 배경 너비: 축약된 텍스트 너비 + 좌우 패딩, 또는 셀 너비의 일정 비율 등
+            # 여기서는 축약된 텍스트 너비 + 약간의 패딩으로 설정
+            bg_rect_width = min(font_metrics.horizontalAdvance(elided_filename_for_paint) + 10, rect.width() - 4)
+            bg_rect_x = 2 # 좌측에서 약간의 패딩 (테두리 두께 1px + 여백 1px)
+            
+            text_bg_rect = QRect(int(bg_rect_x), bg_rect_y, int(bg_rect_width), bg_rect_height)
+            painter.fillRect(text_bg_rect, QColor(0, 0, 0, 150)) # 반투명 검정 (alpha 150)
+
+            painter.setPen(QColor("white"))
+            # 텍스트를 배경 사각형의 좌측 상단에 (약간의 내부 패딩을 주어) 그리기
+            # Qt.AlignLeft | Qt.AlignVCenter 를 사용하면 배경 사각형 내에서 세로 중앙, 가로 좌측 정렬
+            text_draw_x = bg_rect_x + 3 # 배경 사각형 내부 좌측 패딩
+            text_draw_y = bg_rect_y + 2 # 배경 사각형 내부 상단 패딩 (텍스트 baseline 고려)
+            
+            # drawText는 QPointF와 문자열을 받을 수 있습니다.
+            # 또는 QRectF와 정렬 플래그를 사용할 수 있습니다.
+            # 여기서는 QRectF를 사용하여 정렬 플래그로 제어합니다.
+            text_paint_rect = QRect(int(text_draw_x), int(text_draw_y),
+                                    int(bg_rect_width - 6), # 좌우 패딩 제외한 너비
+                                    text_height)
+            painter.drawText(text_paint_rect, Qt.AlignLeft | Qt.AlignVCenter, elided_filename_for_paint)
+
+
+        pen_color = QColor("white") if self._is_selected else QColor("#555555")
+        pen = QPen(pen_color)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        painter.end()
+
+
 def main():
     # PyInstaller로 패키징된 실행 파일을 위한 멀티프로세싱 지원 추가
     freeze_support()  # 이 호출이 멀티프로세싱 무한 재귀 문제를 해결합니다
@@ -9551,6 +9865,7 @@ def main():
         "피드백 및 업데이트 확인:": "Feedback & Updates:",
         "이미지 로드 중...": "Loading image...",
         "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)": "▪ Space: Enlarge photo in grid mode / Toggle zoom mode (Fit ↔ 100%)",
+        "파일명": "Filename",
     }
     
     LanguageManager.initialize_translations(translations)
