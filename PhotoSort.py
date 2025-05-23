@@ -110,7 +110,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.04.29)")
+    logging.info("PhotoSort 시작 (버전: 25.05.23)")
     
     return logger
 
@@ -3141,6 +3141,7 @@ class PhotoSortApp(QMainWindow):
         shortcut_items = [
             "▪ WASD 또는 방향키: 사진 넘기기",
             "▪ Shift+WASD 또는 Shift+방향키: 그리드 페이지 넘기기",
+            "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)",
             "▪ 1, 2, 3: 지정한 폴더로 이동",
             "▪ F1, F2, F3: 그리드 옵션 변경",
             "▪ Ctrl + Z: 파일 이동 취소",
@@ -3168,6 +3169,7 @@ class PhotoSortApp(QMainWindow):
         shortcut_items = [
             "▪ WASD 또는 방향키: 사진 넘기기",
             "▪ Shift+WASD 또는 Shift+방향키: 그리드 페이지 넘기기",
+            "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)",
             "▪ 1, 2, 3: 지정한 폴더로 이동",
             "▪ F1, F2, F3: 그리드 옵션 변경",
             "▪ Ctrl + Z: 파일 이동 취소",
@@ -4270,7 +4272,7 @@ class PhotoSortApp(QMainWindow):
 
         info_text = f"""
         <h2>PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.04.29</p>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.05.23</p>
         <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
@@ -5563,134 +5565,135 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"폴더 열기 실패: {e}")
     
-    def keyPressEvent(self, event: QKeyEvent):
-        """키보드 이벤트 처리 (Grid 모드 추가)"""
-        key = event.key()
-        modifiers = event.modifiers()
+    # eventFilter()와 중복되는 함수. 혹시 몰라 주석 처리.
+    # def keyPressEvent(self, event: QKeyEvent):
+    #     """키보드 이벤트 처리 (Grid 모드 추가)"""
+    #     key = event.key()
+    #     modifiers = event.modifiers()
         
-        # --- Enter 키 처리 추가 ---
-        if key == Qt.Key_Return or key == Qt.Key_Enter:
-            if self.image_files: # 로드된 이미지가 있을 때만 실행
-                # 현재 선택된 이미지의 인덱스 결정
-                current_selected_index = -1
-                if self.grid_mode == "Off":
-                    current_selected_index = self.current_image_index
-                else: # Grid 모드일 때
-                    potential_index = self.grid_page_start_index + self.current_grid_index
-                    if 0 <= potential_index < len(self.image_files):
-                        current_selected_index = potential_index
+    #     # --- Enter 키 처리 추가 ---
+    #     if key == Qt.Key_Return or key == Qt.Key_Enter:
+    #         if self.image_files: # 로드된 이미지가 있을 때만 실행
+    #             # 현재 선택된 이미지의 인덱스 결정
+    #             current_selected_index = -1
+    #             if self.grid_mode == "Off":
+    #                 current_selected_index = self.current_image_index
+    #             else: # Grid 모드일 때
+    #                 potential_index = self.grid_page_start_index + self.current_grid_index
+    #                 if 0 <= potential_index < len(self.image_files):
+    #                     current_selected_index = potential_index
 
-                # 유효한 인덱스가 있을 때만 대화상자 표시
-                if current_selected_index != -1:
-                    dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
-                    dialog.exec_() # 모달 대화상자로 실행
-                else:
-                    logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.") # 디버깅용
-            else:
-                logging.debug("Enter 키: 로드된 이미지가 없습니다.") # 디버깅용
-            return # Enter 키 이벤트 처리 완료
-        # --- Enter 키 처리 끝 ---
+    #             # 유효한 인덱스가 있을 때만 대화상자 표시
+    #             if current_selected_index != -1:
+    #                 dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
+    #                 dialog.exec_() # 모달 대화상자로 실행
+    #             else:
+    #                 logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.") # 디버깅용
+    #         else:
+    #             logging.debug("Enter 키: 로드된 이미지가 없습니다.") # 디버깅용
+    #         return # Enter 키 이벤트 처리 완료
+    #     # --- Enter 키 처리 끝 ---
 
-        # 새로운 단축키 처리 (F1, F2, F3, Delete)
-        if key == Qt.Key_F1:
-            # F1: Grid Off
-            self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-            self.grid_off_radio.setChecked(True)
-            self.on_grid_changed(self.grid_off_radio)
-            return True
-        elif key == Qt.Key_F2:
-            # F2: Grid 2x2
-            self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-            self.grid_2x2_radio.setChecked(True)
-            self.on_grid_changed(self.grid_2x2_radio)
-            return True
-        elif key == Qt.Key_F3:
-            # F3: Grid 3x3
-            self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-            self.grid_3x3_radio.setChecked(True)
-            self.on_grid_changed(self.grid_3x3_radio)
-            return True
+    #     # 새로운 단축키 처리 (F1, F2, F3, Delete)
+    #     if key == Qt.Key_F1:
+    #         # F1: Grid Off
+    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
+    #         self.grid_off_radio.setChecked(True)
+    #         self.on_grid_changed(self.grid_off_radio)
+    #         return True
+    #     elif key == Qt.Key_F2:
+    #         # F2: Grid 2x2
+    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
+    #         self.grid_2x2_radio.setChecked(True)
+    #         self.on_grid_changed(self.grid_2x2_radio)
+    #         return True
+    #     elif key == Qt.Key_F3:
+    #         # F3: Grid 3x3
+    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
+    #         self.grid_3x3_radio.setChecked(True)
+    #         self.on_grid_changed(self.grid_3x3_radio)
+    #         return True
         
-        # ESC 키 처리: 확대 모드에서는 Fit 모드로 우선 돌아가고, Grid Off 모드에서만 이전 그리드로 복원
-        if key == Qt.Key_Escape:
-            # 우선순위 1: 100% 또는 200% 확대 모드에서는 항상 Fit 모드로 돌아가기
-            if self.zoom_mode != "Fit":
-                self.fit_radio.setChecked(True)
-                self.on_zoom_changed(self.fit_radio)
-                return
-            # 우선순위 2: Grid Off 모드에서만 이전 그리드 모드로 복원 (이미 Fit 모드일 때)
-            elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
-                if self.previous_grid_mode == "2x2":
-                    self.grid_2x2_radio.setChecked(True)
-                    # 강제 새로고침 플래그 설정 추가
-                    self.force_refresh = True
-                    self.on_grid_changed(self.grid_2x2_radio)
-                elif self.previous_grid_mode == "3x3":
-                    self.grid_3x3_radio.setChecked(True)
-                    # 강제 새로고침 플래그 설정 추가
-                    self.force_refresh = True
-                    self.on_grid_changed(self.grid_3x3_radio)
-                return
+    #     # ESC 키 처리: 확대 모드에서는 Fit 모드로 우선 돌아가고, Grid Off 모드에서만 이전 그리드로 복원
+    #     if key == Qt.Key_Escape:
+    #         # 우선순위 1: 100% 또는 200% 확대 모드에서는 항상 Fit 모드로 돌아가기
+    #         if self.zoom_mode != "Fit":
+    #             self.fit_radio.setChecked(True)
+    #             self.on_zoom_changed(self.fit_radio)
+    #             return
+    #         # 우선순위 2: Grid Off 모드에서만 이전 그리드 모드로 복원 (이미 Fit 모드일 때)
+    #         elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
+    #             if self.previous_grid_mode == "2x2":
+    #                 self.grid_2x2_radio.setChecked(True)
+    #                 # 강제 새로고침 플래그 설정 추가
+    #                 self.force_refresh = True
+    #                 self.on_grid_changed(self.grid_2x2_radio)
+    #             elif self.previous_grid_mode == "3x3":
+    #                 self.grid_3x3_radio.setChecked(True)
+    #                 # 강제 새로고침 플래그 설정 추가
+    #                 self.force_refresh = True
+    #                 self.on_grid_changed(self.grid_3x3_radio)
+    #             return
         
-        # 스페이스바 처리: 그리드 모드에서 Grid Off로 전환
-        if key == Qt.Key_Space and self.grid_mode != "Off":
-            # 이전 그리드 모드 저장
-            self.previous_grid_mode = self.grid_mode
-            # Grid Off로 전환 (직접 모드 설정 방식으로 변경)
-            self.grid_mode = "Off"
-            self.grid_off_radio.setChecked(True)
+    #     # 스페이스바 처리: 그리드 모드에서 Grid Off로 전환
+    #     if key == Qt.Key_Space and self.grid_mode != "Off":
+    #         # 이전 그리드 모드 저장
+    #         self.previous_grid_mode = self.grid_mode
+    #         # Grid Off로 전환 (직접 모드 설정 방식으로 변경)
+    #         self.grid_mode = "Off"
+    #         self.grid_off_radio.setChecked(True)
             
-            # 스페이스바로 전환 시 이전 모드 유지를 위한 플래그 설정
-            self.space_pressed = True
+    #         # 스페이스바로 전환 시 이전 모드 유지를 위한 플래그 설정
+    #         self.space_pressed = True
             
-            # 그리드 뷰 업데이트
-            self.update_grid_view()
+    #         # 그리드 뷰 업데이트
+    #         self.update_grid_view()
             
-            # 줌 라디오 버튼 상태 업데이트
-            self.update_zoom_radio_buttons_state()
-            return
+    #         # 줌 라디오 버튼 상태 업데이트
+    #         self.update_zoom_radio_buttons_state()
+    #         return
         
-        if self.grid_mode != "Off":
-            # --- Grid 모드 키 처리 ---
-            # Shift+A/D 또는 Shift+Left/Right 처리
-            if modifiers & Qt.ShiftModifier:
-                if key == Qt.Key_A or key == Qt.Key_Left: # Shift+A 또는 Shift+Left
-                    self.navigate_to_adjacent_page(-1)  # 이전 페이지
-                    return
-                elif key == Qt.Key_D or key == Qt.Key_Right: # Shift+D 또는 Shift+Right
-                    self.navigate_to_adjacent_page(1)   # 다음 페이지
-                    return
+    #     if self.grid_mode != "Off":
+    #         # --- Grid 모드 키 처리 ---
+    #         # Shift+A/D 또는 Shift+Left/Right 처리
+    #         if modifiers & Qt.ShiftModifier:
+    #             if key == Qt.Key_A or key == Qt.Key_Left: # Shift+A 또는 Shift+Left
+    #                 self.navigate_to_adjacent_page(-1)  # 이전 페이지
+    #                 return
+    #             elif key == Qt.Key_D or key == Qt.Key_Right: # Shift+D 또는 Shift+Right
+    #                 self.navigate_to_adjacent_page(1)   # 다음 페이지
+    #                 return
 
-            # --- 기존 WASD/Arrow 키 네비게이션 로직 수정 ---
-            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+    #         # --- 기존 WASD/Arrow 키 네비게이션 로직 수정 ---
+    #         rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
 
-            if key == Qt.Key_A or key == Qt.Key_Left:
-                self.navigate_grid(-1) # 좌측/이전
-            elif key == Qt.Key_D or key == Qt.Key_Right:
-                self.navigate_grid(1)  # 우측/다음
-            elif key == Qt.Key_W or key == Qt.Key_Up:
-                self.navigate_grid(-cols) # 위
-            elif key == Qt.Key_S or key == Qt.Key_Down:
-                self.navigate_grid(cols)  # 아래
-            # --- 수정 끝 ---
+    #         if key == Qt.Key_A or key == Qt.Key_Left:
+    #             self.navigate_grid(-1) # 좌측/이전
+    #         elif key == Qt.Key_D or key == Qt.Key_Right:
+    #             self.navigate_grid(1)  # 우측/다음
+    #         elif key == Qt.Key_W or key == Qt.Key_Up:
+    #             self.navigate_grid(-cols) # 위
+    #         elif key == Qt.Key_S or key == Qt.Key_Down:
+    #             self.navigate_grid(cols)  # 아래
+    #         # --- 수정 끝 ---
 
-            # 폴더 이동 (1, 2, 3 키)
-            elif Qt.Key_1 <= key <= Qt.Key_3:
-                folder_index = key - Qt.Key_1
-                self.move_grid_image(folder_index)
-            else:
-                 pass # Grid 모드에서 처리 안 된 키는 무시
-        else:
-            # --- Grid Off 모드 키 처리 (기존 로직 유지) ---
-            if key == Qt.Key_A or key == Qt.Key_Left: # 여기는 원래 or 조건으로 잘 되어 있음
-                self.show_previous_image()
-            elif key == Qt.Key_D or key == Qt.Key_Right: # 여기도 원래 or 조건으로 잘 되어 있음
-                self.show_next_image()
-            elif Qt.Key_1 <= key <= Qt.Key_3:
-                folder_index = key - Qt.Key_1
-                self.move_current_image_to_folder(folder_index)
-            else:
-                super().keyPressEvent(event)
+    #         # 폴더 이동 (1, 2, 3 키)
+    #         elif Qt.Key_1 <= key <= Qt.Key_3:
+    #             folder_index = key - Qt.Key_1
+    #             self.move_grid_image(folder_index)
+    #         else:
+    #              pass # Grid 모드에서 처리 안 된 키는 무시
+    #     else:
+    #         # --- Grid Off 모드 키 처리 (기존 로직 유지) ---
+    #         if key == Qt.Key_A or key == Qt.Key_Left: # 여기는 원래 or 조건으로 잘 되어 있음
+    #             self.show_previous_image()
+    #         elif key == Qt.Key_D or key == Qt.Key_Right: # 여기도 원래 or 조건으로 잘 되어 있음
+    #             self.show_next_image()
+    #         elif Qt.Key_1 <= key <= Qt.Key_3:
+    #             folder_index = key - Qt.Key_1
+    #             self.move_current_image_to_folder(folder_index)
+    #         else:
+    #             super().keyPressEvent(event)
     
     def navigate_to_adjacent_page(self, direction):
         """그리드 모드에서 페이지 단위 이동 처리 (순환 기능 추가)"""
@@ -8585,14 +8588,17 @@ class PhotoSortApp(QMainWindow):
 
             # --- F1, F2, F3, Delete 키 처리 ---
             if key == Qt.Key_F1:
+                self.force_refresh = True  # 강제 새로고침 플래그 추가
                 self.grid_off_radio.setChecked(True)
                 self.on_grid_changed(self.grid_off_radio)
                 return True
             elif key == Qt.Key_F2:
+                self.force_refresh = True  # 강제 새로고침 플래그 추가
                 self.grid_2x2_radio.setChecked(True)
                 self.on_grid_changed(self.grid_2x2_radio)
                 return True
             elif key == Qt.Key_F3:
+                self.force_refresh = True  # 강제 새로고침 플래그 추가
                 self.grid_3x3_radio.setChecked(True)
                 self.on_grid_changed(self.grid_3x3_radio)
                 return True
@@ -8622,35 +8628,46 @@ class PhotoSortApp(QMainWindow):
                     return True
 
             # --- 스페이스바 처리 수정 ---
-            if key == Qt.Key_Space and self.grid_mode != "Off":
-                # 현재 그리드에서 선택된 이미지의 인덱스를 계산
-                current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
-
-                # 유효한 인덱스일 경우 current_image_index 업데이트
-                if 0 <= current_selected_grid_index < len(self.image_files):
-                    self.current_image_index = current_selected_grid_index
-                    
-                    # 이미지 변경 시 강제 새로고침 플래그 설정 추가
-                    self.force_refresh = True
-                    
-                    # Fit 모드인 경우 기존 캐시 무효화 추가
+            if key == Qt.Key_Space:
+                if self.grid_mode == "Off":  # Grid Off 모드일 때만 Zoom 토글
                     if self.zoom_mode == "Fit":
-                        self.last_fit_size = (0, 0)
-                        self.fit_pixmap_cache.clear()
+                        # Fit 모드에서 100% 모드로 전환
+                        self.zoom_100_radio.setChecked(True)
+                        self.on_zoom_changed(self.zoom_100_radio)
+                    else:
+                        # 100% 또는 200% 모드에서 Fit 모드로 전환
+                        self.fit_radio.setChecked(True)
+                        self.on_zoom_changed(self.fit_radio)
+                    return True
+                else:  # Grid 모드일 때는 기존 동작 유지
+                    # 현재 그리드에서 선택된 이미지의 인덱스를 계산
+                    current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
 
-                # 이전 그리드 모드 저장
-                self.previous_grid_mode = self.grid_mode
-                # Grid Off로 전환
-                self.grid_mode = "Off"
-                self.grid_off_radio.setChecked(True)
-                # 스페이스바로 전환되었음을 표시 (on_grid_changed에서 이전 모드 초기화 방지용)
-                self.space_pressed = True
-                # 뷰 업데이트 (이제 업데이트된 current_image_index 사용)
-                self.update_grid_view()
-                # 줌 버튼 상태 업데이트
-                self.update_zoom_radio_buttons_state()
-                self.update_counter_layout() # 레이아웃 업데이트 호출
-                return True # 스페이스바 이벤트 처리 완료
+                    # 유효한 인덱스일 경우 current_image_index 업데이트
+                    if 0 <= current_selected_grid_index < len(self.image_files):
+                        self.current_image_index = current_selected_grid_index
+                        
+                        # 이미지 변경 시 강제 새로고침 플래그 설정 추가
+                        self.force_refresh = True
+                        
+                        # Fit 모드인 경우 기존 캐시 무효화 추가
+                        if self.zoom_mode == "Fit":
+                            self.last_fit_size = (0, 0)
+                            self.fit_pixmap_cache.clear()
+
+                    # 이전 그리드 모드 저장
+                    self.previous_grid_mode = self.grid_mode
+                    # Grid Off로 전환
+                    self.grid_mode = "Off"
+                    self.grid_off_radio.setChecked(True)
+                    # 스페이스바로 전환되었음을 표시
+                    self.space_pressed = True
+                    # 뷰 업데이트
+                    self.update_grid_view()
+                    # 줌 버튼 상태 업데이트
+                    self.update_zoom_radio_buttons_state()
+                    self.update_counter_layout()
+                    return True
 
             # --- Grid 모드 또는 Grid Off 모드 키 처리 ---
             if self.grid_mode != "Off":
@@ -9533,6 +9550,7 @@ def main():
         "미리보기 추출 실패": "Preview Extraction Failed",
         "피드백 및 업데이트 확인:": "Feedback & Updates:",
         "이미지 로드 중...": "Loading image...",
+        "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)": "▪ Space: Enlarge photo in grid mode / Toggle zoom mode (Fit ↔ 100%)",
     }
     
     LanguageManager.initialize_translations(translations)
