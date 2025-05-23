@@ -110,7 +110,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.05.23)")
+    logging.info("PhotoSort 시작 (버전: 25.05.24)")
     
     return logger
 
@@ -455,9 +455,9 @@ class UIScaleManager:
         "category_folder_vertical_spacing": 7,
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
-        "settings_popup_height": 1080,
+        "settings_popup_height": 950,
         "settings_layout_vspace": 10,
-        "viewshortcuts_seperator": 15,
+        "viewshortcuts_seperator": 0,
         "infotext_licensebutton": 40,
         "donation_between_tworows": 30,
         "bottom_space": 30,
@@ -465,7 +465,7 @@ class UIScaleManager:
         "info_version_margin": 40,
         "info_paragraph_margin": 40,
         "info_bottom_margin": 40,
-        "info_donation_spacing": 50,
+        "info_donation_spacing": 40,
         
         
     }
@@ -493,7 +493,7 @@ class UIScaleManager:
         "settings_popup_width": 750,
         "settings_popup_height": 835,  # 크게 줄임
         "settings_layout_vspace": 7,
-        "viewshortcuts_seperator": 10,
+        "viewshortcuts_seperator": 0,
         "infotext_licensebutton": 25,
         "donation_between_tworows": 20,
         "bottom_space": 20,
@@ -501,7 +501,7 @@ class UIScaleManager:
         "info_version_margin": 30,
         "info_paragraph_margin": 30,
         "info_bottom_margin": 30,
-        "info_donation_spacing": 30,
+        "info_donation_spacing": 25,
     }
 
     _current_settings = NORMAL_SETTINGS # 초기값은 Normal로 설정
@@ -663,71 +663,6 @@ class LanguageManager:
         """언어 코드에 해당하는 언어 이름 반환"""
         return cls.LANGUAGES.get(language_code, language_code)
 
-class RawProcessingStrategyManager:
-    """RAW 파일 처리 전략을 관리하는 클래스"""
-    
-    # 사용 가능한 전략
-    STRATEGIES = {
-        "ultra_fast": "매우 빠름",
-        "fast": "빠름",
-        "high_quality": "고품질",
-        "ultra_quality": "최고 품질"
-    }
-    
-    # 영문 번역
-    STRATEGIES_EN = {
-        "ultra_fast": "Ultra Fast",
-        "fast": "Fast",
-        "high_quality": "High Quality",
-        "ultra_quality": "Ultra Quality"
-    }
-    
-    _current_strategy = "fast"  # 기본값: 빠름
-    _strategy_change_callbacks = []  # 전략 변경 시 호출할 콜백 함수 목록
-    
-    @classmethod
-    def set_strategy(cls, strategy_code):
-        """전략 설정 변경"""
-        if strategy_code in cls.STRATEGIES:
-            cls._current_strategy = strategy_code
-            # 전략 변경 시 콜백 함수 호출
-            for callback in cls._strategy_change_callbacks:
-                callback()
-            return True
-        return False
-    
-    @classmethod
-    def register_strategy_change_callback(cls, callback):
-        """전략 변경 시 호출될 콜백 함수 등록"""
-        if callable(callback) and callback not in cls._strategy_change_callbacks:
-            cls._strategy_change_callbacks.append(callback)
-    
-    @classmethod
-    def get_current_strategy(cls):
-        """현재 전략 코드 반환"""
-        return cls._current_strategy
-    
-    @classmethod
-    def get_current_strategy_name(cls, language="ko"):
-        """현재 전략 이름 반환 (언어 지원)"""
-        strategy_code = cls._current_strategy
-        if language == "en":
-            return cls.STRATEGIES_EN.get(strategy_code, "")
-        else:
-            return cls.STRATEGIES.get(strategy_code, "")
-    
-    @classmethod
-    def get_available_strategies(cls):
-        """사용 가능한 전략 목록 반환"""
-        return list(cls.STRATEGIES.keys())
-    
-    @classmethod
-    def get_strategy_name(cls, strategy_code, language="ko"):
-        """전략 코드에 해당하는 이름 반환 (언어 지원)"""
-        if language == "en":
-            return cls.STRATEGIES_EN.get(strategy_code, strategy_code)
-        else:
-            return cls.STRATEGIES.get(strategy_code, strategy_code)
 
 class DateFormatManager:
     """날짜 형식 설정을 관리하는 클래스"""
@@ -1279,15 +1214,18 @@ class ResourceManager:
             return
             
         print("ResourceManager: 리소스 종료 중...")
-        self._running = False
+        self._running = False # <<< 종료 플래그 설정
         
-        # 활성 작업 취소
-        self.cancel_all_tasks()
+        # 활성 작업 취소 (기존 로직 유지)
+        self.cancel_all_tasks() 
         
         # 스레드 풀 종료
-        self.imaging_thread_pool.shutdown(wait=False, cancel_futures=True)
+        logging.info("ResourceManager: 이미징 스레드 풀 종료 시도 (wait=True)...")
+        # self.imaging_thread_pool.shutdown(wait=False, cancel_futures=True) # 이전 코드
+        self.imaging_thread_pool.shutdown(wait=True, cancel_futures=True) # <<< wait=True로 변경
+        logging.info("ResourceManager: 이미징 스레드 풀 종료 완료.")
         
-        # RAW 디코더 풀 종료
+        # RAW 디코더 풀 종료 (기존 로직 유지)
         self.raw_decoder_pool.shutdown()
         
         print("ResourceManager: 리소스 종료 완료")
@@ -1370,6 +1308,9 @@ class ImageLoader(QObject):
      # 클래스 변수로 전역 전략 설정 (스레드 간 공유)
     _global_raw_strategy = "undetermined"
     _strategy_initialized = False  # 전략 초기화 여부 플래그 추가
+
+    # 디코딩 실패 시 PhotoSortApp에 알리기 위한 새 시그널
+    decodingFailedForFile = Signal(str) # 실패한 파일 경로 전달
     
     def __init__(self, parent=None, raw_extensions=None):
         super().__init__(parent)
@@ -1396,7 +1337,7 @@ class ImageLoader(QObject):
         self.resource_manager = ResourceManager.instance()
         self.active_futures = []  # 현재 활성화된 로딩 작업 추적
         self.last_requested_page = -1  # 마지막으로 요청된 페이지
-        self._raw_load_strategy = "undetermined" # "undetermined", "preview", "decode" - 첫 RAW 파일 처리 방식 결정
+        self._raw_load_strategy = "preview" # PhotoSortApp에서 명시적으로 설정하기 전까지의 기본값
         self.load_executor = self.resource_manager.imaging_thread_pool
 
         # 디코더 결과 처리 타이머 설정
@@ -1411,9 +1352,6 @@ class ImageLoader(QObject):
         # 전략 결정을 위한 락 추가
         self._strategy_lock = threading.Lock()
 
-        # 스레드 안전성을 위한 lock
-        if not hasattr(ImageLoader, '_strategy_lock'):
-            ImageLoader._strategy_lock = threading.RLock()  # 재진입 가능한 lock 사용
 
     def get_system_memory_gb(self):
         """시스템 메모리 크기 확인 (GB)"""
@@ -1524,175 +1462,6 @@ class ImageLoader(QObject):
             
         return items_removed  # 실제 제거된 항목 수 반환
 
-    def determine_raw_strategy(self, file_path):
-        """명시적으로 주어진 파일로 RAW 로딩 전략 결정"""
-        file_path_obj = Path(file_path)
-        
-        # 클래스 수준의 락 사용
-        with ImageLoader._strategy_lock:
-            # 이미 전역 전략이 초기화되었는지 확인
-            if ImageLoader._strategy_initialized:
-                logging.debug(f"전역 전략이 이미 초기화됨: {ImageLoader._global_raw_strategy}, 결정 과정 건너뜀 ({file_path_obj.name})")
-                # 이미 초기화되었어도 인스턴스의 전략은 업데이트
-                self._raw_load_strategy = ImageLoader._global_raw_strategy
-                return
-                
-            # 전략 결정 로직 실행
-            current_strategy = RawProcessingStrategyManager.get_current_strategy()
-            logging.info(f"RAW 처리 전략 결정 시작: {current_strategy} ({file_path_obj.name})")
-            
-            # 미리보기 추출 시도
-            preview_pixmap_for_check, preview_width, preview_height = self._load_raw_preview_with_orientation(file_path)
-            
-            # 원본 RAW 크기 확인 시도
-            raw_width, raw_height = None, None
-            try:
-                with rawpy.imread(file_path) as raw:
-                    raw_width = raw.sizes.raw_width
-                    raw_height = raw.sizes.raw_height
-            except Exception as e_raw_size:
-                logging.warning(f"RAW 원본 크기 읽기 실패 ({file_path_obj.name}): {e_raw_size}")
-            
-            # 전략에 따라 처리 방식 결정
-            if current_strategy == "ultra_fast":
-                # "매우 빠름" - 무조건 미리보기 사용
-                determined_strategy = "preview"
-                logging.info(f"전략 '{current_strategy}': 무조건 미리보기 사용")
-                
-                # 미리보기 추출 실패 시 오류 메시지
-                if not preview_pixmap_for_check or preview_pixmap_for_check.isNull():
-                    # 기존 QEvent 발송 코드 제거하고 메시지 함수 직접 호출
-                    self.show_preview_failure_message()
-                    
-                    logging.warning(f"미리보기 이미지 추출 실패 ({file_path_obj.name}). 설정 변경 필요.")
-            
-            elif current_strategy == "fast":
-                # "빠름" - 미리보기 크기 기준으로 결정
-                if preview_pixmap_for_check and not preview_pixmap_for_check.isNull() and preview_width and preview_height:
-                    preview_long_edge = max(preview_width, preview_height)
-                    if preview_long_edge >= 2900:
-                        determined_strategy = "preview"
-                        logging.info(f"전략 '{current_strategy}': 미리보기 크기 충분함 ({preview_long_edge}px >= 2900px)")
-                    else:
-                        determined_strategy = "decode"
-                        logging.info(f"전략 '{current_strategy}': 미리보기 크기 작음 ({preview_long_edge}px < 2900px)")
-                        # 디코딩 시도
-                        try:
-                            with rawpy.imread(file_path) as raw:
-                                rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
-                                # 디코딩 성공 시 decode 전략 유지
-                                logging.warning(f"전략 확인: 디코딩 성공")
-                        except Exception as e_decode_check:
-                            # 디코딩 실패 시 preview 전략으로 변경
-                            logging.warning(f"전략 변경: 디코딩 실패 ({e_decode_check}), preview로 전환")
-                            determined_strategy = "preview"
-                            # 호환성 문제 메시지 표시
-                            self.show_compatibility_message()
-                else:
-                    # 미리보기 추출 실패시 디코딩 시도
-                    determined_strategy = "decode"
-                    logging.warning(f"전략 '{current_strategy}': 미리보기 추출 실패, 디코딩 시도")
-            
-            elif current_strategy == "high_quality":
-                # "고품질" - 원본 대비 미리보기 품질 or 절대 기준
-                if preview_pixmap_for_check and not preview_pixmap_for_check.isNull() and preview_width and preview_height:
-                    preview_long_edge = max(preview_width, preview_height)
-                    
-                    if raw_width and raw_height:
-                        # 원본 크기를 알 수 있는 경우: 비율 기준
-                        raw_long_edge = max(raw_width, raw_height)
-                        preview_ratio = preview_long_edge / raw_long_edge if raw_long_edge > 0 else 0
-                        
-                        if preview_ratio >= 0.75:  # 75% 이상
-                            determined_strategy = "preview"
-                            logging.info(f"전략 '{current_strategy}': 미리보기/원본 비율 충분함 ({preview_ratio:.2f} >= 0.75)")
-                        else:
-                            determined_strategy = "decode"
-                            logging.info(f"전략 '{current_strategy}': 미리보기/원본 비율 낮음 ({preview_ratio:.2f} < 0.75)")
-                    else:
-                        # 원본 크기를 모르는 경우: 절대 크기 기준
-                        if preview_long_edge >= 5900:
-                            determined_strategy = "preview"
-                            logging.info(f"전략 '{current_strategy}': 미리보기 절대 크기 충분함 ({preview_long_edge}px >= 5900px)")
-                        else:
-                            determined_strategy = "decode"
-                            logging.info(f"전략 '{current_strategy}': 미리보기 절대 크기 작음 ({preview_long_edge}px < 5900px)")
-                else:
-                    # 미리보기 추출 실패시 디코딩 시도
-                    determined_strategy = "decode"
-                    logging.warning(f"전략 '{current_strategy}': 미리보기 추출 실패, 디코딩 시도")
-                
-                # 디코딩 전략 선택 시 실제 디코딩 가능 여부 확인
-                if determined_strategy == "decode":
-                    try:
-                        with rawpy.imread(file_path) as raw:
-                            rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
-                            # 디코딩 성공 시 decode 전략 유지
-                            logging.warning(f"전략 확인: 디코딩 성공")
-                    except Exception as e_decode_check:
-                        # 디코딩 실패 시 preview 전략으로 변경
-                        logging.warning(f"전략 변경: 디코딩 실패 ({e_decode_check}), preview로 전환")
-                        determined_strategy = "preview"
-                        # 호환성 문제 메시지 표시
-                        self.show_compatibility_message()
-            
-            elif current_strategy == "ultra_quality":
-                # "최고 품질" - 원본 대비 미리보기 품질 or 절대 기준 (더 높은 기준)
-                if preview_pixmap_for_check and not preview_pixmap_for_check.isNull() and preview_width and preview_height:
-                    preview_long_edge = max(preview_width, preview_height)
-                    
-                    if raw_width and raw_height:
-                        # 원본 크기를 알 수 있는 경우: 비율 기준
-                        raw_long_edge = max(raw_width, raw_height)
-                        preview_ratio = preview_long_edge / raw_long_edge if raw_long_edge > 0 else 0
-                        
-                        if preview_ratio >= 0.90:  # 90% 이상
-                            determined_strategy = "preview"
-                            logging.info(f"전략 '{current_strategy}': 미리보기/원본 비율 충분함 ({preview_ratio:.2f} >= 0.90)")
-                        else:
-                            determined_strategy = "decode"
-                            logging.info(f"전략 '{current_strategy}': 미리보기/원본 비율 낮음 ({preview_ratio:.2f} < 0.90)")
-                    else:
-                        # 원본 크기를 모르는 경우: 절대 크기 기준
-                        if preview_long_edge >= 9000:
-                            determined_strategy = "preview"
-                            logging.info(f"전략 '{current_strategy}': 미리보기 절대 크기 충분함 ({preview_long_edge}px >= 9000px)")
-                        else:
-                            determined_strategy = "decode"
-                            logging.info(f"전략 '{current_strategy}': 미리보기 절대 크기 작음 ({preview_long_edge}px < 9000px)")
-                else:
-                    # 미리보기 추출 실패시 디코딩 시도
-                    determined_strategy = "decode"
-                    logging.warning(f"전략 '{current_strategy}': 미리보기 추출 실패, 디코딩 시도")
-                
-                # 디코딩 전략 선택 시 실제 디코딩 가능 여부 확인
-                if determined_strategy == "decode":
-                    try:
-                        with rawpy.imread(file_path) as raw:
-                            rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
-                            # 디코딩 성공 시 decode 전략 유지
-                            logging.info(f"전략 확인: 디코딩 성공")
-                    except Exception as e_decode_check:
-                        # 디코딩 실패 시 preview 전략으로 변경
-                        logging.warning(f"전략 변경: 디코딩 실패 ({e_decode_check}), preview로 전환")
-                        determined_strategy = "preview"
-                        # 호환성 문제 메시지 표시
-                        self.show_compatibility_message()
-            else:
-                # 기본 전략: 프리뷰
-                determined_strategy = "preview"  # Default to decode initially
-                logging.warning(f"알 수 없는 전략 '{current_strategy}': 기본값 'preview' 사용")
-            
-            # --- 최종 결정된 전략 저장 ---
-            self._raw_load_strategy = determined_strategy
-            
-            # 전역 전략 변수 설정 강화 - 클래스 변수 직접 수정
-            with ImageLoader._strategy_lock:
-                ImageLoader._global_raw_strategy = determined_strategy
-                ImageLoader._strategy_initialized = True  # 초기화 플래그 설정
-                logging.info(f"전역 RAW 로딩 전략 결정 및 초기화 완료: {determined_strategy}")
-                
-            logging.info(f"최종 RAW 로딩 전략 결정됨: {self._raw_load_strategy}")
 
     def cancel_all_raw_decoding(self):
         """진행 중인 모든 RAW 디코딩 작업 취소"""
@@ -1700,7 +1469,7 @@ class ImageLoader(QObject):
         self.pending_raw_decoding.clear()
         
         # 캐시와 전략 초기화
-        self._raw_load_strategy = "undetermined"
+        self._raw_load_strategy = "preview"
         logging.info("모든 RAW 디코딩 작업 취소됨, 인스턴스 전략 초기화됨")
 
     def check_decoder_results(self):
@@ -1814,10 +1583,16 @@ class ImageLoader(QObject):
         return None, None, None
     
     def load_image_with_orientation(self, file_path):
-        """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 전략 포함)"""
-        # 캐시 확인
+        """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 방식은 _raw_load_strategy 따름)"""
+
+        logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 현재 내부 전략: {self._raw_load_strategy}") # <<< 로그 추가
+
+        if not ResourceManager.instance()._running:
+            logging.info(f"ImageLoader.load_image_with_orientation: ResourceManager 종료 중, 로드 중단 ({Path(file_path).name})")
+            return QPixmap() # 빈 QPixmap 반환
+        # --- 확인 끝 ---
+
         if file_path in self.cache:
-            # 최근 사용 표시 (LRU 캐시 업데이트)
             self.cache.move_to_end(file_path)
             return self.cache[file_path]
 
@@ -1825,124 +1600,111 @@ class ImageLoader(QObject):
         is_raw = file_path_obj.suffix.lower() in self.raw_extensions
         pixmap = None # 결과 Pixmap 변수 초기화
 
-        # --- RAW 파일 처리 로직 ---
         if is_raw:
-            # --- 이미지가 아직 설정되지 않은 경우 전략 적용 ---
-            if pixmap is None:
-                # 무조건 클래스 변수 확인 후 인스턴스 변수에 동기화
-                with ImageLoader._strategy_lock:
-                    if ImageLoader._strategy_initialized:
-                        # 전역 전략이 설정되어 있으면 인스턴스 변수에 동기화
-                        if self._raw_load_strategy != ImageLoader._global_raw_strategy:
-                            self._raw_load_strategy = ImageLoader._global_raw_strategy
-                            logging.debug(f"인스턴스 전략 동기화: {self._raw_load_strategy} ({file_path_obj.name})")
+            # PhotoSortApp에서 설정한 _raw_load_strategy 값을 사용
+            current_processing_method = self._raw_load_strategy
+            logging.debug(f"ImageLoader ({id(self)}): RAW 파일 '{file_path_obj.name}' 처리 시작, 방식: {current_processing_method}")
 
-                if self._raw_load_strategy == "preview":
-                    logging.info(f"전략 적용 'preview': ({file_path_obj.name})")
-                    # Only try loading the preview. Do not fall back to decode.
-                    preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
-                    if preview_pixmap_result and not preview_pixmap_result.isNull():
-                        pixmap = preview_pixmap_result
-                    else:
-                        logging.warning(f"'preview' 전략 실패, 미리보기 로드 불가 ({file_path_obj.name})")
-                        pixmap = QPixmap() # Return empty pixmap on failure
 
-                elif self._raw_load_strategy == "decode":
-                    logging.info(f"전략 적용 'decode': ({file_path_obj.name})")
-                    
-                    # 이미 디코딩 중이거나 캐시에 있는지 확인
-                    if file_path in self.pending_raw_decoding:
-                        logging.debug(f"이미 디코딩 중: {file_path_obj.name}")
-                        # 임시 플레이스홀더 이미지 반환
-                        placeholder = QPixmap(100, 100)
-                        placeholder.fill(QColor(40, 40, 40))
+            if current_processing_method == "preview":
+                logging.info(f"ImageLoader: 'preview' 방식으로 로드 시도 ({file_path_obj.name})")
+                preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
+                if preview_pixmap_result and not preview_pixmap_result.isNull():
+                    pixmap = preview_pixmap_result
+                else:
+                    logging.warning(f"'preview' 방식 실패, 미리보기 로드 불가 ({file_path_obj.name})")
+                    pixmap = QPixmap() # 빈 QPixmap 반환
+
+            elif current_processing_method == "decode":
+                logging.info(f"ImageLoader: 'decode' 방식으로 로드 시도 ({file_path_obj.name})")
+                
+                # 중복 디코딩 방지 로직 (기존 유지)
+                if file_path in self.pending_raw_decoding:
+                    logging.debug(f"이미 디코딩 작업 보류 중: {file_path_obj.name}")
+                    # return QPixmap() # 빈 픽스맵 또는 플레이스홀더 반환
+                    placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
+                    return placeholder
+
+                current_time = time.time()
+                if file_path_obj.name in self.recently_decoded:
+                    last_decode_time = self.recently_decoded[file_path_obj.name]
+                    if current_time - last_decode_time < self.decoding_cooldown:
+                        logging.debug(f"최근 디코딩한 파일: {file_path_obj.name}, 플레이스홀더 반환")
+                        placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
                         return placeholder
-                    
-                    # 최근에 이미 디코딩했는지 확인 (중복 디코딩 방지) - 새 로직
-                    current_time = time.time()
-                    if file_path_obj.name in self.recently_decoded:
-                        last_decode_time = self.recently_decoded[file_path_obj.name]
-                        if current_time - last_decode_time < self.decoding_cooldown:
-                            logging.debug(f"최근에 이미 디코딩한 파일: {file_path_obj.name}, 플레이스홀더 반환")
-                            # 플레이스홀더 반환 (로딩 표시용)
-                            placeholder = QPixmap(100, 100)
-                            placeholder.fill(QColor(40, 40, 40))
-                            return placeholder
+                
+                try:
+                    # 최근 디코딩 기록에 추가 (시작 시점)
+                    self.recently_decoded[file_path_obj.name] = current_time
 
+                    # --- rawpy.imread 호출 전 종료 플래그 확인 ---
+                    if not ResourceManager.instance()._running:
+                        logging.info(f"ImageLoader.load_image_with_orientation (decode): ResourceManager 종료 중, rawpy.imread 중단 ({Path(file_path).name})")
+                        return QPixmap()
 
-                    try:
-                        with rawpy.imread(file_path) as raw:
-                            try:
-                                # --- user_flip=1 제거: rawpy가 방향 자동 처리하도록 함 ---
-                                rgb = raw.postprocess(use_camera_wb=True, output_bps=8) # <- user_flip 제거
-                                # --- QImage 생성 시 rawpy 결과 직접 사용 ---
-                                height, width, _ = rgb.shape # <- rotated_rgb 대신 rgb 사용
-                                # Ensure data is contiguous
-                                rgb_contiguous = np.ascontiguousarray(rgb) # <- rotated_rgb_contiguous 대신 rgb_contiguous 사용
-                                qimage = QImage(rgb_contiguous.data, width, height, rgb_contiguous.strides[0], QImage.Format_RGB888)
+                    with rawpy.imread(file_path) as raw:
+                        # postprocess 파라미터 확인 (use_camera_wb 등)
+                        rgb = raw.postprocess(use_camera_wb=True, output_bps=8, no_auto_bright=False) # no_auto_bright 추가 시도
+                        height, width, _ = rgb.shape
+                        rgb_contiguous = np.ascontiguousarray(rgb) # 메모리 연속성 보장
+                        qimage = QImage(rgb_contiguous.data, width, height, rgb_contiguous.strides[0], QImage.Format_RGB888)
+                        pixmap_result = QPixmap.fromImage(qimage)
 
-                                pixmap_result = QPixmap.fromImage(qimage)
-                                if pixmap_result and not pixmap_result.isNull():
-                                    pixmap = pixmap_result
-                                    logging.info(f"RAW 디코딩 (rawpy 자동 방향 처리) 성공 ({file_path_obj.name})")
-                                else:
-                                    logging.warning(f"RAW 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
-                                    pixmap = QPixmap()
-
-                            except rawpy.LibRawDecodingError as e_decoding:
-                                logging.error(f"'decode' 전략 실패, postprocess 오류 ({file_path_obj.name}): {e_decoding}")
-                                pixmap = QPixmap() # Return empty on decoding error
-
-                    except (rawpy.LibRawIOError, rawpy.LibRawFileUnsupportedError, Exception) as e_raw_read:
-                        logging.error(f"'decode' 전략 실패, 파일 읽기 오류 ({file_path_obj.name}): {e_raw_read}")
-                        pixmap = QPixmap() # Return empty on read error
-
-                    # 최근 디코딩 기록 정리 (메모리 관리) - 새 로직
-                    self._clean_old_decoding_history(current_time)
-
-                elif self._raw_load_strategy == "undetermined":
-                    # 전략이 아직 결정되지 않은 경우 기본값 사용
-                    # 스레드 안전성을 위해 락 획득
-                    with self._strategy_lock:
-                        # 현재 설정된 전역 전략 확인 (다른 스레드에서 설정됐을 수 있음)
-                        if hasattr(ImageLoader, '_global_raw_strategy') and ImageLoader._global_raw_strategy != "undetermined":
-                            # 전역 전략이 이미 설정되었다면 사용
-                            self._raw_load_strategy = ImageLoader._global_raw_strategy
-                            logging.info(f"전역 전략 적용: {self._raw_load_strategy} ({file_path_obj.name})")
+                        if pixmap_result and not pixmap_result.isNull():
+                            pixmap = pixmap_result
+                            logging.info(f"RAW 디코딩 성공 ({file_path_obj.name})")
                         else:
-                            # 아직 전략이 결정되지 않은 경우
-                            logging.warning(f"전략이 결정되지 않음, 기본 'preview' 사용: ({file_path_obj.name})")
-                            # 기본 preview 전략으로 설정 후 전역 초기화
-                            self._raw_load_strategy = "preview"
-                            ImageLoader._global_raw_strategy = "preview"
-                            ImageLoader._strategy_initialized = True
-                            try:
-                                parent = self.parent()
-                                if hasattr(parent, 'save_state'):
-                                    parent.save_state()
-                            except Exception as e:
-                                logging.error(f"설정 저장 중 오류: {e}")
-                    # 전략에 따른 처리 (이 부분은 기존 코드 유지)
-                    preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
-                    if preview_pixmap_result and not preview_pixmap_result.isNull():
-                        pixmap = preview_pixmap_result
-                    else:
-                        logging.warning(f"미리보기 로드 실패, 빈 픽스맵 반환: ({file_path_obj.name})")
-                        pixmap = QPixmap()
+                            logging.warning(f"RAW 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
+                            pixmap = QPixmap()
+                            self.decodingFailedForFile.emit(file_path) # 디코딩 실패 시그널 발생
+                
+                except rawpy.LibRawIOError as e_io:
+                    logging.error(f"'decode' 방식 실패 (I/O 오류) ({file_path_obj.name}): {e_io}")
+                    pixmap = QPixmap()
+                    self.decodingFailedForFile.emit(file_path)
+                except rawpy.LibRawUnsupportedThumbnailError as e_thumb: #이건 미리보기 관련이지만, 디코딩 경로에서 나올수도있음
+                    logging.error(f"'decode' 방식 실패 (썸네일 관련 오류) ({file_path_obj.name}): {e_thumb}")
+                    pixmap = QPixmap()
+                    self.decodingFailedForFile.emit(file_path)
+                except rawpy.LibRawDecodingError as e_decode_err: # 명시적인 디코딩 에러
+                    logging.error(f"'decode' 방식 실패 (디코딩 오류) ({file_path_obj.name}): {e_decode_err}")
+                    pixmap = QPixmap()
+                    self.decodingFailedForFile.emit(file_path)
+                except Exception as e_raw_read: # 기타 rawpy 관련 또는 일반 예외
+                    logging.error(f"'decode' 방식 실패, 파일 읽기/처리 중 예상치 못한 오류 ({file_path_obj.name}): {e_raw_read}")
+                    import traceback
+                    traceback.print_exc()
+                    pixmap = QPixmap()
+                    self.decodingFailedForFile.emit(file_path) # 실패 시그널
 
-            # --- Caching and Return (Common for RAW) ---
+                self._clean_old_decoding_history(current_time)
+
+            else: # _raw_load_strategy가 None이거나 알 수 없는 값일 경우 (기본값으로 preview 사용)
+                logging.warning(f"ImageLoader: 알 수 없거나 설정되지 않은 _raw_load_strategy ('{current_processing_method}'). 'preview' 사용 ({file_path_obj.name})")
+                preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
+                if preview_pixmap_result and not preview_pixmap_result.isNull():
+                    pixmap = preview_pixmap_result
+                else:
+                    pixmap = QPixmap()
+
+            # 최종적으로 pixmap이 유효하면 캐시에 추가하고 반환
             if pixmap and not pixmap.isNull():
                 self._add_to_cache(file_path, pixmap)
                 return pixmap
             else:
-                # If strategy execution failed, return an empty QPixmap
-                logging.error(f"RAW 처리 최종 실패 ({file_path_obj.name}), 빈 QPixmap 반환")
-                return QPixmap()
+                # RAW 처리 (preview 또는 decode)가 실패했고, 빈 QPixmap이 반환될 경우
+                logging.error(f"RAW 처리 최종 실패 ({file_path_obj.name}), 빈 QPixmap 반환됨.")
+                return QPixmap() # 빈 QPixmap 반환
         # --- RAW 파일 처리 로직 끝 ---
 
         # --- JPG 파일 처리 로직 (수정) ---
         else: # Not RAW
             try:
+                # --- Image.open 호출 전 종료 플래그 확인 ---
+                if not ResourceManager.instance()._running:
+                    logging.info(f"ImageLoader.load_image_with_orientation (JPG): ResourceManager 종료 중, Image.open 중단 ({Path(file_path).name})")
+                    return QPixmap()
+                # --- 확인 끝 ---
                 # Use context manager for file opening
                 with open(file_path, 'rb') as f:
                     # Load with PIL
@@ -2018,9 +1780,15 @@ class ImageLoader(QObject):
                     logging.exception(f"기본 QPixmap 로드 중 예외 (JPG) ({file_path_obj.name}): {e2}")
                     return QPixmap() # Return empty on exception
 
-        # Should not be reached if logic is correct, but as a final fallback
-        logging.error(f"모든 이미지 로드 시도 실패 ({file_path_obj.name})")
-        return QPixmap()
+    
+    def set_raw_load_strategy(self, strategy: str):
+        """이 ImageLoader 인스턴스의 RAW 처리 방식을 설정합니다 ('preview' 또는 'decode')."""
+        if strategy in ["preview", "decode"]:
+            old_strategy = self._raw_load_strategy
+            self._raw_load_strategy = strategy
+            logging.info(f"ImageLoader ({id(self)}): RAW 처리 방식 변경됨: {old_strategy} -> {self._raw_load_strategy}") # <<< 상세 로그 추가
+        else:
+            logging.warning(f"ImageLoader ({id(self)}): 알 수 없는 RAW 처리 방식 '{strategy}'. 변경 안 함. 현재: {self._raw_load_strategy}")
     
     def _clean_old_decoding_history(self, current_time, max_entries=50):
         """오래된 디코딩 이력 정리 (메모리 관리)"""
@@ -2046,51 +1814,6 @@ class ImageLoader(QObject):
             for file_name, _ in to_remove:
                 del self.recently_decoded[file_name]
 
-    # def show_compatibility_message(self):
-    #     """호환성 문제 메시지를 표시 (디코딩 실패 시)"""
-        
-    #     # 메인 스레드에서 실행되는 슬롯 함수로 만들기 
-    #     def show_message_box_on_main_thread():
-    #         msg_box = QMessageBox()
-    #         msg_box.setWindowTitle(LanguageManager.translate("호환성 문제"))
-    #         msg_box.setText(LanguageManager.translate("RAW 디코딩 실패. 미리보기를 대신 사용합니다."))
-    #         msg_box.setIcon(QMessageBox.Warning)
-    #         msg_box.exec_()
-        
-    #     # 올바르게 메인 스레드에서 메시지 박스 표시 함수 호출
-    #     QMetaObject.invokeMethod(
-    #         self, 
-    #         "show_message_box_on_main_thread",  # 실제 호출할 함수명
-    #         Qt.QueuedConnection
-    # )
-
-    def show_compatibility_message(self):
-        """호환성 문제 메시지를 표시 (디코딩 실패 시)"""
-        
-        def show_message():
-            msg_box = QMessageBox()
-            msg_box.setWindowTitle(LanguageManager.translate("호환성 문제"))
-            msg_box.setText(LanguageManager.translate("RAW 디코딩 실패. 미리보기를 대신 사용합니다."))
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.exec_()
-        
-        # QTimer를 사용하면 메타 객체 시스템을 거치지 않고도 메인 스레드에서 실행 가능
-        QTimer.singleShot(0, show_message)
-
-        
-    def show_preview_failure_message(self):
-        """'매우 빠름' 모드에서 미리보기 추출 실패 시 메시지 표시"""
-        
-        def show_message():
-            msg_box = QMessageBox()
-            msg_box.setWindowTitle(LanguageManager.translate("미리보기 추출 실패"))
-            msg_box.setText(LanguageManager.translate("미리보기 이미지 추출 실패. RAW 파일 처리 설정을 바꿔보세요"))
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.exec_()
-        
-        # QTimer를 사용하면 메타 객체 시스템을 거치지 않고도 메인 스레드에서 실행 가능
-        QTimer.singleShot(0, show_message)
-    
 
 
     def preload_page(self, image_files, page_start_index, cells_per_page):
@@ -2156,14 +1879,21 @@ class ImageLoader(QObject):
     def clear_cache(self):
         """캐시 초기화"""
         self.cache.clear()
-        self._raw_load_strategy = "undetermined" # RAW 로딩 전략 초기화
-        print("Image cache cleared and RAW load strategy reset for this instance.")
+        logging.info(f"ImageLoader ({id(self)}): Cache cleared. RAW load strategy '{self._raw_load_strategy}' is preserved.") # 로그 수정
         
-        # 이전 작업 취소
+        # 활성 로딩 작업도 취소
         for future in self.active_futures:
             future.cancel()
         self.active_futures.clear()
+        logging.info(f"ImageLoader ({id(self)}): Active loading futures cleared.")
 
+    def set_raw_load_strategy(self, strategy: str):
+        """이 ImageLoader 인스턴스의 RAW 처리 방식을 설정합니다 ('preview' 또는 'decode')."""
+        if strategy in ["preview", "decode"]:
+            self._raw_load_strategy = strategy
+            logging.info(f"ImageLoader: RAW 처리 방식 설정됨: {strategy}")
+        else:
+            logging.warning(f"ImageLoader: 알 수 없는 RAW 처리 방식 '{strategy}'. 변경 안 함.")
 
 
 
@@ -2437,6 +2167,7 @@ class PhotoSortApp(QMainWindow):
         self.image_loader.imageLoaded.connect(self.on_image_loaded)
         self.image_loader.loadCompleted.connect(self._on_image_loaded_for_display)  # 새 시그널 연결
         self.image_loader.loadFailed.connect(self._on_image_load_failed)  # 새 시그널 연결
+        self.image_loader.decodingFailedForFile.connect(self.handle_raw_decoding_failure) # <<< 새 시그널 연결
 
         # 시스템 사양에 따른 설정 조정
         self.adjust_settings_for_system()
@@ -2446,6 +2177,10 @@ class PhotoSortApp(QMainWindow):
         self.placeholder_pixmap.fill(QColor("#222222"))
 
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
+
+        # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
+        # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
+        self.camera_raw_settings = {} 
         
         # 다크 테마 적용
         self.setup_dark_theme()
@@ -2886,6 +2621,124 @@ class PhotoSortApp(QMainWindow):
         self.exif_cache = {}  # 파일 경로 -> EXIF 데이터 딕셔너리
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
+
+    def handle_raw_decoding_failure(self, failed_file_path: str):
+        """RAW 파일 디코딩 실패 시 호출되는 슬롯"""
+        logging.warning(f"RAW 파일 디코딩 실패 감지됨: {failed_file_path}")
+        
+        # 현재 표시하려던 파일과 실패한 파일이 동일한지 확인
+        current_path_to_display = None
+        if self.grid_mode == "Off":
+            if 0 <= self.current_image_index < len(self.image_files):
+                current_path_to_display = str(self.image_files[self.current_image_index])
+        else:
+            grid_idx = self.grid_page_start_index + self.current_grid_index
+            if 0 <= grid_idx < len(self.image_files):
+                current_path_to_display = str(self.image_files[grid_idx])
+
+        if current_path_to_display == failed_file_path:
+            # 사용자에게 알림 (기존 show_compatibility_message 사용 또는 새 메시지)
+            self.show_themed_message_box( # 기존 show_compatibility_message 대신 직접 호출
+                QMessageBox.Warning,
+                LanguageManager.translate("호환성 문제"),
+                LanguageManager.translate("RAW 디코딩 실패. 미리보기를 대신 사용합니다.")
+            )
+
+            # 해당 파일에 대해 강제로 "preview" 방식으로 전환하고 이미지 다시 로드 시도
+            # (주의: 이로 인해 무한 루프가 발생하지 않도록 ImageLoader에서 처리했는지 확인 필요.
+            #  ImageLoader가 실패 시 빈 QPixmap을 반환하므로, PhotoSortApp에서 다시 로드 요청해야 함)
+            
+            # 카메라 모델 가져오기 (실패할 수 있음)
+            camera_model = self.get_camera_model_from_exif_or_path(failed_file_path) # 이 함수는 새로 만들어야 할 수 있음
+            
+            if camera_model != LanguageManager.translate("알 수 없는 카메라"):
+                # 이 카메라 모델에 대해 "preview"로 강제하고, "다시 묻지 않음"은 그대로 두거나 해제할 수 있음
+                current_setting = self.get_camera_raw_setting(camera_model)
+                dont_ask_original = current_setting.get("dont_ask", False) if current_setting else False
+                self.set_camera_raw_setting(camera_model, "preview", dont_ask_original) # 미리보기로 강제, 다시 묻지 않음은 유지
+                logging.info(f"'{camera_model}' 모델의 처리 방식을 'preview'로 강제 변경 (디코딩 실패)")
+            
+            # ImageLoader의 현재 인스턴스 전략도 preview로 변경
+            self.image_loader.set_raw_load_strategy("preview")
+            
+            # 디스플레이 강제 새로고침
+            if self.grid_mode == "Off":
+                self.force_refresh = True
+                self.display_current_image() # 미리보기로 다시 로드 시도
+            else:
+                self.force_refresh = True # 그리드도 새로고침 필요
+                self.update_grid_view()
+        else:
+            # 현재 표시하려는 파일이 아닌 다른 파일의 디코딩 실패 (예: 백그라운드 프리로딩 중)
+            # 이 경우 사용자에게 직접 알릴 필요는 없을 수 있지만, 로깅은 중요
+            logging.warning(f"백그라운드 RAW 디코딩 실패: {failed_file_path}")
+
+    def get_camera_model_from_exif_or_path(self, file_path_str: str) -> str:
+        """주어진 파일 경로에서 카메라 모델명을 추출 시도 (캐시 우선, 실패 시 exiftool)"""
+        if file_path_str in self.exif_cache:
+            exif_data = self.exif_cache[file_path_str]
+            make = exif_data.get("exif_make", "")
+            model = exif_data.get("exif_model", "")
+            if make and model: return f"{make} {model}"
+            if model: return model
+        
+        # 캐시에 없으면 exiftool 시도 (간략화된 버전)
+        try:
+            exiftool_path = self.get_exiftool_path()
+            if Path(exiftool_path).exists():
+                cmd = [exiftool_path, "-json", "-Model", "-Make", file_path_str]
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
+                if process.returncode == 0 and process.stdout:
+                    exif_data_list = json.loads(process.stdout)
+                    if exif_data_list:
+                        exif_data = exif_data_list[0]
+                        make = exif_data.get("Make")
+                        model = exif_data.get("Model")
+                        if make and model: return f"{make.strip()} {model.strip()}"
+                        if model: return model.strip()
+        except Exception as e:
+            logging.error(f"get_camera_model_from_exif_or_path에서 오류 ({Path(file_path_str).name}): {e}")
+        return LanguageManager.translate("알 수 없는 카메라")
+
+    def get_camera_raw_setting(self, camera_model: str):
+        """주어진 카메라 모델에 대한 저장된 RAW 처리 설정을 반환합니다."""
+        return self.camera_raw_settings.get(camera_model, None) # 설정 없으면 None 반환
+
+    def set_camera_raw_setting(self, camera_model: str, method: str, dont_ask: bool):
+            """주어진 카메라 모델에 대한 RAW 처리 설정을 self.camera_raw_settings에 업데이트하고,
+            변경 사항을 메인 상태 파일에 즉시 저장합니다."""
+            if not camera_model:
+                logging.warning("카메라 모델명 없이 RAW 처리 설정을 저장하려고 시도했습니다.")
+                return
+                
+            self.camera_raw_settings[camera_model] = {
+                "method": method,
+                "dont_ask": dont_ask
+            }
+            logging.info(f"카메라별 RAW 설정 업데이트됨 (메모리): {camera_model} -> {self.camera_raw_settings[camera_model]}")
+            self.save_state() # <<< 변경 사항을 photosort_data.json에 즉시 저장
+
+
+    def reset_all_camera_raw_settings(self):
+            """모든 카메라별 RAW 처리 설정을 초기화하고 메인 상태 파일에 즉시 저장합니다."""
+            reply = self.show_themed_message_box(
+                QMessageBox.Question,
+                LanguageManager.translate("설정 초기화"),
+                LanguageManager.translate("저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다."),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.camera_raw_settings = {} # 메모리 내 설정 초기화
+                self.save_state() # <<< 변경 사항을 photosort_data.json에 즉시 저장
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("초기화 완료"),
+                    LanguageManager.translate("모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.")
+                )
+                logging.info("모든 카메라별 RAW 처리 설정이 초기화되었습니다 (메인 상태 파일에 반영).")
+
 
     def get_system_memory_gb(self):
         """시스템 메모리 크기 확인 (GB)"""
@@ -3601,135 +3454,60 @@ class PhotoSortApp(QMainWindow):
         
         settings_layout.addWidget(theme_container)
         # === 테마 설정 끝 ===
-        # === RAW 처리 전략 설정 (가로 배치 + 라디오버튼) ===
-        strategy_container = QWidget()
-        strategy_layout = QHBoxLayout(strategy_container)
-        strategy_layout.setContentsMargins(0, 5, 0, 5)
 
-        strategy_title = QLabel(LanguageManager.translate("RAW 처리 방식 ⓘ"))
-        strategy_title.setObjectName("strategy_title_label")
-        strategy_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        strategy_title.setCursor(Qt.WhatsThisCursor)
-        strategy_title.setToolTip(self._build_raw_strategy_tooltip_text())
-        strategy_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        strategy_title.setFont(font)
-        strategy_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
 
-        # 라디오 버튼 컨테이너
-        strategy_options_container = QWidget()
-        strategy_options_layout = QHBoxLayout(strategy_options_container)
-        strategy_options_layout.setContentsMargins(0, 0, 0, 0)
-        strategy_options_layout.setSpacing(15)  # 버튼 사이 간격
+        # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
+        raw_settings_reset_container = QWidget()
+        raw_settings_reset_layout = QHBoxLayout(raw_settings_reset_container)
+        raw_settings_reset_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백
 
-        # 전략 라디오 버튼 그룹 생성
-        self.strategy_group = QButtonGroup(self)
+        # 버튼 왼쪽에 설명 라벨 (선택 사항, 버튼만 중앙에 둘 수도 있음)
+        raw_reset_label = QLabel(LanguageManager.translate("저장된 RAW 처리 방식")) # 새 번역 키
+        raw_reset_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        raw_reset_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        font = QFont(self.font())
+        font.setPointSize(UIScaleManager.get("font_size"))
+        raw_reset_label.setFont(font)
+        raw_reset_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤 (선택 사항)
+        raw_reset_label.setObjectName("raw_reset_label")
 
-        # 사용 가능한 전략 가져오기
-        strategies = RawProcessingStrategyManager.get_available_strategies()
-        self.strategy_radio_buttons = {}
-
-        # 현재 선택된 전략 가져오기
-        current_strategy = RawProcessingStrategyManager.get_current_strategy()
-
-        # 라디오 버튼 생성 및 스타일 설정
-        radio_style = f"""
-            QRadioButton {{
+        self.reset_camera_settings_button = QPushButton(LanguageManager.translate("설정 초기화")) # 새 번역 키
+        # 버튼 스타일은 기존 load_button이나 다른 일반 버튼 스타일 재사용 가능
+        button_min_height = UIScaleManager.get("button_min_height")
+        button_padding = UIScaleManager.get("button_padding")
+        self.reset_camera_settings_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                border: none;
+                padding: 5px;
+                border-radius: 1px; /* 약간 둥글게 */
+                min-height: 25px; 
+                min-width: 110px; /* 버튼 최소 너비 */
             }}
-            QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
             }}
-            QRadioButton::indicator:checked {{
-                background-color: #848484;
-                border: 2px solid #848484;
-                border-radius: 9px;
+            QPushButton:pressed {{
+                background-color: {ThemeManager.get_color('bg_pressed')};
             }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        """)
+        self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
 
-        for i, strategy in enumerate(strategies):
-            strategy_name = RawProcessingStrategyManager.get_strategy_name(
-                strategy, 
-                LanguageManager.get_current_language()
-            )
-            radio_button = QRadioButton(strategy_name)
-            radio_button.setStyleSheet(radio_style)
-            
-            # 버튼에 전략 코드 저장
-            radio_button.setProperty("strategy_code", strategy)
-            
-            # 그룹에 추가
-            self.strategy_group.addButton(radio_button, i)
-            
-            # 현재 전략과 일치하면 선택
-            if strategy == current_strategy:
-                radio_button.setChecked(True)
-            
-            # 딕셔너리에 저장 (나중에 접근하기 쉽게)
-            self.strategy_radio_buttons[strategy] = radio_button
-            
-            # 레이아웃에 추가
-            strategy_options_layout.addWidget(radio_button)
+        raw_settings_reset_layout.addWidget(raw_reset_label)
+        # raw_settings_reset_layout.addStretch(1) # 라벨과 버튼 사이 공간
+        raw_settings_reset_layout.addWidget(self.reset_camera_settings_button)
+        raw_settings_reset_layout.addStretch(1) # 버튼을 왼쪽에 붙이려면 이 스트레치 제거
 
-        # 이벤트 연결
-        self.strategy_group.buttonClicked.connect(self.on_strategy_radio_changed)
+        settings_layout.addWidget(raw_settings_reset_container)
+        # === 초기화 버튼 추가 끝 ===
 
-        # 레이아웃에 위젯 추가
-        strategy_layout.addWidget(strategy_title)
-        strategy_layout.addWidget(strategy_options_container, 1)  # 1=stretch factor
-
-        settings_layout.addWidget(strategy_container)
-        # === RAW 처리 전략 설정 끝 ===
-
-
+        
         # 하단 여백
         # settings_layout.addStretch(1)
         
         return settings_container
 
-    def _build_raw_strategy_tooltip_text(self):
-        """RAW 처리 전략에 대한 툴팁 텍스트 생성"""
-        current_lang = LanguageManager.get_current_language()
-        
-        if current_lang == "en":
-            return (
-                "RAW files contain embedded JPG previews.\n"
-                "Using these previews is faster, but they may have lower resolution than the original image.\n"
-                "(Preview resolution varies by camera model.)\n"
-                "This setting determines how aggressively to use preview images.\n"
-                "Not using previews requires decoding RAW files, which is slower and may have compatibility issues with some cameras.\n\n"
-                "▪ Ultra Fast: Always uses embedded preview for maximum speed regardless of resolution.\n"
-                "▪ Fast (Recommended): Uses preview unless its resolution is very low.\n"
-                "▪ High Quality (Recommended): Uses preview only when its resolution is sufficient. Otherwise decodes RAW.\n"
-                "▪ Ultra Quality: Uses preview only when its resolution is nearly identical to the original. Otherwise decodes RAW."
-            )
-        else:  # Korean
-            return (
-                "RAW 파일에는 미리보기를 위한 JPG 이미지가 내장되어 있습니다.\n"
-                "미리보기 이미지를 사용하면 작업 속도가 빠르지만 해상도가 원본보다 낮을 수 있습니다.\n"
-                "(미리보기의 해상도는 카메라마다 다릅니다.)\n"
-                "이 옵션은 얼마나 적극적으로 미리보기 이미지를 사용할 것인지를 결정합니다.\n"
-                "미리보기를 사용하지 않으면 RAW 파일을 디코딩해야 하는데, 속도가 느리고 일부 카메라의 경우 호환성 문제가 있을 수 있습니다.\n\n"
-                "▪ 매우 빠름: 해상도와 관계없이 내장 미리보기를 사용하여 최대 속도 제공.\n"
-                "▪ 빠름(추천): 해상도가 아주 낮지 않은 한 미리보기 사용.\n"
-                "▪ 고품질(추천): 미리보기 해상도가 충분할 때만 사용. 그렇지 않으면 RAW 디코딩.\n"
-                "▪ 최고품질: 미리보기 해상도가 원본과 거의 같을 때만 사용. 그렇지 않으면 RAW 디코딩."
-            )
-
-    def on_strategy_radio_changed(self, button):
-        """전략 라디오 버튼 변경 처리"""
-        strategy_code = button.property("strategy_code")
-        if strategy_code:
-            RawProcessingStrategyManager.set_strategy(strategy_code)
 
 
     def on_theme_changed(self, theme_name):
@@ -4019,11 +3797,10 @@ class PhotoSortApp(QMainWindow):
 
             # 수평 레이아웃에 추가
             shortcut_info_hbox.addWidget(shortcut_info_label)
-            #  shortcut_info_hbox.addStretch(1) # ⓘ 아이콘을 우측에서부터 밀어서 텍스트에 붙게 하는 역할
 
             # 상단 설정 레이아웃에 추가
             settings_layout.addWidget(shortcut_info_container)
-            settings_layout.addSpacing(UIScaleManager.get("viewshortcuts_seperator", 15)) # 단축키 확인과 중간 구분선 사이 간격 조절
+            settings_layout.addSpacing(UIScaleManager.get("viewshortcuts_seperator", 0)) # 단축키 확인과 중간 구분선 사이 간격 조절
             settings_layout.addStretch(1)  # 설정 항목과 안내 사이 공간 확보
 
             # ──────────────────────────────
@@ -4299,7 +4076,7 @@ class PhotoSortApp(QMainWindow):
 
         info_text = f"""
         <h2>PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.05.23</p>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.05.24</p>
         <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
@@ -5150,7 +4927,7 @@ class PhotoSortApp(QMainWindow):
             self.match_raw_files(folder_path)
 
     def load_raw_only_folder(self):
-        """ RAW 파일만 로드하는 기능 """
+        """ RAW 파일만 로드하는 기능, 첫 파일 분석 및 사용자 선택 요청 """
         folder_path = QFileDialog.getExistingDirectory(
             self, LanguageManager.translate("RAW 파일이 있는 폴더 선택"), "",
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
@@ -5186,70 +4963,307 @@ class PhotoSortApp(QMainWindow):
                 # JPG 버튼 활성화
                 self.load_button.setEnabled(True)
                 return
+            
+            # --- 1. 첫 번째 RAW 파일 분석 ---
+            first_raw_file_path_obj = unique_raw_files[0]
+            first_raw_file_path_str = str(first_raw_file_path_obj)
+            logging.info(f"첫 번째 RAW 파일 분석 시작: {first_raw_file_path_obj.name}")
+
+            is_raw_compatible = False
+            camera_model_name = LanguageManager.translate("알 수 없는 카메라") # 기본값
+            original_resolution_str = "-"
+            preview_resolution_str = "-"
+            
+            # exiftool을 사용해야 할 수도 있으므로 미리 경로 확보
+            exiftool_path = self.get_exiftool_path() # 기존 get_exiftool_path() 사용
+            exiftool_available = Path(exiftool_path).exists() and Path(exiftool_path).is_file()
+
+
+            # 1.1. {RAW 호환 여부} 및 {원본 해상도 (rawpy 시도)}, {카메라 모델명 (rawpy 시도)}
+            rawpy_exif_data = {} # rawpy에서 얻은 부분적 EXIF 저장용
+            try:
+                with rawpy.imread(first_raw_file_path_str) as raw:
+                    is_raw_compatible = True
+                    original_width = raw.sizes.width # postprocess 후 크기 (raw_width는 센서 크기)
+                    original_height = raw.sizes.height
+                    if original_width > 0 and original_height > 0 :
+                        original_resolution_str = f"{original_width}x{original_height}"
+                    
+                    if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer and \
+                    hasattr(raw, 'model') and raw.model:
+                        camera_model_name = f"{raw.camera_manufacturer.strip()} {raw.model.strip()}"
+                    elif hasattr(raw, 'model') and raw.model: # 모델명만 있는 경우
+                        camera_model_name = raw.model.strip()
+                    
+                    # 임시로 rawpy에서 일부 EXIF 정보 추출 (카메라 모델 등)
+                    rawpy_exif_data["exif_make"] = raw.camera_manufacturer.strip() if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer else ""
+                    rawpy_exif_data["exif_model"] = raw.model.strip() if hasattr(raw, 'model') and raw.model else ""
+
+            except Exception as e_rawpy:
+                is_raw_compatible = False # rawpy로 기본 정보 읽기 실패 시 호환 안됨으로 간주
+                logging.warning(f"rawpy로 첫 파일({first_raw_file_path_obj.name}) 분석 중 오류 (호환 안됨 가능성): {e_rawpy}")
+
+            # 1.2. {카메라 모델명 (ExifTool 시도 - rawpy 실패 시 또는 보강)} 및 {원본 해상도 (ExifTool 시도 - rawpy 실패 시)}
+            if (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라") or \
+            not original_resolution_str or original_resolution_str == "-") and exiftool_available:
+                logging.info(f"Exiftool로 추가 정보 추출 시도: {first_raw_file_path_obj.name}")
+                try:
+                    cmd = [exiftool_path, "-json", "-Model", "-ImageWidth", "-ImageHeight", "-Make", first_raw_file_path_str]
+                    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
+                    if process.returncode == 0 and process.stdout:
+                        exif_data_list = json.loads(process.stdout)
+                        if exif_data_list and isinstance(exif_data_list, list):
+                            exif_data = exif_data_list[0]
+                            model = exif_data.get("Model")
+                            make = exif_data.get("Make")
+                            
+                            if make and model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = f"{make.strip()} {model.strip()}"
+                            elif model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = model.strip()
+                            
+                            # rawpy_exif_data 보강
+                            if not rawpy_exif_data.get("exif_make") and make: rawpy_exif_data["exif_make"] = make.strip()
+                            if not rawpy_exif_data.get("exif_model") and model: rawpy_exif_data["exif_model"] = model.strip()
+
+
+                            if (not original_resolution_str or original_resolution_str == "-"): # is_raw_compatible이 False인 경우 등
+                                width = exif_data.get("ImageWidth")
+                                height = exif_data.get("ImageHeight")
+                                if width and height and int(width) > 0 and int(height) > 0:
+                                    original_resolution_str = f"{width}x{height}"
+                except Exception as e_exiftool:
+                    logging.error(f"Exiftool로 정보 추출 중 오류: {e_exiftool}")
+            
+            # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
+            final_camera_model_display = ""
+            if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = f"{rawpy_exif_data['exif_make']} {rawpy_exif_data['exif_model']}"
+            elif rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = rawpy_exif_data["exif_model"]
+            elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
+                final_camera_model_display = camera_model_name
+            else:
+                final_camera_model_display = LanguageManager.translate("알 수 없는 카메라")
+
+
+            # 1.3. {미리보기 해상도} 추출
+            # ImageLoader의 _load_raw_preview_with_orientation을 임시로 호출하여 미리보기 정보 얻기
+            # (ImageLoader 인스턴스가 필요)
+            preview_pixmap, preview_width, preview_height = self.image_loader._load_raw_preview_with_orientation(first_raw_file_path_str)
+            if preview_pixmap and not preview_pixmap.isNull() and preview_width and preview_height:
+                preview_resolution_str = f"{preview_width}x{preview_height}"
+            else: # 미리보기 추출 실패 또는 정보 없음
+                preview_resolution_str = LanguageManager.translate("정보 없음") # 또는 "-"
+
+            logging.info(f"파일 분석 완료: 호환={is_raw_compatible}, 모델='{final_camera_model_display}', 원본={original_resolution_str}, 미리보기={preview_resolution_str}")
+
+            # --- 2. 저장된 설정 확인 및 메시지 박스 표시 결정 ---
+            chosen_method = None # 사용자가 최종 선택한 처리 방식 ("preview" or "decode")
+            dont_ask_again_for_this_model = False
+
+            # final_camera_model_display가 유효할 때만 camera_raw_settings 확인
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                saved_setting_for_this_action = self.get_camera_raw_setting(final_camera_model_display)
+                if saved_setting_for_this_action and saved_setting_for_this_action.get("dont_ask"):
+                    # "다시 묻지 않음"이 True이면 저장된 method를 사용
+                    chosen_method = saved_setting_for_this_action.get("method")
+                    logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
+                else:
+                    # "다시 묻지 않음"이 아니거나 설정이 없으면 메시지 박스 표시
+                    chosen_method, dont_ask_again_for_this_model = self._show_raw_processing_choice_dialog(
+                        is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                    )
+            else: # 카메라 모델을 알 수 없는 경우 -> 항상 메시지 박스 표시
+                logging.info(f"카메라 모델을 알 수 없어, 메시지 박스 표시 (호환성 기반)")
+                chosen_method, dont_ask_again_for_this_model = self._show_raw_processing_choice_dialog(
+                    is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                )
+
+            if chosen_method is None:
+                logging.info("RAW 처리 방식 선택되지 않음. 로드 취소.")
+                return
+            
+            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}") # <<< 로그 추가
+
+
+            # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
+            # dont_ask_again_for_this_model은 메시지 박스에서 반환된 실제 체크 상태
+            if dont_ask_again_for_this_model and final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                self.set_camera_raw_setting(final_camera_model_display, chosen_method, True)
+            elif not dont_ask_again_for_this_model and final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                # "다시 묻지 않음"을 해제한 경우, 해당 카메라 설정을 업데이트하거나 삭제할 수 있음
+                # 여기서는 업데이트 (dont_ask: False)
+                self.set_camera_raw_setting(final_camera_model_display, chosen_method, False)
+            
+            # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
+            self.image_loader.set_raw_load_strategy(chosen_method) # <<< 중요!
+            logging.info(f"ImageLoader 처리 방식 설정 (새 로드): {chosen_method}")
 
             # --- RAW 로드 성공 시 ---
             print(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
-            self.image_files = unique_raw_files # 메인 리스트를 RAW 파일로 교체
+            self.image_files = unique_raw_files
             
-            # 명시적으로 첫 번째 RAW 파일로 전략 결정 - 개선
-        
-            
-            if self.image_files:
-                first_raw_file = str(self.image_files[0])
-                
-                # 전략 재설정을 위해 초기화 플래그 리셋
-                with ImageLoader._strategy_lock:
-                    ImageLoader._strategy_initialized = False
-                    ImageLoader._global_raw_strategy = "undetermined"
-                    logging.info("새 RAW 폴더 로드: 전역 전략 초기화됨")
-                
-                # 이제 전략 결정 로직 호출
-                logging.warning(f"json 경로! {first_raw_file}")
-                logging.warning(f"json 경로! {first_raw_file}")
-                logging.warning(f"json 경로! {first_raw_file}")
+            self.raw_folder = folder_path
+            self.is_raw_only_mode = True
 
-                self.image_loader.determine_raw_strategy(first_raw_file)
-                logging.warning(f"첫 번째 RAW 파일 ({Path(first_raw_file).name})로 전략 결정 완료")
-            
-            self.raw_folder = folder_path # RAW 폴더 경로 저장
-            self.is_raw_only_mode = True # RAW 전용 모드 활성화
-
-            # 기존 JPG/RAW 연결 정보 초기화
             self.current_folder = ""
-            self.raw_files = {}
+            self.raw_files = {} # RAW 전용 모드에서는 이 딕셔너리는 다른 용도로 사용되지 않음
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            self.update_jpg_folder_ui_state() # JPG UI 초기화
+            self.update_jpg_folder_ui_state()
 
-            # RAW UI 업데이트
             self.raw_folder_path_label.setText(folder_path)
-            self.update_raw_folder_ui_state() # X버튼 활성화, 토글 버튼 On+비활성화 처리
+            self.update_raw_folder_ui_state()
             self.update_match_raw_button_state()
-
-            # JPG 불러오기 버튼 비활성화
             self.load_button.setEnabled(False)
 
-            # 그리드 상태 초기화
             self.grid_page_start_index = 0
             self.current_grid_index = 0
+            self.image_loader.clear_cache() # 이전 캐시 비우기 (다른 전략이었을 수 있으므로)
 
-            # 이미지 캐시 초기화
-            self.image_loader.clear_cache()
-
-            # === Zoom과 Grid 모드 초기화 ===
             self.zoom_mode = "Fit"
             self.fit_radio.setChecked(True)
-            
             self.grid_mode = "Off"
             self.grid_off_radio.setChecked(True)
             self.update_zoom_radio_buttons_state()
 
-            # 첫 번째 RAW 이미지 표시
             self.current_image_index = 0
-            self.display_current_image() # 내부에서 카운터, 정보, 제목 업데이트 호출
+            # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
+            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})") # <<< 로그 추가
+            self.display_current_image() 
 
-            # Grid Off 상태이면 백그라운드 썸네일 생성 시작
             if self.grid_mode == "Off":
                 self.start_background_image_preloading()
+
+    def _show_raw_processing_choice_dialog(self, is_compatible, model_name, orig_res, prev_res):
+        """RAW 처리 방식 선택을 위한 맞춤형 대화상자를 표시합니다."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(LanguageManager.translate("RAW 파일 처리 방식 선택")) # 새 번역 키
+        
+        # 다크 테마 적용 (메인 윈도우의 show_themed_message_box 참조)
+        if sys.platform == "win32":
+            try:
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
+                dwmapi.DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint]
+                hwnd = int(dialog.winId()); value = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+            except Exception: pass
+        palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+        dialog.setPalette(palette); dialog.setAutoFillBackground(True)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        message_label = QLabel()
+        message_label.setWordWrap(True)
+        message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        message_label.setTextFormat(Qt.RichText) # <<< RichText 사용 명시
+
+        radio_group = QButtonGroup(dialog)
+        preview_radio = QRadioButton()
+        decode_radio = QRadioButton()
+        
+        # 체크박스 스타일은 PhotoSortApp의 것을 재사용하거나 여기서 정의
+        checkbox_style = f"""
+            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 2px; }}
+            QCheckBox::indicator {{ width: 11px; height: 11px; }}
+            QCheckBox::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: 2px solid {ThemeManager.get_color('accent')}; border-radius: 1px; }}
+            QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 1px; }}
+            QCheckBox::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+        """
+        radio_style = f"""
+            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: 5px 0px; }} 
+            QRadioButton::indicator {{ width: 14px; height: 14px; }}
+            QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: 2px solid {ThemeManager.get_color('accent')}; border-radius: 9px; }}
+            QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 9px; }}
+            QRadioButton::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+        """
+        preview_radio.setStyleSheet(radio_style)
+        decode_radio.setStyleSheet(radio_style)
+
+        # 1. 번역할 기본 템플릿 문자열 키를 정의합니다.
+        checkbox_text_template_key = "{camera_model_placeholder}의 RAW 처리 방식에 대해 다시 묻지 않습니다."
+        # 2. 해당 키로 번역된 템플릿을 가져옵니다.
+        translated_checkbox_template = LanguageManager.translate(checkbox_text_template_key)
+        # 3. 번역된 템플릿에 실제 카메라 모델명을 포맷팅합니다.
+        #    model_name이 "알 수 없는 카메라"일 경우, 해당 번역도 고려해야 함.
+        #    여기서는 model_name 자체를 그대로 사용.
+        final_checkbox_text = translated_checkbox_template.format(camera_model_placeholder=model_name)
+        
+        dont_ask_checkbox = QCheckBox(final_checkbox_text) # 포맷팅된 최종 텍스트 사용
+        dont_ask_checkbox.setStyleSheet(checkbox_style) # checkbox_style은 이미 정의되어 있다고 가정
+
+        confirm_button = QPushButton(LanguageManager.translate("확인"))
+        confirm_button.setStyleSheet(self.load_button.styleSheet()) # 기존 버튼 스타일 재활용
+        confirm_button.clicked.connect(dialog.accept)
+        
+        chosen_method_on_accept = None # 확인 버튼 클릭 시 선택된 메소드 저장용
+
+        # line-height 스타일 적용 (선택 사항)
+        html_wrapper_start = "<div style='line-height: 150%;'>" # 예시 줄 간격
+        html_wrapper_end = "</div>"
+
+        if is_compatible:
+            dialog.setMinimumWidth(550)
+            msg_template_key = ("{model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.<br>"
+                                "{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 {prev_res_placeholder}입니다.<br>"
+                                "미리보기를 통해 이미지를 보시겠습니까, RAW 파일을 디코딩해서 보시겠습니까?")
+            translated_msg_template = LanguageManager.translate(msg_template_key)
+            formatted_text = translated_msg_template.format(
+                model_name_placeholder=model_name,
+                orig_res_placeholder=orig_res,
+                prev_res_placeholder=prev_res
+            )
+            # HTML로 감싸기
+            message_label.setText(f"{html_wrapper_start}{formatted_text}{html_wrapper_end}")
+            
+            preview_radio.setText(LanguageManager.translate("미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우)")) # 새 번역 키
+            decode_radio.setText(LanguageManager.translate("RAW 디코딩 (원본 해상도가 필요한 경우)")) # 새 번역 키
+            
+            radio_group.addButton(preview_radio, 0) # preview = 0
+            radio_group.addButton(decode_radio, 1)  # decode = 1
+            preview_radio.setChecked(True) # 기본 선택: 미리보기
+
+            layout.addWidget(message_label)
+            layout.addSpacing(30) # <<< message_label과 첫 번째 라디오 버튼 사이 간격
+            layout.addWidget(preview_radio)
+            layout.addWidget(decode_radio)
+            layout.addSpacing(30) # 두 번째 라디오버튼과 don't ask 체크박스 사이 간격
+            layout.addWidget(dont_ask_checkbox)
+            layout.addSpacing(30) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addWidget(confirm_button, 0, Qt.AlignCenter)
+
+            if dialog.exec() == QDialog.Accepted:
+                chosen_method_on_accept = "preview" if radio_group.checkedId() == 0 else "decode"
+                return chosen_method_on_accept, dont_ask_checkbox.isChecked()
+            else:
+                return None, False # 대화상자 닫힘
+        else: # 호환 안됨
+            dialog.setMinimumWidth(500)
+            msg_template_key_incompatible = ("호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다. "
+                                             "RAW 파일에 포함된 {prev_res_placeholder}의 미리보기 이미지를 사용하겠습니다.<br>"
+                                             "({model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.)")
+            translated_msg_template_incompatible = LanguageManager.translate(msg_template_key_incompatible)
+            formatted_text = translated_msg_template_incompatible.format(
+                model_name_placeholder=model_name,
+                prev_res_placeholder=prev_res,
+                orig_res_placeholder=orig_res
+            )
+            message_label.setText(f"{html_wrapper_start}{formatted_text}{html_wrapper_end}")
+
+            layout.addWidget(message_label)
+            layout.addSpacing(30) # <<< message_label과 don't ask 체크박스 사이 간격
+            layout.addWidget(dont_ask_checkbox) # 이 경우에도 다시 묻지 않음은 유효
+            layout.addSpacing(30) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addWidget(confirm_button, 0, Qt.AlignCenter)
+
+            if dialog.exec() == QDialog.Accepted:
+                # 호환 안되면 무조건 미리보기 사용
+                return "preview", dont_ask_checkbox.isChecked()
+            else:
+                return None, False # 대화상자 닫힘
 
     def match_raw_files(self, folder_path): # folder_path 인자 받도록 수정
         """JPG 파일과 RAW 파일 매칭 및 결과 처리"""
@@ -5402,10 +5416,10 @@ class PhotoSortApp(QMainWindow):
                 min-width: 60px;
             }}
             QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
+                background-color: {ThemeManager.get_color('bg_hover')};
             }}
             QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
+                background-color: {ThemeManager.get_color('bg_pressed')};
             }}
         """)
 
@@ -7343,7 +7357,7 @@ class PhotoSortApp(QMainWindow):
         """프로그램 상태를 초기화 (Delete 키)"""
         reply = self.show_themed_message_box(QMessageBox.Question, 
                                     LanguageManager.translate("프로그램 초기화"),
-                                    LanguageManager.translate("모든 설정과 로드된 파일을 초기화하시겠습니까?"),
+                                    LanguageManager.translate("로드된 파일과 현재 작업 상태를 초기화하시겠습니까? (카메라별 RAW 처리 방식 설정은 유지됩니다.)"),
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             # Undo/Redo 히스토리 초기화 추가
@@ -7438,6 +7452,9 @@ class PhotoSortApp(QMainWindow):
             # ========== 패널 위치 및 크기 재적용 ==========
             QTimer.singleShot(0, self._apply_panel_position)
             # ==============================================
+
+            self.save_state() 
+            logging.info("프로그램 상태 초기화 완료 (카메라별 RAW 설정은 유지됨).")
 
         else:
             logging.info("프로그램 초기화 취소됨")
@@ -7796,16 +7813,54 @@ class PhotoSortApp(QMainWindow):
     def _load_image_task(self, image_path, requested_index):
         """백그라운드 스레드에서 실행되는 이미지 로딩 작업"""
         try:
-            # 이미지 로드
-            pixmap = self.image_loader.load_image_with_orientation(image_path)
+            # 작업 시작 전 ResourceManager의 실행 플래그 확인
+            # ResourceManager.instance()를 통해 싱글톤 인스턴스에 접근
+            resource_manager = ResourceManager.instance() # 가독성을 위해 변수 할당
+            if not resource_manager._running:
+                logging.info(f"PhotoSortApp._load_image_task: ResourceManager가 종료 중이므로 작업 중단 ({Path(image_path).name})")
+                # ImageLoader의 시그널을 PhotoSortApp에서 직접 발생시켜야 함
+                # 또는 ImageLoader를 통해 발생시키도록 구조화 (현재 ImageLoader의 시그널을 사용)
+                if hasattr(self, 'image_loader'): # image_loader가 있는지 확인
+                    # QMetaObject.invokeMethod를 사용하여 메인 스레드에서 시그널 발생 (선택적, 더 안전)
+                    QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
+                                             Q_ARG(str, "ResourceManager_shutdown"),
+                                             Q_ARG(str, image_path),
+                                             Q_ARG(int, requested_index))
+                return False
+
+            # 실제 이미지 로딩 (이 내부에서도 _running 플래그 확인이 이상적이지만, 라이브러리 호출은 어려움)
+            pixmap = self.image_loader.load_image_with_orientation(image_path) 
+
+            # 작업 완료 전 다시 한번 플래그 확인
+            if not resource_manager._running:
+                logging.info(f"PhotoSortApp._load_image_task: 작업 완료 직전 ResourceManager 종료 감지 ({Path(image_path).name})")
+                if hasattr(self, 'image_loader'):
+                    QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
+                                             Q_ARG(str, "ResourceManager_shutdown_post"),
+                                             Q_ARG(str, image_path),
+                                             Q_ARG(int, requested_index))
+                return False
             
-            # QTimer.singleShot 대신 시그널 사용
-            self.image_loader.loadCompleted.emit(pixmap, image_path, requested_index)
+            # 로딩 성공 시그널 발생
+            if hasattr(self, 'image_loader'):
+                QMetaObject.invokeMethod(self.image_loader, "loadCompleted", Qt.QueuedConnection,
+                                         Q_ARG(QPixmap, pixmap),
+                                         Q_ARG(str, image_path),
+                                         Q_ARG(int, requested_index))
             return True
         except Exception as e:
-            logging.error(f"이미지 로드 작업 오류: {e}")
-            # 오류도 시그널로 전달
-            self.image_loader.loadFailed.emit(str(e), image_path, requested_index)
+            # 실행 중일 때만 오류 로깅 및 시그널 발생
+            if ResourceManager.instance()._running: # 여기서도 ResourceManager 인스턴스 직접 사용
+                logging.error(f"_load_image_task 오류 ({Path(image_path).name if image_path else 'N/A'}): {e}")
+                import traceback
+                traceback.print_exc()
+                if hasattr(self, 'image_loader'):
+                    QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
+                                             Q_ARG(str, str(e)),
+                                             Q_ARG(str, image_path),
+                                             Q_ARG(int, requested_index))
+            else:
+                logging.info(f"_load_image_task 중 오류 발생했으나 ResourceManager 이미 종료됨 ({Path(image_path).name if image_path else 'N/A'}): {e}")
             return False
 
     def _on_image_loaded_for_display(self, pixmap, image_path, requested_index):
@@ -8056,8 +8111,9 @@ class PhotoSortApp(QMainWindow):
             "theme": ThemeManager.get_current_theme_name(),
             "is_raw_only_mode": self.is_raw_only_mode,
             "control_panel_on_right": getattr(self, 'control_panel_on_right', False),
-            "raw_strategy": RawProcessingStrategyManager.get_current_strategy(),
             "show_grid_filenames": self.show_grid_filenames, # 파일명 표시 상태 추가
+            "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
+            "camera_raw_settings": self.camera_raw_settings, # <<< 카메라별 설정 추가
         }
 
         save_path = self.get_script_dir() / self.STATE_FILE
@@ -8077,6 +8133,7 @@ class PhotoSortApp(QMainWindow):
 
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
+            self.camera_raw_settings = {} # 첫 실행 시 빈 딕셔너리로 초기화
             # 첫 실행 시 UI 기본 상태 설정
             self.update_jpg_folder_ui_state() # 폴더 레이블 "폴더 경로"로, 버튼 상태 등
             self.update_raw_folder_ui_state()
@@ -8085,11 +8142,14 @@ class PhotoSortApp(QMainWindow):
             self.show_grid_filenames = False # 첫 실행 시 파일명 표시 기본값 Off
             if hasattr(self, 'filename_toggle_grid'):
                 self.filename_toggle_grid.setChecked(self.show_grid_filenames)
+
+            # ImageLoader가 생성된 후 기본 전략 설정
+            if hasattr(self, 'image_loader'):
+                self.image_loader.set_raw_load_strategy("preview") # 첫 실행 시 기본값
             
             # 다른 기본 설정값들 (언어, 테마 등은 팝업에서 선택 후 저장되거나, 기본값 유지)
             LanguageManager.set_language("ko") # 예시: 기본 한국어
             ThemeManager.set_theme("default")  # 예시: 기본 테마
-            RawProcessingStrategyManager.set_strategy("fast") # 예시: 기본 RAW 전략
             DateFormatManager.set_date_format("yyyy-mm-dd") # 예시: 기본 날짜 형식
 
             self.show_first_run_settings_popup() # 설정 팝업 표시 (여기서 사용자가 설정 후 저장)
@@ -8113,10 +8173,10 @@ class PhotoSortApp(QMainWindow):
 
             theme = loaded_data.get("theme", "default")
             ThemeManager.set_theme(theme)
-            
-            self.loaded_raw_strategy = loaded_data.get("raw_strategy", "fast")
-            # RAW 전략은 ImageLoader 초기화 후, 그리고 이미지 로드 전에 적용될 수 있도록 처리
 
+            self.camera_raw_settings = loaded_data.get("camera_raw_settings", {}) # <<< 카메라별 설정 로드, 없으면 빈 딕셔셔너리
+            logging.info(f"PhotoSortApp.load_state: 로드된 camera_raw_settings: {self.camera_raw_settings}")
+            
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
             self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
 
@@ -8133,13 +8193,6 @@ class PhotoSortApp(QMainWindow):
             if hasattr(self, 'theme_combo'):
                 idx = self.theme_combo.findText(theme.capitalize())
                 if idx >= 0: self.theme_combo.setCurrentIndex(idx)
-            
-            if hasattr(self, 'strategy_group') and hasattr(self, 'strategy_radio_buttons'):
-                radio_to_check = self.strategy_radio_buttons.get(self.loaded_raw_strategy)
-                if radio_to_check: radio_to_check.setChecked(True)
-                else:
-                    default_radio = self.strategy_radio_buttons.get("fast")
-                    if default_radio: default_radio.setChecked(True)
             
             if hasattr(self, 'panel_position_group'):
                 panel_button_id = 1 if self.control_panel_on_right else 0
@@ -8189,6 +8242,12 @@ class PhotoSortApp(QMainWindow):
                     self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
             # ===> 경로 레이블 반영 끝 <===
 
+            # ===> 앱 재시작 시 마지막 사용된 RAW 처리 방식 로드 <===
+            # 이 값은 이미지 목록 로드 후, 실제 display_current_image/update_grid_view 전에 ImageLoader에 설정됨
+            self.last_loaded_raw_method_from_state = loaded_data.get("last_used_raw_method", "preview")
+            logging.info(f"PhotoSortApp.load_state: 직전 세션 RAW 처리 방식 로드: {self.last_loaded_raw_method_from_state}")
+
+
             # 4. 이미지 목록 로드 시도
             images_loaded_successfully = False
             if self.is_raw_only_mode:
@@ -8230,6 +8289,16 @@ class PhotoSortApp(QMainWindow):
             self.update_folder_buttons()      # 분류 폴더 레이블 스타일/X버튼
             self.update_match_raw_button_state()# RAW 관련 버튼 텍스트/상태
 
+            # ===> ImageLoader 전략 설정 (이미지 목록 로드 성공 후, 뷰 업데이트 전) <===
+            if images_loaded_successfully and self.image_files:
+                # 앱 재시작 시에는 저장된 last_loaded_raw_method_from_state를 사용
+                self.image_loader.set_raw_load_strategy(self.last_loaded_raw_method_from_state)
+                logging.info(f"PhotoSortApp.load_state: ImageLoader 처리 방식 설정됨 (재시작): {self.last_loaded_raw_method_from_state}")
+            elif hasattr(self, 'image_loader'): # 이미지가 없더라도 ImageLoader는 존재하므로 기본값 설정
+                self.image_loader.set_raw_load_strategy("preview") # 이미지가 없으면 기본 preview
+                logging.info(f"PhotoSortApp.load_state: 이미지 로드 실패/없음. ImageLoader 기본 'preview' 설정.")
+
+
             # 5. 뷰 상태 복원 (이미지 로드 성공 시)
             if images_loaded_successfully and self.image_files:
                 total_images = len(self.image_files)
@@ -8243,25 +8312,6 @@ class PhotoSortApp(QMainWindow):
                 loaded_actual_current_image_index = loaded_data.get("current_image_index", -1)
                 logging.info(f"PhotoSortApp.load_state: 복원 시도할 전역 이미지 인덱스: {loaded_actual_current_image_index}")
 
-                # ImageLoader 및 RAW 전략 적용
-                if hasattr(self, 'image_loader') and hasattr(self, 'loaded_raw_strategy'):
-                    RawProcessingStrategyManager.set_strategy(self.loaded_raw_strategy)
-                    logging.info(f"PhotoSortApp.load_state: 저장된 RAW 전략 '{self.loaded_raw_strategy}' 적용됨.")
-                    # (선택적) 첫 파일로 전략 재결정 로직
-                    if self.image_files and (self.is_raw_only_mode or (self.raw_files and not self.is_raw_only_mode)) : # RAW 파일이 있는 경우
-                        first_file_for_strategy = str(self.image_files[0]) # 현재 image_files의 첫번째 (RAW이거나 JPG)
-                        # RAW 전용 모드가 아니면서, RAW 파일이 연결되어 있다면, 첫 JPG에 매칭되는 RAW로 테스트해야 할 수도 있음
-                        if not self.is_raw_only_mode and self.raw_files:
-                            first_jpg_stem = Path(self.image_files[0]).stem
-                            if first_jpg_stem in self.raw_files:
-                                first_file_for_strategy = str(self.raw_files[first_jpg_stem])
-                        
-                        if Path(first_file_for_strategy).suffix.lower() in self.raw_extensions:
-                            logging.info(f"PhotoSortApp.load_state: RAW 전략 재결정 시도 파일: {first_file_for_strategy}")
-                            with ImageLoader._strategy_lock: # ImageLoader의 클래스 변수 접근 시 락 사용
-                                ImageLoader._strategy_initialized = False # 강제 재설정
-                                ImageLoader._global_raw_strategy = "undetermined"
-                            self.image_loader.determine_raw_strategy(first_file_for_strategy)
 
 
                 if 0 <= loaded_actual_current_image_index < total_images:
@@ -8321,12 +8371,40 @@ class PhotoSortApp(QMainWindow):
             # 첫 실행과 유사한 초기화 로직 호출 또는 플래그 설정
             self.is_first_run = True # 임시 플래그로 첫 실행 로직 유도
             QTimer.singleShot(0, self.load_state) # 재시도 (첫 실행 로직으로)
-        except Exception as e:
+        except Exception as e: # 모든 예외를 잡도록 변경
             logging.error(f"PhotoSortApp.load_state: 상태 불러오는 중 예외 발생: {e}")
             import traceback
             traceback.print_exc()
-            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("상태 로드 오류"), f"{LanguageManager.translate('상태를 불러오는 중 오류가 발생했습니다')}: {e}")
-            # 안전하게 기본 상태로 초기화하는 로직 필요 시 추가
+            # 오류 발생 시 안전하게 기본값으로 초기화하거나, 사용자에게 알림.
+            # 여기서는 첫 실행과 유사한 기본 상태로 앱을 시작하도록 유도할 수 있습니다.
+            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("상태 로드 오류"), f"{LanguageManager.translate('저장된 상태 파일을 불러오는 데 실패했습니다. 기본 설정으로 시작합니다.')}\n\nError: {e}")
+            # 안전한 초기화 로직 (예: 첫 실행 시와 유사하게)
+            self.current_folder = ""
+            self.raw_folder = ""
+            self.image_files = []
+            # ... 기타 변수 초기화 ... 추가 필요.
+            if hasattr(self, 'image_loader'): self.image_loader.set_raw_load_strategy("preview")
+            self.update_all_ui_after_load_failure_or_first_run() # UI 초기화 함수 호출
+
+
+    def update_all_ui_after_load_failure_or_first_run(self):
+        """load_state 실패 또는 첫 실행 시 UI를 기본 상태로 설정하는 헬퍼"""
+        self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        for label in self.folder_path_labels:
+            label.setText(LanguageManager.translate("폴더 경로"))
+        self.update_jpg_folder_ui_state()
+        self.update_raw_folder_ui_state()
+        self.update_folder_buttons()
+        self.update_match_raw_button_state()
+        self.grid_mode = "Off"; self.grid_off_radio.setChecked(True)
+        self.zoom_mode = "Fit"; self.fit_radio.setChecked(True)
+        self.update_zoom_radio_buttons_state()
+        self.display_current_image() # 빈 화면 표시
+        self.update_counter_layout()
+        self.toggle_minimap(False)
+        QTimer.singleShot(0, self._apply_panel_position)
+        self.setFocus()
 
     def reload_raw_files_from_state(self, folder_path):
         """ 저장된 RAW 폴더 경로에서 파일 목록을 다시 로드 """
@@ -9210,13 +9288,6 @@ class PhotoSortApp(QMainWindow):
         # "파일명" 토글 체크박스 텍스트 업데이트 추가 
         if hasattr(self, 'filename_toggle_grid'): # 위젯이 생성되었는지 확인
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
-
-        # RAW 처리 전략 라디오 버튼 텍스트 업데이트 추가
-        if hasattr(self, 'strategy_radio_buttons'):
-            current_lang = LanguageManager.get_current_language()
-            for strategy, radio_button in self.strategy_radio_buttons.items():
-                strategy_name = RawProcessingStrategyManager.get_strategy_name(strategy, current_lang)
-                radio_button.setText(strategy_name)
         
         # 폴더 경로 레이블 업데이트 - 조건 수정
         if self.folder_path_label.text() == "폴더 경로" or self.folder_path_label.text() == "Folder Path":
@@ -9267,24 +9338,18 @@ class PhotoSortApp(QMainWindow):
                     print("정보 텍스트 업데이트 완료")
                     break
             # ========== 정보 텍스트 업데이트 코드 끝 ==========
-            
-            # 현재 전략 레이블 업데이트
-            if hasattr(self.settings_popup, 'current_strategy_label'):
-                self.update_strategy_label()
 
-            # 전략 제목 및 레이블 업데이트
-            strategy_title = self.findChild(QLabel, "strategy_title_label")
-            if strategy_title:
-                strategy_title.setText(LanguageManager.translate("RAW 처리 방식 ⓘ"))
-                strategy_title.setToolTip(self._build_raw_strategy_tooltip_text())
+            # 카메라 RAW 설정 초기화 라벨 업데이트
+            raw_reset_label_widget = self.settings_popup.findChild(QLabel, "raw_reset_label")
+            if raw_reset_label_widget:
+                raw_reset_label_widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
             
-            # 현재 선택된 전략 레이블 업데이트
-            if hasattr(self.settings_popup, 'current_strategy_label'):
-                current_lang = LanguageManager.get_current_language()
-                strategy = RawProcessingStrategyManager.get_current_strategy()
-                strategy_name = RawProcessingStrategyManager.get_strategy_name(strategy, current_lang)
-                self.settings_popup.current_strategy_label.setText(strategy_name)
-            
+            # 카메라 RAW 설정 초기화 버튼 텍스트 업데이트
+            # 버튼은 self.reset_camera_settings_button으로 직접 접근 가능
+            if hasattr(self, 'reset_camera_settings_button') and self.reset_camera_settings_button.parentWidget() is not None and self.reset_camera_settings_button.parentWidget().isVisible():
+                 self.reset_camera_settings_button.setText(LanguageManager.translate("설정 초기화"))
+
+        
             print("설정 팝업 텍스트 업데이트 완료.")
 
         # 현재 파일 정보 다시 표시 (날짜 형식 등 반영 위해 필요)
@@ -9897,20 +9962,31 @@ def main():
         "후원 QR 코드": "Donation QR Code",
         "네이버페이": "NaverPay",
         "카카오페이": "KakaoPay",
-        # 새로운 RAW 처리 전략 관련 번역 추가
-        "RAW 처리 방식 ⓘ": "RAW Processing ⓘ",
-        "매우 빠름": "Ultra Fast",
-        "빠름": "Fast",
-        "고품질": "High Quality",
-        "최고 품질": "Ultra Quality",
-        "미리보기 이미지 추출 실패. RAW 파일 처리 설정을 바꿔보세요": "Failed to extract preview. Try changing RAW processing settings.",
-        "호환성 문제": "Compatibility Issue",
-        "RAW 디코딩 실패. 미리보기를 대신 사용합니다.": "RAW decoding failed. Using preview instead.",
-        "미리보기 추출 실패": "Preview Extraction Failed",
         "피드백 및 업데이트 확인:": "Feedback & Updates:",
         "이미지 로드 중...": "Loading image...",
         "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)": "▪ Space: Enlarge photo in grid mode / Toggle zoom mode (Fit ↔ 100%)",
         "파일명": "Filename",
+        "설정 초기화": "Reset Settings",
+        "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
+        "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
+        "알 수 없는 카메라": "Unknown Camera",
+        "정보 없음": "N/A",
+        "RAW 파일 처리 방식 선택": "Select RAW Processing Method",
+        "{camera_model_placeholder}의 RAW 처리 방식에 대해 다시 묻지 않습니다.": "Don't ask again for {camera_model_placeholder} RAW processing method.",
+        "{model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.<br>{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 {prev_res_placeholder}입니다.<br>미리보기를 통해 이미지를 보시겠습니까, RAW 파일을 디코딩해서 보시겠습니까?":
+            "The original image resolution for {model_name_placeholder} is {orig_res_placeholder}.<br>"
+            "The embedded preview image resolution in the RAW file for {model_name_placeholder} is {prev_res_placeholder}.<br>"
+            "Would you like to view images using the preview or by decoding the RAW file?",
+        "미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우)": "Use Preview Image (if preview resolution is sufficient for you or speed is important)",
+        "RAW 디코딩 (원본 해상도가 필요한 경우)": "Decode RAW File (if original resolution is needed)",
+        "호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다. RAW 파일에 포함된 {prev_res_placeholder}의 미리보기 이미지를 사용하겠습니다.<br>({model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.)":
+            "Due to compatibility issues, RAW files from {model_name_placeholder} cannot be decoded. The preview image with resolution {prev_res_placeholder} will be used.<br>"
+            "(Note: The original image resolution for {model_name_placeholder} is {orig_res_placeholder}.)",
+        "저장된 RAW 처리 방식": "Saved RAW Processing Methods",
+        "설정 초기화": "Reset All Settings",
+        "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
+        "초기화 완료": "Reset Complete",
+        "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
     }
     
     LanguageManager.initialize_translations(translations)
