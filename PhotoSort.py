@@ -5059,6 +5059,8 @@ class PhotoSortApp(QMainWindow):
 
             logging.info(f"파일 분석 완료: 호환={is_raw_compatible}, 모델='{final_camera_model_display}', 원본={original_resolution_str}, 미리보기={preview_resolution_str}")
 
+            self.last_processed_camera_model = None # 새 폴더 로드 시 이전 카메라 모델 정보 초기화
+            
             # --- 2. 저장된 설정 확인 및 메시지 박스 표시 결정 ---
             chosen_method = None # 사용자가 최종 선택한 처리 방식 ("preview" or "decode")
             dont_ask_again_for_this_model = False
@@ -5066,36 +5068,52 @@ class PhotoSortApp(QMainWindow):
             # final_camera_model_display가 유효할 때만 camera_raw_settings 확인
             if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
                 saved_setting_for_this_action = self.get_camera_raw_setting(final_camera_model_display)
-                if saved_setting_for_this_action and saved_setting_for_this_action.get("dont_ask"):
-                    # "다시 묻지 않음"이 True이면 저장된 method를 사용
-                    chosen_method = saved_setting_for_this_action.get("method")
-                    logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
-                else:
-                    # "다시 묻지 않음"이 아니거나 설정이 없으면 메시지 박스 표시
-                    chosen_method, dont_ask_again_for_this_model = self._show_raw_processing_choice_dialog(
+                if saved_setting_for_this_action: # 해당 모델에 대한 설정이 존재하면
+                    # 저장된 "dont_ask" 값을 dont_ask_again_for_this_model의 초기값으로 사용
+                    dont_ask_again_for_this_model = saved_setting_for_this_action.get("dont_ask", False)
+
+                    if dont_ask_again_for_this_model: # "다시 묻지 않음"이 True이면
+                        chosen_method = saved_setting_for_this_action.get("method")
+                        logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
+                    else: # "다시 묻지 않음"이 False이거나 dont_ask 키가 없으면 메시지 박스 표시
+                        chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                            is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                        )
+                        # 사용자가 대화상자를 닫지 않았을 때만 dont_ask_again_for_this_model 값을 업데이트
+                        if chosen_method is not None:
+                            dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+                else: # 해당 모델에 대한 설정이 아예 없으면 메시지 박스 표시
+                    chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
                         is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
                     )
+                    if chosen_method is not None:
+                        dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
             else: # 카메라 모델을 알 수 없는 경우 -> 항상 메시지 박스 표시
                 logging.info(f"카메라 모델을 알 수 없어, 메시지 박스 표시 (호환성 기반)")
-                chosen_method, dont_ask_again_for_this_model = self._show_raw_processing_choice_dialog(
+                chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
                     is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
                 )
+                if chosen_method is not None:
+                    dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+
 
             if chosen_method is None:
-                logging.info("RAW 처리 방식 선택되지 않음. 로드 취소.")
+                logging.info("RAW 처리 방식 선택되지 않음 (대화상자 닫힘 등). 로드 취소.")
                 return
             
             logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}") # <<< 로그 추가
 
 
             # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
-            # dont_ask_again_for_this_model은 메시지 박스에서 반환된 실제 체크 상태
-            if dont_ask_again_for_this_model and final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
-                self.set_camera_raw_setting(final_camera_model_display, chosen_method, True)
-            elif not dont_ask_again_for_this_model and final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
-                # "다시 묻지 않음"을 해제한 경우, 해당 카메라 설정을 업데이트하거나 삭제할 수 있음
-                # 여기서는 업데이트 (dont_ask: False)
-                self.set_camera_raw_setting(final_camera_model_display, chosen_method, False)
+            # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                # chosen_method가 None이 아닐 때만 저장 로직 실행
+                self.set_camera_raw_setting(final_camera_model_display, chosen_method, dont_ask_again_for_this_model)
+            
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                self.last_processed_camera_model = final_camera_model_display
+            else:
+                self.last_processed_camera_model = None
             
             # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
             self.image_loader.set_raw_load_strategy(chosen_method) # <<< 중요!
