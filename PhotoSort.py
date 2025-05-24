@@ -2099,6 +2099,16 @@ class PhotoSortApp(QMainWindow):
 
         self.control_panel_on_right = False # 기본값: 왼쪽 (False)
 
+        self.viewport_move_speed = 5 # 뷰포트 이동 속도 (1~10), 기본값 5
+        self.last_processed_camera_model = None
+
+        # --- 뷰포트 부드러운 이동을 위한 변수 ---
+        self.viewport_move_timer = QTimer(self)
+        self.viewport_move_timer.setInterval(16) # 약 60 FPS (1000ms / 60 ~= 16ms)
+        self.viewport_move_timer.timeout.connect(self.smooth_viewport_move)
+        self.pressed_keys_for_viewport = set() # 현재 뷰포트 이동을 위해 눌린 키 저장
+        # --- 변수 추가 끝 ---
+
         # 메모리 모니터링 및 자동 조정을 위한 타이머
         self.memory_monitor_timer = QTimer(self)
         self.memory_monitor_timer.setInterval(10000)  # 10초마다 확인
@@ -2621,6 +2631,59 @@ class PhotoSortApp(QMainWindow):
         self.exif_cache = {}  # 파일 경로 -> EXIF 데이터 딕셔너리
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
+
+
+
+    def smooth_viewport_move(self):
+        """타이머에 의해 호출되어 뷰포트를 부드럽게 이동시킵니다."""
+        if not (self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and self.original_pixmap and self.pressed_keys_for_viewport):
+            self.viewport_move_timer.stop() # 조건 안 맞으면 타이머 중지
+            return
+
+        move_step_base = getattr(self, 'viewport_move_speed', 5) 
+        # 실제 이동량은 setInterval에 따라 조금씩 움직이므로, move_step_base는 한 번의 timeout당 이동량의 기준으로 사용
+        # 예를 들어, 속도 5, interval 16ms이면, 초당 약 5 * (1000/16) = 약 300px 이동 효과.
+        # 실제로는 방향키 조합에 따라 대각선 이동 시 속도 보정 필요할 수 있음.
+        # 여기서는 단순하게 각 방향 이동량을 move_step_base로 사용.
+        # 더 부드럽게 하려면 move_step_base 값을 작게, interval도 작게 조절.
+        # 여기서는 단계별 이동량이므로, *10은 제거하고, viewport_move_speed 값을 직접 사용하거나 약간의 배율만 적용.
+        move_amount = move_step_base * 12 # 한 번의 timeout당 이동 픽셀 (조절 가능)
+
+        dx, dy = 0, 0
+
+        # 8방향 이동 로직 (눌린 키 조합 확인)
+        if Qt.Key_Left in self.pressed_keys_for_viewport: dx += move_amount
+        if Qt.Key_Right in self.pressed_keys_for_viewport: dx -= move_amount
+        if Qt.Key_Up in self.pressed_keys_for_viewport: dy += move_amount
+        if Qt.Key_Down in self.pressed_keys_for_viewport: dy -= move_amount
+        
+        # Shift+WASD 에 대한 처리도 여기에 추가
+        # (eventFilter에서 pressed_keys_for_viewport에 WASD도 Arrow Key처럼 매핑해서 넣어줌)
+
+        if dx == 0 and dy == 0: # 이동할 방향이 없으면
+            self.viewport_move_timer.stop()
+            return
+
+        current_pos = self.image_label.pos()
+        new_x, new_y = current_pos.x() + dx, current_pos.y() + dy
+
+        # 패닝 범위 제한 로직 (동일하게 적용)
+        img_width = self.original_pixmap.width() * (1.0 if self.zoom_mode == "100%" else 2.0)
+        img_height = self.original_pixmap.height() * (1.0 if self.zoom_mode == "100%" else 2.0)
+        view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
+        x_min_limit = min(0, view_width - img_width) if img_width > view_width else (view_width - img_width) // 2
+        x_max_limit = 0 if img_width > view_width else x_min_limit
+        y_min_limit = min(0, view_height - img_height) if img_height > view_height else (view_height - img_height) // 2
+        y_max_limit = 0 if img_height > view_height else y_min_limit
+        
+        final_x = max(x_min_limit, min(x_max_limit, new_x))
+        final_y = max(y_min_limit, min(y_max_limit, new_y))
+
+        if current_pos.x() != final_x or current_pos.y() != final_y:
+            self.image_label.move(int(final_x), int(final_y))
+            if self.minimap_visible and self.minimap_widget.isVisible():
+                self.update_minimap()
+
 
     def handle_raw_decoding_failure(self, failed_file_path: str):
         """RAW 파일 디코딩 실패 시 호출되는 슬롯"""
@@ -3455,6 +3518,45 @@ class PhotoSortApp(QMainWindow):
         settings_layout.addWidget(theme_container)
         # === 테마 설정 끝 ===
 
+        # === 뷰포트 이동 속도 설정 ===
+        viewport_speed_container = QWidget()
+        viewport_speed_layout = QHBoxLayout(viewport_speed_container)
+        viewport_speed_layout.setContentsMargins(0, 5, 0, 5)
+
+        viewport_speed_label = QLabel(LanguageManager.translate("뷰포트 이동 속도 (키보드):")) # 새 번역 키
+        viewport_speed_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
+        viewport_speed_label.setFont(font)
+        viewport_speed_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤
+        viewport_speed_label.setObjectName("viewport_speed_label")
+
+        self.viewport_speed_combo = QComboBox()
+        for i in range(1, 11): # 1부터 10까지의 속도 단계
+            self.viewport_speed_combo.addItem(str(i), i) # 표시 텍스트, 실제 값
+        
+        # 저장된 값으로 초기 선택 (self.viewport_move_speed는 load_state에서 설정됨)
+        current_speed_idx = self.viewport_speed_combo.findData(getattr(self, 'viewport_move_speed', 5))
+        if current_speed_idx >= 0:
+            self.viewport_speed_combo.setCurrentIndex(current_speed_idx)
+        else: # 저장된 값이 없거나 범위 밖이면 기본값 5로 설정
+            default_idx = self.viewport_speed_combo.findData(5)
+            if default_idx >=0 : self.viewport_speed_combo.setCurrentIndex(default_idx)
+
+
+        self.viewport_speed_combo.setStyleSheet(self.generate_combobox_style()) # 기존 콤보박스 스타일 재사용
+        self.viewport_speed_combo.currentIndexChanged.connect(self.on_viewport_speed_changed)
+        self.viewport_speed_combo.setMinimumWidth(80) # 콤보박스 최소 너비
+
+        viewport_speed_layout.addWidget(viewport_speed_label)
+        viewport_speed_layout.addWidget(self.viewport_speed_combo)
+        viewport_speed_layout.addStretch(1) # 우측 정렬 또는 공간 채우기
+
+        settings_layout.addWidget(viewport_speed_container)
+        settings_layout.addSpacing(UIScaleManager.get("settings_layout_vspace", 10)) # 간격
+        # === 뷰포트 이동 속도 설정 끝 ===
+
+
 
         # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
         raw_settings_reset_container = QWidget()
@@ -3508,6 +3610,15 @@ class PhotoSortApp(QMainWindow):
         
         return settings_container
 
+
+    def on_viewport_speed_changed(self, index):
+        """뷰포트 이동 속도 콤보박스 변경 시 호출"""
+        if index < 0: return
+        selected_speed = self.viewport_speed_combo.itemData(index)
+        if selected_speed is not None:
+            self.viewport_move_speed = int(selected_speed)
+            logging.info(f"뷰포트 이동 속도 변경됨: {self.viewport_move_speed}")
+            # self.save_state() # 즉시 저장하려면 호출 (set_camera_raw_setting처럼)
 
 
     def on_theme_changed(self, theme_name):
@@ -8131,7 +8242,8 @@ class PhotoSortApp(QMainWindow):
             "control_panel_on_right": getattr(self, 'control_panel_on_right', False),
             "show_grid_filenames": self.show_grid_filenames, # 파일명 표시 상태 추가
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
-            "camera_raw_settings": self.camera_raw_settings, # <<< 카메라별 설정 추가
+            "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
+            "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
         }
 
         save_path = self.get_script_dir() / self.STATE_FILE
@@ -8197,6 +8309,9 @@ class PhotoSortApp(QMainWindow):
             
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
             self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
+            
+            self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도 추가, 기본값 5
+            logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
 
             # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
             if hasattr(self, 'language_group'):
@@ -8219,6 +8334,12 @@ class PhotoSortApp(QMainWindow):
 
             if hasattr(self, 'filename_toggle_grid'):
                 self.filename_toggle_grid.setChecked(self.show_grid_filenames)
+
+            # 뷰포트 속도 콤보박스 UI 업데이트 (만약 setup_settings_ui보다 먼저 호출된다면, 콤보박스 생성 후 설정 필요)
+            if hasattr(self, 'viewport_speed_combo'): # 콤보박스가 이미 생성되었다면
+                idx = self.viewport_speed_combo.findData(self.viewport_move_speed)
+                if idx >= 0:
+                    self.viewport_speed_combo.setCurrentIndex(idx)
             
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
@@ -8811,189 +8932,165 @@ class PhotoSortApp(QMainWindow):
         if event.type() == QEvent.KeyPress:
             key = event.key()
             modifiers = event.modifiers()
+            is_auto_repeat = event.isAutoRepeat()
 
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
-            shift_modifier = Qt.ShiftModifier
 
-            # --- Undo: Ctrl+Z (Win/Linux) or Command+Z (Mac) ---
-            if modifiers == ctrl_modifier and key == Qt.Key_Z:
-                logging.debug("Undo shortcut detected") # 디버깅 로그
-                self.undo_move()
-                return True # 이벤트 처리 완료
-
-            # --- Redo: Ctrl+Y (Win/Linux) or Command+Y (Mac) ---
-            elif modifiers == ctrl_modifier and key == Qt.Key_Y:
-                logging.debug("Redo (Y) shortcut detected") # 디버깅 로그
-                self.redo_move()
-                return True # 이벤트 처리 완료
-
-            # --- Redo: Ctrl+Shift+Z (Win/Linux) or Command+Shift+Z (Mac) ---
-            # PySide6에서는 Shift와의 조합이 Control이나 Meta보다 우선순위가 높게 인식될 수 있음
-            # 따라서 (ctrl_modifier | shift_modifier) 로 체크
-            elif (modifiers & ctrl_modifier) and (modifiers & shift_modifier) and key == Qt.Key_Z:
-                 logging.debug("Redo (Shift+Z) shortcut detected") # 디버깅 로그
-                 self.redo_move()
-                 return True # 이벤트 처리 완료
-
-            # --- Enter 키 처리 수정 (중복 방지 추가) ---
+            # --- 1. 최우선 처리: Undo, Redo, Enter, F-Keys, Delete, ESC, Space ---
+            # (이 부분은 이전과 동일하므로 간략히 표시)
+            if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
+            elif modifiers == ctrl_modifier and key == Qt.Key_Y: self.redo_move(); return True
+            elif (modifiers & ctrl_modifier) and (modifiers & Qt.ShiftModifier) and key == Qt.Key_Z: self.redo_move(); return True
             if key == Qt.Key_Return or key == Qt.Key_Enter:
-                # 파일 목록 다이얼로그가 열려있지 않은 경우에만 새로 생성
-                if self.file_list_dialog is None or not self.file_list_dialog.isVisible():
-                    if self.image_files: # 로드된 이미지가 있을 때만 실행
+                # ... (Enter 키 로직 - 기존과 동일) ...
+                if self.file_list_dialog is None or not self.file_list_dialog.isVisible(): # 중복 실행 방지
+                    if self.image_files:
                         current_selected_index = -1
-                        if self.grid_mode == "Off":
-                            current_selected_index = self.current_image_index
-                        else: # Grid 모드일 때
-                            potential_index = self.grid_page_start_index + self.current_grid_index
-                            if 0 <= potential_index < len(self.image_files):
-                                current_selected_index = potential_index
-
-                        # 유효한 인덱스가 있을 때만 대화상자 표시
-                        if current_selected_index != -1:
-                            # 새 다이얼로그 생성 및 인스턴스 저장
-                            self.file_list_dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
-                            # 다이얼로그가 닫힐 때 인스턴스 참조 제거
-                            self.file_list_dialog.finished.connect(self.on_file_list_dialog_closed)
-                            self.file_list_dialog.show() # 모달리스로 실행 (선택)
+                        if self.grid_mode == "Off": current_selected_index = self.current_image_index
                         else:
-                            logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.") # 디버깅용
-                    else:
-                        logging.debug("Enter 키: 로드된 이미지가 없습니다.") # 디버깅용
+                            potential_index = self.grid_page_start_index + self.current_grid_index
+                            if 0 <= potential_index < len(self.image_files): current_selected_index = potential_index
+                        if current_selected_index != -1:
+                            self.file_list_dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
+                            self.file_list_dialog.finished.connect(self.on_file_list_dialog_closed)
+                            self.file_list_dialog.show()
+                        else: logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
+                    else: logging.debug("Enter 키: 로드된 이미지가 없습니다.")
                 else:
-                    # 이미 다이얼로그가 열려있으면 활성화하고 맨 위로 올림
-                    self.file_list_dialog.activateWindow()
-                    self.file_list_dialog.raise_()
-                return True # Enter 키 이벤트 처리 완료
-
-            # --- F1, F2, F3, Delete 키 처리 ---
-            if key == Qt.Key_F1:
-                self.force_refresh = True  # 강제 새로고침 플래그 추가
-                self.grid_off_radio.setChecked(True)
-                self.on_grid_changed(self.grid_off_radio)
+                    self.file_list_dialog.activateWindow(); self.file_list_dialog.raise_()
                 return True
-            elif key == Qt.Key_F2:
-                self.force_refresh = True  # 강제 새로고침 플래그 추가
-                self.grid_2x2_radio.setChecked(True)
-                self.on_grid_changed(self.grid_2x2_radio)
-                return True
-            elif key == Qt.Key_F3:
-                self.force_refresh = True  # 강제 새로고침 플래그 추가
-                self.grid_3x3_radio.setChecked(True)
-                self.on_grid_changed(self.grid_3x3_radio)
-                return True
-            elif key == Qt.Key_Delete:
-                self.reset_program_state()
-                return True
-
-            # --- ESC 키 처리 ---
+            if key == Qt.Key_F1: self.force_refresh=True; self.grid_off_radio.setChecked(True); self.on_grid_changed(self.grid_off_radio); return True
+            elif key == Qt.Key_F2: self.force_refresh=True; self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio); return True
+            elif key == Qt.Key_F3: self.force_refresh=True; self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio); return True
+            elif key == Qt.Key_Delete: self.reset_program_state(); return True
             if key == Qt.Key_Escape:
-                # 파일 목록 다이얼로그가 열려 있으면 닫기
-                if self.file_list_dialog and self.file_list_dialog.isVisible():
-                    self.file_list_dialog.reject() # 또는 close()
-                    return True # ESC는 다이얼로그 닫는 용도로만 사용
-
-                # 다이얼로그가 없다면 기존 확대/그리드 모드 복귀 로직 수행
-                if self.zoom_mode != "Fit":
-                    self.fit_radio.setChecked(True)
-                    self.on_zoom_changed(self.fit_radio)
-                    return True
+                # ... (ESC 키 로직 - 기존과 동일) ...
+                if self.file_list_dialog and self.file_list_dialog.isVisible(): self.file_list_dialog.reject(); return True
+                if self.zoom_mode != "Fit": self.fit_radio.setChecked(True); self.on_zoom_changed(self.fit_radio); return True
                 elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
-                    if self.previous_grid_mode == "2x2":
-                        self.grid_2x2_radio.setChecked(True)
-                        self.on_grid_changed(self.grid_2x2_radio)
-                    elif self.previous_grid_mode == "3x3":
-                        self.grid_3x3_radio.setChecked(True)
-                        self.on_grid_changed(self.grid_3x3_radio)
+                    if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
+                    elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
-
-            # --- 스페이스바 처리 수정 ---
             if key == Qt.Key_Space:
-                if self.grid_mode == "Off":  # Grid Off 모드일 때만 Zoom 토글
+                # ... (스페이스바 로직 - 기존과 동일) ...
+                if self.grid_mode == "Off":
                     if self.zoom_mode == "Fit":
-                        # Fit 모드에서 100% 모드로 전환
-                        self.zoom_100_radio.setChecked(True)
-                        self.on_zoom_changed(self.zoom_100_radio)
-                    else:
-                        # 100% 또는 200% 모드에서 Fit 모드로 전환
-                        self.fit_radio.setChecked(True)
-                        self.on_zoom_changed(self.fit_radio)
+                        if self.original_pixmap: old_zoom_mode_for_log = self.zoom_mode; self.center_image = True; self.center_on_click = False; self.zoom_mode = "100%"; self.zoom_100_radio.setChecked(True); self.apply_zoom_to_image(); self.toggle_minimap(self.minimap_toggle.isChecked()); logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> {self.zoom_mode}")
+                    elif self.zoom_mode == "100%" or self.zoom_mode == "200%":
+                        old_zoom_mode_for_log = self.zoom_mode; logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> Fit 요청. 현재 current_image_index: {self.current_image_index}"); self.force_refresh = True; self.last_fit_size = (0, 0); self.fit_pixmap_cache.clear(); self.fit_radio.setChecked(True); self.on_zoom_changed(self.fit_radio); logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> {self.zoom_mode} 완료")
                     return True
-                else:  # Grid 모드일 때는 기존 동작 유지
-                    # 현재 그리드에서 선택된 이미지의 인덱스를 계산
+                else: # Grid On
                     current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
-
-                    # 유효한 인덱스일 경우 current_image_index 업데이트
-                    if 0 <= current_selected_grid_index < len(self.image_files):
-                        self.current_image_index = current_selected_grid_index
-                        
-                        # 이미지 변경 시 강제 새로고침 플래그 설정 추가
-                        self.force_refresh = True
-                        
-                        # Fit 모드인 경우 기존 캐시 무효화 추가
-                        if self.zoom_mode == "Fit":
-                            self.last_fit_size = (0, 0)
-                            self.fit_pixmap_cache.clear()
-
-                    # 이전 그리드 모드 저장
-                    self.previous_grid_mode = self.grid_mode
-                    # Grid Off로 전환
-                    self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
-                    # 스페이스바로 전환되었음을 표시
-                    self.space_pressed = True
-                    # 뷰 업데이트
-                    self.update_grid_view()
-                    # 줌 버튼 상태 업데이트
-                    self.update_zoom_radio_buttons_state()
-                    self.update_counter_layout()
+                    if 0 <= current_selected_grid_index < len(self.image_files): self.current_image_index = current_selected_grid_index; self.force_refresh = True;
+                    if self.zoom_mode == "Fit": self.last_fit_size = (0, 0); self.fit_pixmap_cache.clear()
+                    self.previous_grid_mode = self.grid_mode; self.grid_mode = "Off"; self.grid_off_radio.setChecked(True); self.space_pressed = True; self.update_grid_view(); self.update_zoom_radio_buttons_state(); self.update_counter_layout()
                     return True
 
-            # --- Grid 모드 또는 Grid Off 모드 키 처리 ---
-            if self.grid_mode != "Off":
-                # Grid 모드 네비게이션 및 폴더 이동
-                if modifiers & Qt.ShiftModifier:
+            # --- 2. 뷰포트 이동 키 처리 (Grid Off & Zoom 100%/200% 시) ---
+            is_viewport_move_condition = (self.grid_mode == "Off" and
+                                          self.zoom_mode in ["100%", "200%"] and
+                                          self.original_pixmap)
+            
+            viewport_key_pressed_for_timer = None # 타이머에 전달할 표준화된 키 (Left, Right, Up, Down)
+            is_viewport_move_key_combination = False # 현재 키 조합이 뷰포트 이동용인지
+
+            if is_viewport_move_condition:
+                if key in [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down]: # Arrow Keys
+                    viewport_key_pressed_for_timer = key
+                    is_viewport_move_key_combination = True
+                elif modifiers & Qt.ShiftModifier: # Shift + WASD
+                    if key == Qt.Key_A: viewport_key_pressed_for_timer = Qt.Key_Left; is_viewport_move_key_combination = True
+                    elif key == Qt.Key_D: viewport_key_pressed_for_timer = Qt.Key_Right; is_viewport_move_key_combination = True
+                    elif key == Qt.Key_W: viewport_key_pressed_for_timer = Qt.Key_Up; is_viewport_move_key_combination = True
+                    elif key == Qt.Key_S: viewport_key_pressed_for_timer = Qt.Key_Down; is_viewport_move_key_combination = True
+            
+            if is_viewport_move_key_combination: # 뷰포트 이동 키가 눌렸다면
+                if not is_auto_repeat: # 첫 눌림 시에만
+                    self.pressed_keys_for_viewport.add(viewport_key_pressed_for_timer)
+                    if not self.viewport_move_timer.isActive():
+                        self.viewport_move_timer.start()
+                return True # 뷰포트 이동 관련 키는 여기서 소비
+
+            # --- 3. Grid 모드 네비게이션 또는 Grid Off 사진 넘기기 ---
+            # (뷰포트 이동 조건이 아니거나, 뷰포트 이동 키 조합이 아닐 때 이리로 넘어옴)
+
+            if self.grid_mode != "Off": # Grid On 모드
+                rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                if modifiers & Qt.ShiftModifier: # Shift + (A/D/Left/Right) -> 페이지 넘기기
                     if key == Qt.Key_A or key == Qt.Key_Left:
-                        self.navigate_to_adjacent_page(-1)
-                        return True
+                        self.navigate_to_adjacent_page(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right:
-                        self.navigate_to_adjacent_page(1)
-                        return True
-                else: # Shift 안 눌렀을 때
-                    rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-                    if key == Qt.Key_A or key == Qt.Key_Left:
-                        self.navigate_grid(-1)
-                        return True
-                    elif key == Qt.Key_D or key == Qt.Key_Right:
-                        self.navigate_grid(1)
-                        return True
-                    elif key == Qt.Key_W or key == Qt.Key_Up:
-                        self.navigate_grid(-cols)
-                        return True
-                    elif key == Qt.Key_S or key == Qt.Key_Down:
-                        self.navigate_grid(cols)
-                        return True
-                    elif Qt.Key_1 <= key <= Qt.Key_3:
-                        folder_index = key - Qt.Key_1
-                        self.move_grid_image(folder_index)
-                        return True
-            else:
-                # Grid Off 모드 네비게이션 및 폴더 이동
-                if key == Qt.Key_A or key == Qt.Key_Left:
-                    self.show_previous_image()
-                    return True # 이벤트 소비하여 스크롤 방지
-                elif key == Qt.Key_D or key == Qt.Key_Right:
-                    self.show_next_image()
-                    return True # 이벤트 소비하여 스크롤 방지
-                elif Qt.Key_1 <= key <= Qt.Key_3:
-                    folder_index = key - Qt.Key_1
+                        self.navigate_to_adjacent_page(1); return True
+                    # Shift + W/S/Up/Down은 페이지 넘기기 기능 없음
+                else: # Shift 없음: WASD 또는 Arrow Keys -> 셀 이동
+                    if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_grid(-1); return True
+                    elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
+                    elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
+                    elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
+            
+            elif self.grid_mode == "Off": # Grid Off 모드
+                # WASD는 항상 사진 넘기기
+                if key == Qt.Key_A: self.show_previous_image(); return True
+                elif key == Qt.Key_D: self.show_next_image(); return True
+                # W, S는 Grid Off에서 사진 넘기기 기능 없음
+
+                # Arrow Keys는 Zoom Fit 일 때만 사진 넘기기
+                # (Zoom 100%/200% 시에는 위에서 뷰포트 이동으로 처리됨)
+                if self.zoom_mode == "Fit":
+                    if key == Qt.Key_Left: self.show_previous_image(); return True
+                    elif key == Qt.Key_Right: self.show_next_image(); return True
+            
+            # --- 4. 숫자키 1, 2, 3 (폴더로 이동) ---
+            #    (어떤 모드에서든 작동)
+            if Qt.Key_1 <= key <= Qt.Key_3:
+                folder_index = key - Qt.Key_1
+                if self.grid_mode != "Off":
+                    self.move_grid_image(folder_index)
+                else:
                     self.move_current_image_to_folder(folder_index)
-                    return True # 이벤트 소비
+                return True
 
-            # --- 처리되지 않은 키는 기본 처리 ---
-            return False # False 반환 시 이벤트 계속 전파
+            return False # 위 모든 조건에 해당하지 않으면 이벤트 전파
 
-        # 키 이벤트가 아니면 기본 처리
+        elif event.type() == QEvent.KeyRelease: # 키를 뗄 때의 처리
+            key = event.key()
+            is_auto_repeat = event.isAutoRepeat() # KeyRelease에는 auto-repeat이 거의 없음
+
+            released_viewport_key_equivalent = None
+            if key == Qt.Key_Left: released_viewport_key_equivalent = Qt.Key_Left
+            elif key == Qt.Key_Right: released_viewport_key_equivalent = Qt.Key_Right
+            elif key == Qt.Key_Up: released_viewport_key_equivalent = Qt.Key_Up
+            elif key == Qt.Key_Down: released_viewport_key_equivalent = Qt.Key_Down
+            elif key == Qt.Key_A: released_viewport_key_equivalent = Qt.Key_Left
+            elif key == Qt.Key_D: released_viewport_key_equivalent = Qt.Key_Right
+            elif key == Qt.Key_W: released_viewport_key_equivalent = Qt.Key_Up
+            elif key == Qt.Key_S: released_viewport_key_equivalent = Qt.Key_Down
+            
+            # Shift 키를 뗄 때, 현재 WASD로 인해 pressed_keys_for_viewport에 들어간 항목이 있다면
+            # 해당 항목들을 제거하고 타이머를 멈춰야 함.
+            if key == Qt.Key_Shift:
+                # 현재 Shift가 떨어졌으므로, WASD에 의해 pressed_keys_for_viewport에 남아있는
+                # Left, Right, Up, Down 키들을 제거한다.
+                keys_mapped_from_wasd = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
+                # 현재 pressed_keys가 WASD로부터 온 것인지 확인하는 더 좋은 방법은,
+                # pressed_keys_for_viewport에 (key, is_from_shift_wasd) 튜플을 저장하는 것.
+                # 여기서는 단순하게 Shift가 떨어지면 모든 방향키 효과를 제거 시도.
+                self.pressed_keys_for_viewport.clear() # 더 간단하게 모두 비움
+                if not self.pressed_keys_for_viewport:
+                    self.viewport_move_timer.stop()
+                return True # Shift 릴리즈 이벤트 소비
+
+            if released_viewport_key_equivalent and released_viewport_key_equivalent in self.pressed_keys_for_viewport:
+                # 자동 반복이 아닌 실제 키 떼어짐 이벤트만 처리
+                if not is_auto_repeat:
+                    self.pressed_keys_for_viewport.remove(released_viewport_key_equivalent)
+                    if not self.pressed_keys_for_viewport: # 눌린 키가 더 이상 없으면 타이머 중지
+                        self.viewport_move_timer.stop()
+                    return True
+
+            return False # 처리되지 않은 KeyRelease 이벤트는 전파
+
         return super().eventFilter(obj, event)
 
     def on_file_list_dialog_closed(self, result):
@@ -9366,6 +9463,11 @@ class PhotoSortApp(QMainWindow):
             # 버튼은 self.reset_camera_settings_button으로 직접 접근 가능
             if hasattr(self, 'reset_camera_settings_button') and self.reset_camera_settings_button.parentWidget() is not None and self.reset_camera_settings_button.parentWidget().isVisible():
                  self.reset_camera_settings_button.setText(LanguageManager.translate("설정 초기화"))
+
+            # 뷰포트 이동 속도 라벨 업데이트
+            viewport_speed_label_widget = self.settings_popup.findChild(QLabel, "viewport_speed_label")
+            if viewport_speed_label_widget:
+                viewport_speed_label_widget.setText(LanguageManager.translate("뷰포트 이동 속도 (키보드):"))
 
         
             print("설정 팝업 텍스트 업데이트 완료.")
@@ -10006,6 +10108,7 @@ def main():
         "초기화 완료": "Reset Complete",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
         "로드된 파일과 현재 작업 상태를 초기화하시겠습니까?": "Are you sure you want to reset loaded files and the current working state?",
+        "뷰포트 이동 속도 (키보드):": "Viewport Move Speed (Keyboard):",
     }
     
     LanguageManager.initialize_translations(translations)
