@@ -449,7 +449,7 @@ class UIScaleManager:
         "filename_label_padding": 40,          # 파일명 레이블 상하 패딩
         "info_label_padding": 5,               # 파일 정보 레이블 좌측 패딩
         "font_size": 10,                       # 기본 폰트 크기
-        "filename_font_size": 12,              # 파일명 폰트 크기
+        "filename_font_size": 11,              # 파일명 폰트 크기
         "folder_container_spacing": 6,         # 버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 13,            # 폴더 경로 레이블 높이 계산용 패딩
         "category_folder_vertical_spacing": 7,
@@ -474,21 +474,21 @@ class UIScaleManager:
     COMPACT_SETTINGS = {
         "control_panel_margins": (10, 0, 10, 0),
         "control_layout_spacing": 6,
-        "button_min_height": 26,
-        "button_padding": 6,
+        "button_min_height": 30,
+        "button_padding": 3,
         "delete_button_width": 42,
         "JPG_RAW_spacing": 10,
-        "section_spacing": 15,
+        "section_spacing": 12,
         "group_box_spacing": 15,
         "title_spacing": 7,
         "settings_button_size": 30,
-        "filename_label_padding": 30,
+        "filename_label_padding": 25,
         "info_label_padding": 5,
         "font_size": 9,
         "filename_font_size": 10,
         "folder_container_spacing": 5,
-        "folder_label_padding": 12,
-        "category_folder_vertical_spacing": 7,
+        "folder_label_padding": 10,
+        "category_folder_vertical_spacing": 5,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
         "settings_popup_height": 835,  # 크게 줄임
@@ -2205,7 +2205,7 @@ class PhotoSortApp(QMainWindow):
         # 좌측 컨트롤 영역 생성
         self.control_panel = QWidget()
         self.control_layout = QVBoxLayout(self.control_panel)
-        self.control_layout.setContentsMargins(*UIScaleManager.get_margins())
+        self.control_layout.setContentsMargins(*UIScaleManager.get_margins()) # *는 Python의 언패킹(unpacking) 연산자. (10, 0, 10, 0)과 동일.
         self.control_layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
         
         # 우측 이미지 영역 생성 (검은색 배경으로 설정)
@@ -7375,7 +7375,7 @@ class PhotoSortApp(QMainWindow):
         """프로그램 상태를 초기화 (Delete 키)"""
         reply = self.show_themed_message_box(QMessageBox.Question, 
                                     LanguageManager.translate("프로그램 초기화"),
-                                    LanguageManager.translate("로드된 파일과 현재 작업 상태를 초기화하시겠습니까? (카메라별 RAW 처리 방식 설정은 유지됩니다.)"),
+                                    LanguageManager.translate("로드된 파일과 현재 작업 상태를 초기화하시겠습니까?"),
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             # Undo/Redo 히스토리 초기화 추가
@@ -10005,6 +10005,7 @@ def main():
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
         "초기화 완료": "Reset Complete",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
+        "로드된 파일과 현재 작업 상태를 초기화하시겠습니까?": "Are you sure you want to reset loaded files and the current working state?",
     }
     
     LanguageManager.initialize_translations(translations)
