@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                               QMainWindow, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
-                              QVBoxLayout, QWidget, QToolTip)
+                              QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit)
 # QRLinkLabel 클래스 정의 (툴팁을 위한 예시)
 class QRLinkLabel(QLabel):
     def __init__(self, text, qr_path=None, size=100, parent=None):
@@ -110,7 +110,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.05.24)")
+    logging.info("PhotoSort 시작 (버전: 25.05.26)")
     
     return logger
 
@@ -456,16 +456,16 @@ class UIScaleManager:
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
         "settings_popup_height": 950,
-        "settings_layout_vspace": 10,
+        "settings_layout_vspace": 12,
         "viewshortcuts_seperator": 0,
-        "infotext_licensebutton": 40,
-        "donation_between_tworows": 30,
-        "bottom_space": 30,
+        "infotext_licensebutton": 30,
+        "donation_between_tworows": 25,
+        "bottom_space": 25,
         # 정보 텍스트 여백 관련 키 추가
-        "info_version_margin": 40,
-        "info_paragraph_margin": 40,
-        "info_bottom_margin": 40,
-        "info_donation_spacing": 40,
+        "info_version_margin": 30,
+        "info_paragraph_margin": 30,
+        "info_bottom_margin": 30,
+        "info_donation_spacing": 35,
         
         
     }
@@ -494,13 +494,13 @@ class UIScaleManager:
         "settings_popup_height": 835,  # 크게 줄임
         "settings_layout_vspace": 7,
         "viewshortcuts_seperator": 0,
-        "infotext_licensebutton": 25,
-        "donation_between_tworows": 20,
+        "infotext_licensebutton": 20,
+        "donation_between_tworows": 17,
         "bottom_space": 20,
         # 정보 텍스트 여백 관련 키 추가 (컴팩트 모드에서는 여백 축소)
-        "info_version_margin": 30,
-        "info_paragraph_margin": 30,
-        "info_bottom_margin": 30,
+        "info_version_margin": 20,
+        "info_paragraph_margin": 20,
+        "info_bottom_margin": 20,
         "info_donation_spacing": 25,
     }
 
@@ -518,7 +518,7 @@ class UIScaleManager:
 
             screen_geometry = screen.geometry()
             vertical_resolution = screen_geometry.height()
-            is_compact = vertical_resolution < 1201 
+            is_compact = vertical_resolution < 1601 
 
             if is_compact:
                 cls._current_settings = cls.COMPACT_SETTINGS
@@ -2101,6 +2101,15 @@ class PhotoSortApp(QMainWindow):
 
         self.viewport_move_speed = 5 # 뷰포트 이동 속도 (1~10), 기본값 5
         self.last_processed_camera_model = None
+        self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
+
+        # --- 세션 저장을 위한 딕셔너리 ---
+        # 형식: {"세션이름": {상태정보 딕셔너리}}
+        self.saved_sessions = {} # 이전 self.saved_workspaces 에서 이름 변경
+        # load_state에서 로드되므로 여기서 _load_saved_sessions 호출 불필요
+        
+        # 세션 관리 팝업 인스턴스 (중복 생성 방지용)
+        self.session_management_popup = None
 
         # --- 뷰포트 부드러운 이동을 위한 변수 ---
         self.viewport_move_timer = QTimer(self)
@@ -2185,8 +2194,6 @@ class PhotoSortApp(QMainWindow):
         # 그리드 로딩 시 빠른 표시를 위한 플레이스홀더 이미지
         self.placeholder_pixmap = QPixmap(100, 100)
         self.placeholder_pixmap.fill(QColor("#222222"))
-
-        self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
 
         # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
         # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
@@ -2632,6 +2639,292 @@ class PhotoSortApp(QMainWindow):
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
 
+    def _generate_default_session_name(self):
+        """현재 상태를 기반으로 기본 세션 이름을 생성합니다."""
+        base_folder_name = "Untitled"
+        if self.is_raw_only_mode and self.raw_folder:
+            base_folder_name = Path(self.raw_folder).name
+        elif self.current_folder:
+            base_folder_name = Path(self.current_folder).name
+        
+        # 날짜 부분 (YYYYMMDD)
+        date_str = datetime.now().strftime("%Y%m%d")
+        # 시간 부분 (HHMMSS) - 이름 중복 시 사용
+        time_str = datetime.now().strftime("%H%M%S")
+
+        # 기본 이름: 폴더명_날짜
+        default_name = f"{base_folder_name}_{date_str}"
+        
+        # 중복 확인 및 처리 (이름 뒤에 _HHMMSS 또는 (숫자) 추가)
+        final_name = default_name
+        counter = 1
+        while final_name in self.saved_sessions:
+            # 방법 1: 시간 추가 (더 고유함)
+            # final_name = f"{default_name}_{time_str}" # 이렇게 하면 거의 항상 고유
+            # if final_name in self.saved_sessions: # 시간까지 겹치면 숫자
+            #     final_name = f"{default_name}_{time_str}({counter})"
+            #     counter += 1
+            # 방법 2: 숫자 추가 (요구사항에 더 가까움)
+            final_name = f"{default_name}({counter})"
+            counter += 1
+            if counter > 99: # 무한 루프 방지 (극단적인 경우)
+                final_name = f"{default_name}_{time_str}" # 최후의 수단으로 시간 사용
+                break 
+        return final_name
+
+    def _capture_current_session_state(self):
+        """현재 작업 상태를 딕셔너리로 캡처하여 반환합니다."""
+        # save_state에서 저장하는 항목들 중 필요한 것들만 선택
+        actual_current_image_list_index = -1
+        if self.grid_mode != "Off":
+            if self.image_files and 0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files):
+                actual_current_image_list_index = self.grid_page_start_index + self.current_grid_index
+        else:
+            if self.image_files and 0 <= self.current_image_index < len(self.image_files):
+                actual_current_image_list_index = self.current_image_index
+
+        session_data = {
+            "current_folder": str(self.current_folder) if self.current_folder else "",
+            "raw_folder": str(self.raw_folder) if self.raw_folder else "",
+            "raw_files": {k: str(v) for k, v in self.raw_files.items()}, # Path를 str로
+            "move_raw_files": self.move_raw_files,
+            "target_folders": [str(f) if f else "" for f in self.target_folders],
+            "minimap_visible": self.minimap_toggle.isChecked(), # 현재 UI 상태 반영
+            "current_image_index": actual_current_image_list_index, # 전역 인덱스
+            "current_grid_index": self.current_grid_index,
+            "grid_page_start_index": self.grid_page_start_index,
+            "is_raw_only_mode": self.is_raw_only_mode,
+            "show_grid_filenames": self.show_grid_filenames,
+            "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
+            "zoom_mode": self.zoom_mode, # 추가
+            "grid_mode": self.grid_mode, # 추가
+            "previous_grid_mode": self.previous_grid_mode, # 추가
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # 저장 시점
+            # "viewport_move_speed": self.viewport_move_speed, # 뷰포트 속도는 전역 설정으로 유지, 세션별 저장 X
+            # "camera_raw_settings": self.camera_raw_settings, # 카메라별 설정도 전역으로 유지
+        }
+        return session_data
+
+    def save_current_session(self, session_name: str):
+        """주어진 이름으로 현재 작업 세션을 저장합니다."""
+        if not session_name:
+            logging.warning("세션 이름 없이 저장을 시도했습니다.")
+            # 사용자에게 알림 (선택 사항)
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("저장 오류"), LanguageManager.translate("세션 이름을 입력해야 합니다."))
+            return False
+
+        if len(self.saved_sessions) >= 20:
+            logging.warning("최대 저장 가능한 세션 개수(20개)에 도달했습니다.")
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("저장 한도 초과"), LanguageManager.translate("최대 20개의 세션만 저장할 수 있습니다. 기존 세션을 삭제 후 다시 시도해주세요."))
+            return False
+
+        current_state_data = self._capture_current_session_state()
+        self.saved_sessions[session_name] = current_state_data
+        self.save_state() # 변경된 self.saved_sessions를 photosort_data.json에 저장
+        logging.info(f"세션 저장됨: {session_name}")
+        
+        # 세션 관리 팝업이 열려있다면 목록 업데이트
+        if self.session_management_popup and self.session_management_popup.isVisible():
+            self.session_management_popup.populate_session_list()
+        return True
+
+
+    def load_session(self, session_name: str):
+        """저장된 작업 세션을 불러옵니다."""
+        if session_name not in self.saved_sessions:
+            logging.error(f"세션 '{session_name}'을(를) 찾을 수 없습니다.")
+            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("불러오기 오류"), LanguageManager.translate("선택한 세션을 찾을 수 없습니다."))
+            return False
+
+        logging.info(f"세션 불러오기 시작: {session_name}")
+        session_data = self.saved_sessions[session_name]
+
+        # --- 현재 작업 상태를 덮어쓰기 전에 사용자에게 확인 (선택 사항) ---
+        # reply = self.show_themed_message_box(QMessageBox.Question, ...)
+        # if reply == QMessageBox.No: return False
+        # --- 확인 끝 ---
+
+        # 불러올 상태 값들을 현재 PhotoSortApp 인스턴스에 적용
+        # (load_state와 유사한 로직이지만, 파일에서 읽는 대신 session_data 딕셔너리에서 가져옴)
+
+        # 0. 모든 백그라운드 작업 중지 및 캐시 클리어 (새로운 환경 로드 준비)
+        self.resource_manager.cancel_all_tasks() # 중요
+        if hasattr(self, 'image_loader'): self.image_loader.clear_cache()
+        self.fit_pixmap_cache.clear()
+        self.grid_thumbnail_cache_2x2.clear()
+        self.grid_thumbnail_cache_3x3.clear()
+        self.original_pixmap = None
+
+
+        # 1. 폴더 및 파일 관련 상태 복원
+        self.current_folder = session_data.get("current_folder", "")
+        self.raw_folder = session_data.get("raw_folder", "")
+        raw_files_str_dict = session_data.get("raw_files", {})
+        self.raw_files = {k: Path(v) for k, v in raw_files_str_dict.items() if v} # Path 객체로
+        self.move_raw_files = session_data.get("move_raw_files", True)
+        self.target_folders = session_data.get("target_folders", ["", "", ""])
+        self.is_raw_only_mode = session_data.get("is_raw_only_mode", False)
+
+        # 2. UI 관련 상태 복원
+        self.minimap_toggle.setChecked(session_data.get("minimap_visible", True))
+        self.show_grid_filenames = session_data.get("show_grid_filenames", False)
+        if hasattr(self, 'filename_toggle_grid'): self.filename_toggle_grid.setChecked(self.show_grid_filenames)
+        
+        self.zoom_mode = session_data.get("zoom_mode", "Fit")
+        if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
+        elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
+        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+
+        # 3. 이미지 목록 로드 (저장된 폴더 경로 기반)
+        images_loaded_successfully = False
+        self.image_files = [] # 이전 목록 초기화
+        
+        if self.is_raw_only_mode:
+            if self.raw_folder and Path(self.raw_folder).is_dir():
+                images_loaded_successfully = self.reload_raw_files_from_state(self.raw_folder)
+        elif self.current_folder and Path(self.current_folder).is_dir():
+            images_loaded_successfully = self.load_images_from_folder(self.current_folder)
+            # JPG 로드 성공 시 연결된 RAW 폴더 정보가 있다면 그것도 UI에 반영 (raw_files는 이미 위에서 복원됨)
+            if images_loaded_successfully and self.raw_folder and Path(self.raw_folder).is_dir():
+                self.raw_folder_path_label.setText(self.raw_folder) # 경로 표시
+            else: # 연결된 RAW 폴더 정보가 없거나 유효하지 않으면
+                if not self.is_raw_only_mode: # RAW Only 모드가 아닐 때만 초기화
+                    self.raw_folder = "" 
+                    # self.raw_files = {} # 위에서 session_data로부터 이미 설정됨
+                    self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        
+        # 로드 후 폴더 UI 상태 업데이트
+        self.update_jpg_folder_ui_state()
+        self.update_raw_folder_ui_state()
+        self.update_folder_buttons()
+        self.update_match_raw_button_state()
+
+
+        # 4. ImageLoader 전략 설정
+        last_method = session_data.get("last_used_raw_method", "preview")
+        if hasattr(self, 'image_loader'):
+            self.image_loader.set_raw_load_strategy(last_method)
+        logging.info(f"세션 불러오기: ImageLoader 처리 방식 설정됨: {last_method}")
+
+        # 5. 뷰 상태 복원 (인덱스, 그리드 모드 등)
+        if images_loaded_successfully and self.image_files:
+            total_images = len(self.image_files)
+            self.grid_mode = session_data.get("grid_mode", "Off")
+            self.previous_grid_mode = session_data.get("previous_grid_mode", None)
+
+            if self.grid_mode == "Off": self.grid_off_radio.setChecked(True)
+            elif self.grid_mode == "2x2": self.grid_2x2_radio.setChecked(True)
+            elif self.grid_mode == "3x3": self.grid_3x3_radio.setChecked(True)
+            self.update_zoom_radio_buttons_state()
+
+            loaded_actual_idx = session_data.get("current_image_index", -1)
+            
+            if 0 <= loaded_actual_idx < total_images:
+                if self.grid_mode != "Off":
+                    rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                    num_cells = rows * cols
+                    self.grid_page_start_index = (loaded_actual_idx // num_cells) * num_cells
+                    self.current_grid_index = loaded_actual_idx % num_cells
+                    self.update_grid_view()
+                else: # Grid Off
+                    self.current_image_index = loaded_actual_idx
+                    self.display_current_image()
+            elif total_images > 0 : # 유효 인덱스 없지만 이미지 있으면 첫번째로
+                self.current_image_index = 0; self.current_grid_index = 0; self.grid_page_start_index = 0;
+                if self.grid_mode != "Off": self.update_grid_view()
+                else: self.display_current_image()
+            else: # 이미지 없음
+                self.current_image_index = -1; self.current_grid_index = 0; self.grid_page_start_index = 0;
+                if self.grid_mode != "Off": self.update_grid_view()
+                else: self.display_current_image()
+        else: # 이미지 로드 실패
+            self.image_files = []
+            self.current_image_index = -1
+            self.grid_mode = "Off"; self.grid_off_radio.setChecked(True)
+            self.update_zoom_radio_buttons_state()
+            self.update_grid_view() # 빈 화면
+            self.update_file_info_display(None)
+
+        self.update_counter_layout()
+        self.toggle_minimap(self.minimap_toggle.isChecked())
+        if self.grid_mode == "Off" and images_loaded_successfully:
+            self.start_background_image_preloading()
+        
+        # 세션 관리 팝업이 열려있다면 닫기
+        if self.session_management_popup and self.session_management_popup.isVisible():
+            self.session_management_popup.accept()
+
+        logging.info(f"세션 '{session_name}' 불러오기 완료.")
+        self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("불러오기 완료"), LanguageManager.translate("'{session_name}' 세션을 불러왔습니다.").format(session_name=session_name))
+        return True
+
+
+    def delete_session(self, session_name: str):
+        """저장된 작업 세션을 삭제합니다."""
+        if session_name in self.saved_sessions:
+            del self.saved_sessions[session_name]
+            self.save_state() # 변경 사항을 photosort_data.json에 저장
+            logging.info(f"세션 삭제됨: {session_name}")
+            # 세션 관리 팝업이 열려있다면 목록 업데이트
+            if self.session_management_popup and self.session_management_popup.isVisible():
+                self.session_management_popup.populate_session_list()
+            return True
+        else:
+            logging.warning(f"삭제할 세션 없음: {session_name}")
+            return False
+
+    def show_session_management_popup(self):
+        """세션 저장 및 불러오기 팝업창을 표시합니다."""
+        # 현재 활성화된 settings_popup을 부모로 사용하거나, 없으면 self (메인 윈도우)를 부모로 사용
+        current_active_popup = QApplication.activeModalWidget() # 현재 활성화된 모달 위젯 찾기
+        parent_widget = self # 기본 부모는 메인 윈도우
+
+        if current_active_popup and isinstance(current_active_popup, QDialog):
+             # settings_popup이 현재 활성화된 모달 다이얼로그인지 확인
+             if hasattr(self, 'settings_popup') and current_active_popup is self.settings_popup:
+                 parent_widget = self.settings_popup
+                 logging.debug("SessionManagementDialog의 부모를 settings_popup으로 설정합니다.")
+             else:
+                 # 다른 모달 위젯이 떠 있는 경우, 그 위에 표시되도록 할 수도 있음.
+                 # 또는 항상 메인 윈도우를 부모로 할 수도 있음.
+                 # 여기서는 settings_popup이 아니면 메인 윈도우를 부모로 유지.
+                 logging.debug(f"활성 모달 위젯({type(current_active_popup)})이 settings_popup이 아니므로, SessionManagementDialog의 부모를 메인 윈도우로 설정합니다.")
+        
+        # SessionManagementDialog가 이미 존재하고 부모가 다른 경우 문제가 될 수 있으므로,
+        # 부모가 바뀔 가능성이 있다면 새로 생성하는 것이 안전할 수 있음.
+        # 여기서는 일단 기존 인스턴스를 재활용하되, 부모가 의도와 다른지 확인.
+        if self.session_management_popup is None or not self.session_management_popup.isVisible():
+            # 생성 시 올바른 부모 전달
+            self.session_management_popup = SessionManagementDialog(parent_widget, self) 
+            logging.debug(f"새 SessionManagementDialog 생성. 부모: {type(parent_widget)}")
+        elif self.session_management_popup.parent() is not parent_widget:
+            # 부모가 변경되어야 한다면, 이전 팝업을 닫고 새로 생성하거나 setParent 호출.
+            # QWidget.setParent()는 주의해서 사용해야 하므로, 새로 생성하는 것이 더 간단할 수 있음.
+            logging.warning(f"SessionManagementDialog의 부모가 변경되어야 함. (현재: {type(self.session_management_popup.parent())}, 필요: {type(parent_widget)}) 새로 생성합니다.")
+            self.session_management_popup.close() # 이전 것 닫기
+            self.session_management_popup = SessionManagementDialog(parent_widget, self)
+            
+        self.session_management_popup.populate_session_list()
+        
+        # exec_()를 사용하여 모달로 띄우면 "설정 및 정보" 팝업은 비활성화됨
+        # show()를 사용하여 모달리스로 띄우면 두 팝업이 동시에 상호작용 가능할 수 있으나,
+        # 이 경우 "설정 및 정보" 팝업이 닫힐 때 함께 닫히도록 처리하거나,
+        # "세션 관리" 팝업이 항상 위에 오도록 setWindowFlags(Qt.WindowStaysOnTopHint) 설정 필요.
+        # 여기서는 모달로 띄우는 것을 기본으로 가정.
+        # self.session_management_popup.show() 
+        # self.session_management_popup.activateWindow()
+        # self.session_management_popup.raise_()
+        
+        # "설정 및 정보" 팝업 위에서 "세션 관리" 팝업을 모달로 띄우려면,
+        # "설정 및 정보" 팝업을 잠시 hide() 했다가 "세션 관리" 팝업이 닫힌 후 다시 show() 하거나,
+        # "세션 관리" 팝업을 모달리스로 하되 항상 위에 있도록 해야 함.
+        # 또는, "세션 관리" 팝업 자체를 "설정 및 정보" 팝업 내부에 통합된 위젯으로 만드는 것도 방법.
+
+        # 가장 간단한 접근: "세션 관리" 팝업을 "설정 및 정보" 팝업에 대해 모달로 띄운다.
+        # 이렇게 하면 "설정 및 정보"는 "세션 관리"가 닫힐 때까지 비활성화됨.
+        self.session_management_popup.exec_() # exec_()는 블로킹 호출
+
+
 
 
     def smooth_viewport_move(self):
@@ -2787,7 +3080,7 @@ class PhotoSortApp(QMainWindow):
             """모든 카메라별 RAW 처리 설정을 초기화하고 메인 상태 파일에 즉시 저장합니다."""
             reply = self.show_themed_message_box(
                 QMessageBox.Question,
-                LanguageManager.translate("설정 초기화"),
+                LanguageManager.translate("초기화"),
                 LanguageManager.translate("저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다."),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
@@ -2795,11 +3088,6 @@ class PhotoSortApp(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.camera_raw_settings = {} # 메모리 내 설정 초기화
                 self.save_state() # <<< 변경 사항을 photosort_data.json에 즉시 저장
-                self.show_themed_message_box(
-                    QMessageBox.Information,
-                    LanguageManager.translate("초기화 완료"),
-                    LanguageManager.translate("모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.")
-                )
                 logging.info("모든 카메라별 RAW 처리 설정이 초기화되었습니다 (메인 상태 파일에 반영).")
 
 
@@ -2913,12 +3201,12 @@ class PhotoSortApp(QMainWindow):
 
 
     def show_first_run_settings_popup(self):
-        """프로그램 최초 실행 시 설정 팝업을 표시(좌우 패널 구조조)"""
+        """프로그램 최초 실행 시 설정 팝업을 표시(좌우 패널 구조)"""
         # 설정 팝업창 생성
         self.settings_popup = QDialog(self)
         self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
-        # ========== 좌우 패널 고려하여 최소 크기 조정 ==========
-        self.settings_popup.setMinimumSize(550, 740) 
+        self.settings_popup.setProperty("is_first_run_popup", True)
+        self.settings_popup.setMinimumSize(550, 450) # 가로, 세로 크기 조정
         
         # 제목 표시줄 다크 테마 적용 (Windows용)
         if sys.platform == "win32":
@@ -2947,183 +3235,174 @@ class PhotoSortApp(QMainWindow):
         main_layout.setSpacing(15)
         # =========================================================
         
-        # 환영 메시지 추가
         self.settings_popup.welcome_label = QLabel(LanguageManager.translate("기본 설정을 선택해주세요."))
         self.settings_popup.welcome_label.setObjectName("first_run_welcome_label")
         self.settings_popup.welcome_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; font-size: 11pt;")
         self.settings_popup.welcome_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.settings_popup.welcome_label)
         main_layout.addSpacing(10)
-        
-        # ========== 상하 패널을 담을 QVBoxLayout 생성 ==========
-        # QHBoxLayout 대신 QVBoxLayout 사용
-        content_widget = QWidget()
-        content_vbox_layout = QVBoxLayout(content_widget) # 이름 변경 및 타입 변경
-        content_vbox_layout.setContentsMargins(0, 0, 0, 0)
-        content_vbox_layout.setSpacing(15) # 상하 패널 사이 간격
-        # =====================================================
 
-        # ========== 상단 패널: 기존 설정 UI ==========
-        settings_panel = QWidget()
-        settings_panel_layout = QVBoxLayout(settings_panel)
-        settings_panel_layout.setContentsMargins(0, 0, 0, 0)
-        settings_panel_layout.setSpacing(0)
+        settings_ui_widget = self.setup_settings_ui(is_first_run_popup=True)
+        main_layout.addWidget(settings_ui_widget)
 
-        settings_ui_widget = self.setup_settings_ui()
-        settings_panel_layout.addWidget(settings_ui_widget)
-
-        # 상단 패널을 content_vbox_layout에 추가
-        content_vbox_layout.addWidget(settings_panel)
-        # =============================================
-
-        # ========== 상하 구분선 추가 ==========
-        # VLine 대신 HLine 사용
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine) # 가로선으로 변경
-        separator.setFrameShadow(QFrame.Sunken)
-        # max-width 대신 max-height 사용
-        separator.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
-        content_vbox_layout.addWidget(separator) # 설정 패널 다음에 추가
-        # =====================================
-
-        # ========== 하단 패널: 단축키 안내 ==========
-        shortcuts_panel = QWidget()
-        shortcuts_panel_layout = QVBoxLayout(shortcuts_panel)
-        shortcuts_panel_layout.setContentsMargins(0, 10, 0, 10) # 상하 약간의 여백
-        shortcuts_panel_layout.setSpacing(10)
-
-        # 단축키 제목
-        shortcuts_title = QLabel(LanguageManager.translate("단축키 안내"))
-        shortcuts_title.setStyleSheet(f"color: {ThemeManager.get_color('text')}; font-size: 11pt;")
-        shortcuts_title.setAlignment(Qt.AlignCenter)
-        shortcuts_title.setObjectName("shortcuts_title_label")
-        shortcuts_panel_layout.addWidget(shortcuts_title)
-        shortcuts_panel_layout.setSpacing(35)
-
-        
-        # 단축키 내용 레이블
-        shortcuts_label = QLabel()
-        shortcuts_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        shortcuts_label.setTextFormat(Qt.RichText) # HTML 형식 사용 가능
-        shortcuts_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        shortcuts_label.setWordWrap(True) # 자동 줄바꿈
-        shortcuts_label.setObjectName("shortcuts_content_label")
-
-        # 단축키 텍스트 구성 함수 호출 (아래 2번 단계에서 정의)
-        self._update_shortcut_label_text(shortcuts_label) # 초기 텍스트 설정
-        shortcuts_panel_layout.addWidget(shortcuts_label)
-        # shortcuts_panel_layout.addStretch(1) # 하단 여백 제거 또는 유지 (선택)
-
-        # 하단 패널을 content_vbox_layout에 추가 (구분선 다음)
-        content_vbox_layout.addWidget(shortcuts_panel)
-        # =============================================
-
-        # 메인 레이아웃에 상하 패널 영역 추가
-        main_layout.addWidget(content_widget)
-        main_layout.addStretch(1)  # 설정/단축키 영역과 확인 버튼 사이 여백
-        
         # 확인 버튼 추가
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 10, 0, 0)
         
-        self.settings_popup.confirm_button = QPushButton(LanguageManager.translate("확인"))
+        # self.settings_popup의 멤버로 confirm_button을 만들어야 exec_() 후 상태 접근 가능
+        # 또는 dialog.accept() / dialog.reject() 를 버튼에 직접 연결
+        confirm_button_first_run = QPushButton(LanguageManager.translate("확인")) # 지역 변수로 생성
         
-        if platform.system() == "Darwin":
-            self.settings_popup.confirm_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #444444;
-                    color: #D8D8D8;
-                    border: none;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    min-width: 100px;
-                }
-                QPushButton:hover {
-                    background-color: #555555;
-                }
-                QPushButton:pressed {
-                    background-color: #222222;
-                }
-            """)
-        else:
-            # Windows/Linux 등
-            self.settings_popup.confirm_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    color: {ThemeManager.get_color('text')};
-                    border: none;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    min-width: 100px;
-                }}
-                QPushButton:hover {{
-                    background-color: {ThemeManager.get_color('accent_hover')};
-                }}
-                QPushButton:pressed {{
-                    background-color: {ThemeManager.get_color('accent_pressed')};
-                }}
-            """)
+        # 스타일 적용 (기존 스타일 재사용 또는 새로 정의)
+        if platform.system() == "Darwin": # Mac 스타일
+            confirm_button_first_run.setStyleSheet("""
+                QPushButton { background-color: #444444; color: #D8D8D8; border: none; 
+                              padding: 8px 16px; border-radius: 4px; min-width: 100px; }
+                QPushButton:hover { background-color: #555555; }
+                QPushButton:pressed { background-color: #222222; } """)
+        else: # Windows/Linux 등
+            confirm_button_first_run.setStyleSheet(f"""
+                QPushButton {{ background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
+                              border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
+                QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
+                QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }} """)
 
-        self.settings_popup.confirm_button.clicked.connect(self.settings_popup.accept)
+        confirm_button_first_run.clicked.connect(self.settings_popup.accept) # <<< "확인" 버튼은 dialog.accept() 호출
         
         button_layout.addStretch(1)
-        button_layout.addWidget(self.settings_popup.confirm_button)
+        button_layout.addWidget(confirm_button_first_run)
         button_layout.addStretch(1)
         
         main_layout.addWidget(button_container)
         
-        # 모달 팝업창으로 표시
-        self.settings_popup.exec_()
-        
-        # 설정 적용 후 상태 저장 (첫 실행 시 기본 상태만 저장)
-        self.save_state()
+        # --- dialog.exec_() 호출 및 결과에 따른 save_state() 실행 ---
+        result = self.settings_popup.exec_() # 모달로 실행하고 결과 받기
+
+        if result == QDialog.Accepted: # 사용자가 "확인" 버튼을 눌렀다면
+            logging.info("첫 실행 설정: '확인' 버튼 클릭됨. 상태 저장 실행.")
+            self.save_state() # photosort_data.json 파일 생성 및 현재 설정 저장
+            return True # <<< "확인" 눌렀음을 알림
+        else: # 사용자가 창을 닫거나 다른 방식으로 종료 (예: ESC 키)
+            logging.info("첫 실행 설정: 대화상자 '확인' 없이 닫힘. 상태 저장 안 함.")
+            return False # <<< "확인" 안 눌렀음을 알림
+            # 이 경우 photosort_data.json 파일은 생성되지 않음.
+            # 프로그램이 이 상태에서 계속 실행될지, 아니면 종료될지는 정책에 따라 다름.
 
     def _build_shortcut_html_text(self):
         """현재 언어 설정에 맞춰 단축키 안내 HTML 텍스트 생성 (개별 p 태그와 margin 사용)"""
-        shortcut_items = [
-            "▪ WASD 또는 방향키: 사진 넘기기",
-            "▪ Shift+WASD 또는 Shift+방향키: 그리드 페이지 넘기기",
-            "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)",
-            "▪ 1, 2, 3: 지정한 폴더로 이동",
-            "▪ F1, F2, F3: 그리드 옵션 변경",
-            "▪ Ctrl + Z: 파일 이동 취소",
-            "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행",
-            "▪ Delete: 프로그램 초기화"
+        shortcut_definitions = [
+            (0, "▪ WASD: 사진 넘기기"),
+            (0, "▪ Shift + WASD:"),
+            (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
+            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (0, "▪ 방향키:"),
+            (1, "  - 사진 넘기기"),
+            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (0, "▪ 1, 2, 3: 지정한 폴더로 사진 이동"),
+            (0, "▪ Space:"),
+            (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
+            (1, "  - Grid On: 선택한 이미지 확대 보기"),
+            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
+            (0, "▪ ESC:"),
+            (1, "  - Zoom 100% / 200%: 이미지 축소(Fit)"),
+            (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ Ctrl + Z: 파일 이동 취소"),
+            (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
+            (0, "▪ Enter: 파일 목록 표시"),
+            (0, "▪ Delete: 작업 상태 초기화"),
         ]
-        translated_items = [LanguageManager.translate(item) for item in shortcut_items]
+        html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
 
-        # ========== 각 항목을 <p> 태그로 감싸고 margin-bottom 추가 ==========
-        # margin_value를 조절하여 원하는 줄 간격(픽셀 단위)을 만듭니다.
-        margin_value = 5 # 예시: 8px 간격
-        line_spacing_style = f"margin-bottom: {margin_value}px;"
+        # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
+        # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
+        default_margin_bottom = 6 # px
 
-        # 각 번역된 항목에 대해 <p> 태그와 스타일 적용
-        translated_items_html = [f"<p style='{line_spacing_style}'>{item_text}</p>" for item_text in translated_items]
+        for i in range(len(shortcut_definitions)):
+            level, key = shortcut_definitions[i]
+            text = LanguageManager.translate(key)
+            
+            style_parts = []
+            
+            # 들여쓰기
+            if level == 1:
+                style_parts.append("margin-left: 20px;")
 
-        # <p> 태그들을 하나로 합침 (별도의 <br> 없음)
-        shortcuts_html = "".join(translated_items_html)
-        # =================================================================
+            # 모든 항목에 동일한 margin-bottom 적용 (단, 마지막 항목은 제외 가능)
+            # 또는 모든 항목에 적용하고, 전체 div의 line-height로 조절
+            style_parts.append(f"margin-bottom: {default_margin_bottom}px;")
 
-        return shortcuts_html
+            # <p> 태그의 기본 상단 마진을 제거하여 margin-bottom만으로 간격 제어 시도
+            style_parts.append("margin-top: 0px;")
 
-    def _build_shortcut_tooltip_text(self):
-        """현재 언어 설정에 맞춰 단축키 확인 툴팁 문자열 생성 (줄바꿈: \\n)"""
-        shortcut_items = [
-            "▪ WASD 또는 방향키: 사진 넘기기",
-            "▪ Shift+WASD 또는 Shift+방향키: 그리드 페이지 넘기기",
-            "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)",
-            "▪ 1, 2, 3: 지정한 폴더로 이동",
-            "▪ F1, F2, F3: 그리드 옵션 변경",
-            "▪ Ctrl + Z: 파일 이동 취소",
-            "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행",
-            "▪ Delete: 프로그램 초기화"
+            # 간격 추가
+            if level == 0 and key.startswith("▪"):
+                style_parts.append("margin-top: 25px;")
+
+            style_attr = f"style='{' '.join(style_parts)}'" if style_parts else ""
+            html_parts.append(f"<p {style_attr}>{text}</p>")
+        
+        html_parts.append("</div>")
+        return "".join(html_parts)
+    
+
+    def _build_shortcut_popup_content_html(self):
+        """단축키 안내 팝업창에 표시될 내용을 HTML로 생성합니다."""
+
+        shortcut_definitions = [
+            (0, "▪ WASD: 사진 넘기기"),
+            (0, "▪ Shift + WASD:"),
+            (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
+            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (0, "▪ 방향키:"),
+            (1, "  - 사진 넘기기"),
+            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (0, "▪ 1, 2, 3: 지정한 폴더로 사진 이동"),
+            (0, "▪ Space:"),
+            (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
+            (1, "  - Grid On: 선택한 이미지 확대 보기"),
+            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
+            (0, "▪ ESC:"),
+            (1, "  - Zoom 100% / 200%: 이미지 축소(Fit)"),
+            (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ Ctrl + Z: 파일 이동 취소"),
+            (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
+            (0, "▪ Enter: 파일 목록 표시"),
+            (0, "▪ Delete: 작업 상태 초기화"),
         ]
-        # LanguageManager를 사용하여 각 항목 번역
-        translated_items = [LanguageManager.translate(item) for item in shortcut_items]
-        # '\n' 문자를 사용하여 각 항목을 연결
-        tooltip_text = "\n".join(translated_items)
-        return tooltip_text
+        html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
+
+        # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
+        # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
+        default_margin_bottom = 6 # px
+
+        for i in range(len(shortcut_definitions)):
+            level, key = shortcut_definitions[i]
+            text = LanguageManager.translate(key)
+            
+            style_parts = []
+            
+            # 들여쓰기
+            if level == 1:
+                style_parts.append("margin-left: 20px;")
+
+            # 모든 항목에 동일한 margin-bottom 적용 (단, 마지막 항목은 제외 가능)
+            # 또는 모든 항목에 적용하고, 전체 div의 line-height로 조절
+            style_parts.append(f"margin-bottom: {default_margin_bottom}px;")
+
+            # <p> 태그의 기본 상단 마진을 제거하여 margin-bottom만으로 간격 제어 시도
+            style_parts.append("margin-top: 0px;")
+
+            # 간격 추가
+            if level == 0 and key.startswith("▪"):
+                style_parts.append("margin-top: 33px;")
+
+            style_attr = f"style='{' '.join(style_parts)}'" if style_parts else ""
+            html_parts.append(f"<p {style_attr}>{text}</p>")
+        
+        html_parts.append("</div>")
+        return "".join(html_parts)
+
 
     def _update_shortcut_label_text(self, label_widget):
         """주어진 라벨 위젯의 텍스트를 현재 언어의 단축키 안내로 업데이트"""
@@ -3286,13 +3565,13 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"백그라운드 이미지 사전 로드 오류 ({Path(image_path).name}): {e}")
             return False
 
-    def setup_settings_ui(self):
+    def setup_settings_ui(self, is_first_run_popup=False):
         """설정 UI 구성 (언어, 날짜 형식, 테마 설정)"""
         settings_container = QWidget()
         settings_layout = QVBoxLayout(settings_container)
-        settings_layout.setSpacing(15)
+        settings_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 10))
         
-        # === 언어 설정 (가로 배치) ===
+        # ========== 언어 설정 ==========
         language_container = QWidget()
         language_layout = QHBoxLayout(language_container)
         language_layout.setContentsMargins(0, 5, 0, 5)
@@ -3372,8 +3651,9 @@ class PhotoSortApp(QMainWindow):
         language_layout.addWidget(radio_container, 1)  # 1=stretch factor
         
         settings_layout.addWidget(language_container)
+        # ========== 언어 설정 끝 ==========
         
-        # ========== 컨트롤 패널 위치 설정 추가 (시작) ==========
+        # ========== 컨트롤 패널 위치 설정 ==========
         panel_pos_container = QWidget()
         panel_pos_layout = QHBoxLayout(panel_pos_container)
         panel_pos_layout.setContentsMargins(0, 5, 0, 5)
@@ -3453,11 +3733,9 @@ class PhotoSortApp(QMainWindow):
         panel_pos_layout.addWidget(panel_radio_container, 1)
 
         settings_layout.addWidget(panel_pos_container)
-        # ========== 컨트롤 패널 위치 설정 추가 (끝) ==========
+        # ========== 컨트롤 패널 위치 설정 끝 ==========
 
-
-
-        # === 날짜 형식 설정 (가로 배치) ===
+        # ========== 날짜 형식 설정 ==========
         date_format_container = QWidget()
         date_format_layout = QHBoxLayout(date_format_container)
         date_format_layout.setContentsMargins(0, 5, 0, 5)
@@ -3486,8 +3764,9 @@ class PhotoSortApp(QMainWindow):
         date_format_layout.addWidget(self.date_format_combo, 1)  # 1=stretch factor
         
         settings_layout.addWidget(date_format_container)
+        # ========== 날짜 형식 설정 끝 ==========
         
-        # === 테마 설정 (가로 배치) ===
+        # ========== 테마 설정 ==========
         theme_container = QWidget()
         theme_layout = QHBoxLayout(theme_container)
         theme_layout.setContentsMargins(0, 5, 0, 5)
@@ -3516,98 +3795,147 @@ class PhotoSortApp(QMainWindow):
         theme_layout.addWidget(self.theme_combo, 1)  # 1=stretch factor
         
         settings_layout.addWidget(theme_container)
-        # === 테마 설정 끝 ===
+        # ========== 테마 설정 끝 ==========
 
-        # === 뷰포트 이동 속도 설정 ===
-        viewport_speed_container = QWidget()
-        viewport_speed_layout = QHBoxLayout(viewport_speed_container)
-        viewport_speed_layout.setContentsMargins(0, 5, 0, 5)
+        if not is_first_run_popup: # 초기 설정 창에는 나오지 않을 설정들
+            # === 뷰포트 이동 속도 설정 ===
+            viewport_speed_container = QWidget()
+            viewport_speed_layout = QHBoxLayout(viewport_speed_container)
+            viewport_speed_layout.setContentsMargins(0, 5, 0, 5)
 
-        viewport_speed_label = QLabel(LanguageManager.translate("뷰포트 이동 속도 (키보드):")) # 새 번역 키
-        viewport_speed_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
-        viewport_speed_label.setFont(font)
-        viewport_speed_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤
-        viewport_speed_label.setObjectName("viewport_speed_label")
+            viewport_speed_label = QLabel(LanguageManager.translate("뷰포트 이동 속도")) # 새 번역 키
+            viewport_speed_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
+            viewport_speed_label.setFont(font)
+            viewport_speed_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤
+            viewport_speed_label.setObjectName("viewport_speed_label")
 
-        self.viewport_speed_combo = QComboBox()
-        for i in range(1, 11): # 1부터 10까지의 속도 단계
-            self.viewport_speed_combo.addItem(str(i), i) # 표시 텍스트, 실제 값
+            self.viewport_speed_combo = QComboBox()
+            for i in range(1, 11): # 1부터 10까지의 속도 단계
+                self.viewport_speed_combo.addItem(str(i), i) # 표시 텍스트, 실제 값
+            
+            # 저장된 값으로 초기 선택 (self.viewport_move_speed는 load_state에서 설정됨)
+            current_speed_idx = self.viewport_speed_combo.findData(getattr(self, 'viewport_move_speed', 5))
+            if current_speed_idx >= 0:
+                self.viewport_speed_combo.setCurrentIndex(current_speed_idx)
+            else: # 저장된 값이 없거나 범위 밖이면 기본값 5로 설정
+                default_idx = self.viewport_speed_combo.findData(5)
+                if default_idx >=0 : self.viewport_speed_combo.setCurrentIndex(default_idx)
+
+
+            self.viewport_speed_combo.setStyleSheet(self.generate_combobox_style()) # 기존 콤보박스 스타일 재사용
+            self.viewport_speed_combo.currentIndexChanged.connect(self.on_viewport_speed_changed)
+            self.viewport_speed_combo.setMinimumWidth(80) # 콤보박스 최소 너비
+
+            viewport_speed_layout.addWidget(viewport_speed_label)
+            viewport_speed_layout.addWidget(self.viewport_speed_combo)
+            viewport_speed_layout.addStretch(1) # 우측 정렬 또는 공간 채우기
+
+            settings_layout.addWidget(viewport_speed_container)
+            # === 뷰포트 이동 속도 설정 끝 ===
+
+
+            # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
+            raw_settings_reset_container = QWidget()
+            raw_settings_reset_layout = QHBoxLayout(raw_settings_reset_container)
+            raw_settings_reset_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백
+
+            # 버튼 왼쪽에 설명 라벨 (선택 사항, 버튼만 중앙에 둘 수도 있음)
+            raw_reset_label = QLabel(LanguageManager.translate("저장된 RAW 처리 방식")) # 새 번역 키
+            raw_reset_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            raw_reset_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            font = QFont(self.font())
+            font.setPointSize(UIScaleManager.get("font_size"))
+            raw_reset_label.setFont(font)
+            raw_reset_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤 (선택 사항)
+            raw_reset_label.setObjectName("raw_reset_label")
+
+            self.reset_camera_settings_button = QPushButton(LanguageManager.translate("초기화")) # 새 번역 키
+            # 버튼 스타일은 기존 load_button이나 다른 일반 버튼 스타일 재사용 가능
+            button_min_height = UIScaleManager.get("button_min_height")
+            button_padding = UIScaleManager.get("button_padding")
+            self.reset_camera_settings_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    color: {ThemeManager.get_color('text')};
+                    border: none;
+                    padding: 5px;
+                    border-radius: 1px;
+                    min-height: 25px; 
+                    min-width: 68px; /* 버튼 최소 너비 */
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.get_color('bg_hover')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.get_color('bg_pressed')};
+                }}
+            """)
+            self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
+
+            raw_settings_reset_layout.addWidget(raw_reset_label)
+            raw_settings_reset_layout.addWidget(self.reset_camera_settings_button)
+            raw_settings_reset_layout.addStretch(1)
+
+            settings_layout.addWidget(raw_settings_reset_container)
+            # === RAW 설정 초기화 버튼 추가 끝 ===
+
+            # === "세션 저장 및 불러오기 🖜" 텍스트 링크 추가 ===
+            session_management_link_container = QWidget()
+            session_management_link_hbox = QHBoxLayout(session_management_link_container)
+            session_management_link_hbox.setContentsMargins(0, 5, 0, 5)
+            session_management_link_hbox.setSpacing(5)
+
+            session_link_label = QLabel(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
+            session_link_label.setObjectName("session_management_link_label")
+            session_link_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            session_link_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}")
+            session_link_label.setCursor(Qt.PointingHandCursor)
+            
+            def session_link_label_clicked(event):
+                if event.button() == Qt.LeftButton: self.show_session_management_popup()
+            session_link_label.mouseReleaseEvent = session_link_label_clicked
+            
+            session_management_link_hbox.addWidget(session_link_label)
+            session_management_link_hbox.addStretch(1) # 왼쪽에 붙이기
+            settings_layout.addWidget(session_management_link_container)
+            # === 세션 링크 추가 끝 ===
+
+
+        # === "단축키 확인 🖜" 라벨 (모든 설정 팝업에 공통으로 표시되도록 if 블록 밖으로 이동) ===
+        # (만약 첫 실행 팝업에서는 이 링크가 맨 아래, 일반 설정에서는 다른 위치에 있다면,
+        #  is_first_run_popup 플래그에 따라 addWidget 순서를 다르게 할 수 있음.
+        #  여기서는 일단 모든 설정 항목들 다음에 공통으로 추가하는 것으로 가정)
+
+        shortcut_info_container = QWidget()
+        shortcut_info_hbox = QHBoxLayout(shortcut_info_container)
+        shortcut_info_hbox.setContentsMargins(0, 5, 0, 0)
+        shortcut_info_hbox.setSpacing(5)
+
+        # self.shortcut_info_label_in_settings_ui 라는 일관된 이름의 멤버 변수 사용 고려
+        # 이 라벨은 setup_settings_ui가 호출될 때마다 새로 만들어지므로,
+        # PhotoSortApp의 멤버로 유지하려면 show_..._popup 함수에서 할당해야 함.
+        # 여기서는 지역 변수로 생성하고 반환되는 settings_container에 포함.
+        # update_ui_texts에서 접근하려면 objectName 사용이 더 안정적.
+        _shortcut_label = QLabel(LanguageManager.translate("단축키 확인 🖜"))
+        _shortcut_label.setObjectName("settings_shortcut_info_label") # 공통 ObjectName
+        _shortcut_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        _shortcut_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}")
+        _shortcut_label.setCursor(Qt.PointingHandCursor)
         
-        # 저장된 값으로 초기 선택 (self.viewport_move_speed는 load_state에서 설정됨)
-        current_speed_idx = self.viewport_speed_combo.findData(getattr(self, 'viewport_move_speed', 5))
-        if current_speed_idx >= 0:
-            self.viewport_speed_combo.setCurrentIndex(current_speed_idx)
-        else: # 저장된 값이 없거나 범위 밖이면 기본값 5로 설정
-            default_idx = self.viewport_speed_combo.findData(5)
-            if default_idx >=0 : self.viewport_speed_combo.setCurrentIndex(default_idx)
+        def _shortcut_label_clicked(event): # 로컬 함수
+            if event.button() == Qt.LeftButton: 
+                self.show_shortcuts_popup()
 
-
-        self.viewport_speed_combo.setStyleSheet(self.generate_combobox_style()) # 기존 콤보박스 스타일 재사용
-        self.viewport_speed_combo.currentIndexChanged.connect(self.on_viewport_speed_changed)
-        self.viewport_speed_combo.setMinimumWidth(80) # 콤보박스 최소 너비
-
-        viewport_speed_layout.addWidget(viewport_speed_label)
-        viewport_speed_layout.addWidget(self.viewport_speed_combo)
-        viewport_speed_layout.addStretch(1) # 우측 정렬 또는 공간 채우기
-
-        settings_layout.addWidget(viewport_speed_container)
-        settings_layout.addSpacing(UIScaleManager.get("settings_layout_vspace", 10)) # 간격
-        # === 뷰포트 이동 속도 설정 끝 ===
-
-
-
-        # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
-        raw_settings_reset_container = QWidget()
-        raw_settings_reset_layout = QHBoxLayout(raw_settings_reset_container)
-        raw_settings_reset_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백
-
-        # 버튼 왼쪽에 설명 라벨 (선택 사항, 버튼만 중앙에 둘 수도 있음)
-        raw_reset_label = QLabel(LanguageManager.translate("저장된 RAW 처리 방식")) # 새 번역 키
-        raw_reset_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        raw_reset_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        font = QFont(self.font())
-        font.setPointSize(UIScaleManager.get("font_size"))
-        raw_reset_label.setFont(font)
-        raw_reset_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤 (선택 사항)
-        raw_reset_label.setObjectName("raw_reset_label")
-
-        self.reset_camera_settings_button = QPushButton(LanguageManager.translate("설정 초기화")) # 새 번역 키
-        # 버튼 스타일은 기존 load_button이나 다른 일반 버튼 스타일 재사용 가능
-        button_min_height = UIScaleManager.get("button_min_height")
-        button_padding = UIScaleManager.get("button_padding")
-        self.reset_camera_settings_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: 5px;
-                border-radius: 1px; /* 약간 둥글게 */
-                min-height: 25px; 
-                min-width: 110px; /* 버튼 최소 너비 */
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('bg_pressed')};
-            }}
-        """)
-        self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
-
-        raw_settings_reset_layout.addWidget(raw_reset_label)
-        # raw_settings_reset_layout.addStretch(1) # 라벨과 버튼 사이 공간
-        raw_settings_reset_layout.addWidget(self.reset_camera_settings_button)
-        raw_settings_reset_layout.addStretch(1) # 버튼을 왼쪽에 붙이려면 이 스트레치 제거
-
-        settings_layout.addWidget(raw_settings_reset_container)
-        # === 초기화 버튼 추가 끝 ===
-
+        _shortcut_label.mouseReleaseEvent = _shortcut_label_clicked
         
-        # 하단 여백
-        # settings_layout.addStretch(1)
+        shortcut_info_hbox.addWidget(_shortcut_label)
+        shortcut_info_hbox.addStretch(1)
+
+        settings_layout.addWidget(shortcut_info_container)
         
+        # settings_layout.addStretch(1) # 모든 설정 항목 아래에 여백
         return settings_container
 
 
@@ -3818,6 +4146,9 @@ class PhotoSortApp(QMainWindow):
             self.minimap_toggle.setStyleSheet(checkbox_style)
         if hasattr(self, 'raw_toggle_button'):
             self.raw_toggle_button.setStyleSheet(checkbox_style)
+        if hasattr(self, 'filename_toggle_grid'):
+            self.filename_toggle_grid.setStyleSheet(checkbox_style)
+        
     
     def update_folder_styles(self):
         """폴더 관련 UI 요소의 스타일을 업데이트"""
@@ -3833,350 +4164,393 @@ class PhotoSortApp(QMainWindow):
                 self.update_folder_label_style(label, self.target_folders[i] if hasattr(self, 'target_folders') else None)
     
     def show_settings_popup(self):
-            """설정 버튼 클릭 시 호출되는 메서드, 설정 팝업을 표시 (상하 구조)"""
-            # ──────────────────────────────
-            # [0] 이미 팝업창이 열려있다면 앞으로 가져오기
-            # ──────────────────────────────
-            if hasattr(self, 'settings_popup') and self.settings_popup.isVisible():
-                self.settings_popup.activateWindow()
-                return
+        """설정 버튼 클릭 시 호출되는 메서드, 설정 팝업을 표시 (상하 구조)"""
+        # ──────────────────────────────
+        # [0] 이미 팝업창이 열려있다면 앞으로 가져오기
+        # ──────────────────────────────
+        if hasattr(self, 'settings_popup') and self.settings_popup.isVisible():
+            self.settings_popup.activateWindow()
+            return
 
-            # ──────────────────────────────
-            # [1] 팝업창 생성 및 기본 속성 설정
-            # ──────────────────────────────
-            self.settings_popup = QDialog(self)
-            self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
-            # UIScaleManager에서 설정 창 크기 가져오기
-            popup_width = UIScaleManager.get("settings_popup_width", 785)
-            popup_height = UIScaleManager.get("settings_popup_height", 910)
-            self.settings_popup.setMinimumSize(popup_width, popup_height)
+        # ──────────────────────────────
+        # [1] 팝업창 생성 및 기본 속성 설정
+        # ──────────────────────────────
+        self.settings_popup = QDialog(self)
+        self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
+        # UIScaleManager에서 설정 창 크기 가져오기
+        popup_width = UIScaleManager.get("settings_popup_width", 785)
+        popup_height = UIScaleManager.get("settings_popup_height", 910)
+        self.settings_popup.setMinimumSize(popup_width, popup_height)
 
-            # ── Windows용 다크 테마 제목 표시줄 설정
-            if sys.platform == "win32":
-                try:
-                    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                    dwmapi = ctypes.WinDLL("dwmapi")
-                    dwmapi.DwmSetWindowAttribute.argtypes = [
-                        ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                    ]
-                    hwnd = int(self.settings_popup.winId())
-                    value = ctypes.c_int(1)
-                    dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                                                ctypes.byref(value), ctypes.sizeof(value))
-                except Exception as e:
-                    logging.error(f"설정 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
+        # ── Windows용 다크 테마 제목 표시줄 설정
+        if sys.platform == "win32":
+            try:
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                dwmapi = ctypes.WinDLL("dwmapi")
+                dwmapi.DwmSetWindowAttribute.argtypes = [
+                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
+                ]
+                hwnd = int(self.settings_popup.winId())
+                value = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                            ctypes.byref(value), ctypes.sizeof(value))
+            except Exception as e:
+                logging.error(f"설정 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
 
-            # ── 다크 테마 배경 색상 적용
-            palette = QPalette()
-            palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
-            self.settings_popup.setPalette(palette)
-            self.settings_popup.setAutoFillBackground(True)
+        # ── 다크 테마 배경 색상 적용
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+        self.settings_popup.setPalette(palette)
+        self.settings_popup.setAutoFillBackground(True)
 
-            # ──────────────────────────────
-            # [2] 메인 레이아웃 설정 (수직)
-            # ──────────────────────────────
-            main_layout = QVBoxLayout(self.settings_popup)
-            main_layout.setContentsMargins(15, 15, 15, 15)  # 바깥 여백
-            info_donation_spacing = UIScaleManager.get("info_donation_spacing", 50)
-            main_layout.setSpacing(info_donation_spacing)  # 각 패널 간 간격
+        # ──────────────────────────────
+        # [2] 메인 레이아웃 설정 (수직)
+        # ──────────────────────────────
+        main_layout = QVBoxLayout(self.settings_popup)
+        main_layout.setContentsMargins(15, 15, 15, 15)  # 바깥 여백
+        info_donation_spacing = UIScaleManager.get("info_donation_spacing", 40)
+        main_layout.setSpacing(info_donation_spacing)  # 각 패널 간 간격
 
-            # ──────────────────────────────
-            # [3] 상단 설정 패널 (설정 항목 + 단축키 안내)
-            # ──────────────────────────────
-            settings_section = QWidget()
-            settings_layout = QVBoxLayout(settings_section)
-            settings_layout.setContentsMargins(0, 0, 0, 0)
-            settings_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 10))  # 설정 항목 간 간격
+        # ──────────────────────────────
+        # [3] 상단 설정 패널 (설정 항목 + 단축키 안내)
+        # ──────────────────────────────
+        settings_section = QWidget()
+        settings_layout = QVBoxLayout(settings_section) # 이 레이아웃이 설정 항목들을 담음
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(0)  # setup_settings_ui 내부에서 간격 조절
 
-            settings_layout.addWidget(self.setup_settings_ui())
+        # setup_settings_ui가 반환하는 위젯 (모든 설정 항목 포함)을 settings_layout에 추가
+        settings_ui_widget = self.setup_settings_ui(is_first_run_popup=False) # <<< 일반 설정용 UI
+        settings_layout.addWidget(settings_ui_widget)
+
+        # ──────────────────────────────
+        # [4] 첫 번째 구분선 (상단과 중단 사이)
+        # ──────────────────────────────
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.HLine)
+        separator1.setFrameShadow(QFrame.Sunken)
+        separator1.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+
+        # ──────────────────────────────
+        # [5] 중단 정보 섹션
+        # ──────────────────────────────
+        info_section = QWidget()
+        info_layout = QVBoxLayout(info_section)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(0)
+
+        # 앱 정보 텍스트
+        info_text = self.create_translated_info_text()
+        info_label = QLabel(info_text)
+        info_label.setAlignment(Qt.AlignCenter)
+        info_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+
+        # 링크 활성화 설정 추가
+        info_label.setOpenExternalLinks(True)
+        info_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+
+        info_layout.addWidget(info_label)
+        info_layout.addSpacing(UIScaleManager.get("infotext_licensebutton", 40))  # 정보 텍스트와 버튼 사이 간격 추가
+
+        # 오픈소스 라이선스 버튼 추가 (가운데 정렬을 위한 컨테이너 사용)
+        license_button_container = QWidget()
+        license_button_layout = QHBoxLayout(license_button_container)
+        license_button_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 버튼 생성 및 스타일 설정
+        licenses_button = QPushButton("Open Source Licenses")
+        licenses_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 180px;
+            }}
+            QPushButton:hover {{
+                background-color: {ThemeManager.get_color('bg_hover')};
+            }}
+            QPushButton:pressed {{
+                background-color: {ThemeManager.get_color('bg_pressed')};
+            }}
+        """)
+        licenses_button.setCursor(Qt.PointingHandCursor)  # 손가락 커서로 변경
+        licenses_button.clicked.connect(self.show_licenses_popup)
+
+        # 가운데 정렬을 위한 스트레치 추가
+        license_button_layout.addStretch(1)
+        license_button_layout.addWidget(licenses_button)
+        license_button_layout.addStretch(1)
+
+        # 레이아웃에 버튼 컨테이너 추가
+        info_layout.addWidget(license_button_container)
+        info_layout.addStretch(1)  # 정보 섹션 하단 여백 (기존 코드)
+        
+
+        # ──────────────────────────────
+        # [6] 두 번째 구분선 (중단과 하단 사이)
+        # ──────────────────────────────
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.HLine)
+        separator2.setFrameShadow(QFrame.Sunken)
+        separator2.setStyleSheet(
+            f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;"
+        )
+
+        # ──────────────────────────────
+        # [7] 하단 후원 섹션
+        # ──────────────────────────────
+        donation_section = QWidget()
+        donation_layout = QVBoxLayout(donation_section)
+        donation_layout.setContentsMargins(0, 0, 0, 0)  # 상단만 여백 10px
+        
+        # 현재 언어 설정 확인 
+        current_language = LanguageManager.get_current_language()
+
+        # 영어 설정일 때 결제 링크 표시
+        if current_language == "en":
+            # 커피 이모지를 후원 섹션 전체의 왼쪽에 배치하기 위한 컨테이너
+            donation_content_container = QWidget()
+            donation_content_layout = QHBoxLayout(donation_content_container)
+            donation_content_layout.setContentsMargins(0, 0, 0, 0)
             
-            # ── [3-1] 단축키 안내 수평 박스
-            shortcut_info_container = QWidget()
-            shortcut_info_hbox = QHBoxLayout(shortcut_info_container)
-            shortcut_info_hbox.setContentsMargins(0, 0, 0, 0)
-            shortcut_info_hbox.setSpacing(5)  # 라벨과 아이콘 사이 간격
+            # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
+            coffee_icon_path = self.resource_path("resources/coffee_icon.png")  # 이미지 파일 경로 지정
+            coffee_icon = QPixmap(coffee_icon_path)
+            coffee_emoji = QLabel()
+            if not coffee_icon.isNull():
+                # 이미지 크기 조정 (적절한 크기로 조정)
+                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                coffee_emoji.setPixmap(coffee_icon)
+            else:
+                # 이미지 로드 실패 시 텍스트로 대체
+                coffee_emoji.setText("☕")
+            coffee_emoji.setFixedWidth(60)  # 이미지에 적절한 너비 설정
+            coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
+            coffee_emoji.setAlignment(Qt.AlignCenter)  # 중앙 정렬
 
-            # 텍스트 라벨
-            shortcut_info_label = QLabel(LanguageManager.translate("∗ 단축키 확인 ⓘ"))
-            shortcut_info_label.setObjectName("shortcut_info_label")
-            shortcut_info_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            shortcut_info_label.setCursor(Qt.WhatsThisCursor)
-            shortcut_info_label.setToolTip(self._build_shortcut_tooltip_text())
-            shortcut_info_label.setStyleSheet(
-                f"color: {ThemeManager.get_color('text')}; padding-left: 8px;"
-            )
-
-            # 수평 레이아웃에 추가
-            shortcut_info_hbox.addWidget(shortcut_info_label)
-
-            # 상단 설정 레이아웃에 추가
-            settings_layout.addWidget(shortcut_info_container)
-            settings_layout.addSpacing(UIScaleManager.get("viewshortcuts_seperator", 0)) # 단축키 확인과 중간 구분선 사이 간격 조절
-            settings_layout.addStretch(1)  # 설정 항목과 안내 사이 공간 확보
-
-            # ──────────────────────────────
-            # [4] 첫 번째 구분선 (상단과 중단 사이)
-            # ──────────────────────────────
-            separator1 = QFrame()
-            separator1.setFrameShape(QFrame.HLine)
-            separator1.setFrameShadow(QFrame.Sunken)
-            separator1.setStyleSheet(
-                f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;"
-            )
-
-            # ──────────────────────────────
-            # [5] 중단 정보 섹션
-            # ──────────────────────────────
-            info_section = QWidget()
-            info_layout = QVBoxLayout(info_section)
-            info_layout.setContentsMargins(0, 0, 0, 0)
-            info_layout.setSpacing(0)
-
-            # 앱 정보 텍스트
-            info_text = self.create_translated_info_text()
-            info_label = QLabel(info_text)
-            info_label.setAlignment(Qt.AlignCenter)
-            info_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-
-            # 링크 활성화 설정 추가
-            info_label.setOpenExternalLinks(True)
-            info_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-
-            info_layout.addWidget(info_label)
-            info_layout.addSpacing(UIScaleManager.get("infotext_licensebutton", 40))  # 정보 텍스트와 버튼 사이 간격 추가
-
-            # 오픈소스 라이선스 버튼 추가 (가운데 정렬을 위한 컨테이너 사용)
-            license_button_container = QWidget()
-            license_button_layout = QHBoxLayout(license_button_container)
-            license_button_layout.setContentsMargins(0, 0, 0, 0)
-
-            # 버튼 생성 및 스타일 설정
-            licenses_button = QPushButton("Open Source Licenses")
-            licenses_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    color: {ThemeManager.get_color('text')};
-                    border: none;
-                    padding: 8px 16px;
-                    border-radius: 4px;
-                    min-width: 180px;
-                }}
-                QPushButton:hover {{
-                    background-color: {ThemeManager.get_color('bg_hover')};
-                }}
-                QPushButton:pressed {{
-                    background-color: {ThemeManager.get_color('bg_pressed')};
-                }}
-            """)
-            licenses_button.setCursor(Qt.PointingHandCursor)  # 손가락 커서로 변경
-            licenses_button.clicked.connect(self.show_licenses_popup)
-
-            # 가운데 정렬을 위한 스트레치 추가
-            license_button_layout.addStretch(1)
-            license_button_layout.addWidget(licenses_button)
-            license_button_layout.addStretch(1)
-
-            # 레이아웃에 버튼 컨테이너 추가
-            info_layout.addWidget(license_button_container)
-            info_layout.addStretch(1)  # 정보 섹션 하단 여백 (기존 코드)
+            # 결제 링크 컨테이너 (세로 레이아웃)
+            links_container = QWidget()
+            links_layout = QVBoxLayout(links_container)
+            links_layout.setContentsMargins(0, 0, 0, 0)
+            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
             
-
-            # ──────────────────────────────
-            # [6] 두 번째 구분선 (중단과 하단 사이)
-            # ──────────────────────────────
-            separator2 = QFrame()
-            separator2.setFrameShape(QFrame.HLine)
-            separator2.setFrameShadow(QFrame.Sunken)
-            separator2.setStyleSheet(
-                f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;"
-            )
-
-            # ──────────────────────────────
-            # [7] 하단 후원 섹션
-            # ──────────────────────────────
-            donation_section = QWidget()
-            donation_layout = QVBoxLayout(donation_section)
-            donation_layout.setContentsMargins(0, 0, 0, 0)  # 상단만 여백 10px
+            # 첫 번째 행: 바이미어커피와 페이팔
+            row1_container = QWidget()
+            row1_layout = QHBoxLayout(row1_container)
+            row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
             
-            # 현재 언어 설정 확인 
-            current_language = LanguageManager.get_current_language()
+            # 바이미어커피 링크
+            bmc_url = "https://buymeacoffee.com/ffamilist"
+            qr_path = self.resource_path("resources/bmc_qr.png")
+            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path, size=250)
+            bmc_label.setAlignment(Qt.AlignCenter)
+            
+            # 페이팔 링크
+            paypal_url = "https://paypal.me/ffamilist"
+            qr_path = ""
+            paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path, size=250)
+            paypal_label.setAlignment(Qt.AlignCenter)
+            paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
+            
+            # 첫 번째 행에 링크 추가
+            row1_layout.addWidget(bmc_label)
+            row1_layout.addWidget(paypal_label)
+            
+            # 두 번째 행: 카카오페이와 네이버페이
+            row2_container = QWidget()
+            row2_layout = QHBoxLayout(row2_container)
+            row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            
+            # 카카오페이 링크
+            kakaopay_url = ""
+            qr_path = str(Path(__file__).parent / "resources" / "kakaopay_qr.png")
+            kakaopay_label = QRLinkLabel("KakaoPay 🇰🇷", kakaopay_url, qr_path)
+            kakaopay_label.setAlignment(Qt.AlignCenter)
+            
+            # 네이버페이 링크
+            naverpay_url = ""
+            qr_path = str(Path(__file__).parent / "resources" / "naverpay_qr.png")
+            naverpay_label = QRLinkLabel("NaverPay 🇰🇷", naverpay_url, qr_path, size=250)
+            naverpay_label.setAlignment(Qt.AlignCenter)
+            
+            # 두 번째 행에 링크 추가
+            row2_layout.addWidget(kakaopay_label)
+            row2_layout.addWidget(naverpay_label)
+            
+            # 링크 컨테이너에 두 행 추가
+            links_layout.addWidget(row1_container)
+            links_layout.addWidget(row2_container)
+            
+            # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
+            donation_content_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
+            donation_content_layout.addWidget(links_container, 1)  # 나머지 공간 차지
+            
+            # 후원 레이아웃에 최종 컨테이너 추가
+            donation_layout.addWidget(donation_content_container)
+        else:  # "ko"
+            # 결제 링크를 담을 컨테이너 생성
+            ko_payment_container = QWidget()
+            ko_payment_layout = QHBoxLayout(ko_payment_container)
+            ko_payment_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            
+            # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
+            coffee_icon_path = str(Path(__file__).parent / "resources" / "coffee_icon.png")
+            coffee_icon = QPixmap(coffee_icon_path)
+            coffee_emoji = QLabel()
+            if not coffee_icon.isNull():
+                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                coffee_emoji.setPixmap(coffee_icon)
+            else:
+                coffee_emoji.setText("☕")
+            coffee_emoji.setFixedWidth(60)
+            coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
+            coffee_emoji.setAlignment(Qt.AlignCenter)
+            
+            # 결제 링크 컨테이너 (세로 레이아웃)
+            links_container = QWidget()
+            links_layout = QVBoxLayout(links_container)
+            links_layout.setContentsMargins(0, 0, 0, 0)
+            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
+            
+            # 첫 번째 행: 카카오페이와 네이버페이
+            row1_container = QWidget()
+            row1_layout = QHBoxLayout(row1_container)
+            row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            
+            # 카카오페이 링크
+            kakaopay_url = ""
+            qr_path = str(Path(__file__).parent / "resources" / "kakaopay_qr.png")
+            kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), kakaopay_url, qr_path)
+            kakaopay_label.setAlignment(Qt.AlignCenter)
+            
+            # 네이버페이 링크
+            naverpay_url = ""
+            qr_path = str(Path(__file__).parent / "resources" / "naverpay_qr.png")
+            naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), naverpay_url, qr_path, size=250)
+            naverpay_label.setAlignment(Qt.AlignCenter)
+            
+            # 첫 번째 행에 링크 추가
+            row1_layout.addWidget(kakaopay_label)
+            row1_layout.addWidget(naverpay_label)
+            
+            # 두 번째 행: Buy Me a Coffee와 PayPal
+            row2_container = QWidget()
+            row2_layout = QHBoxLayout(row2_container)
+            row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            
+            # Buy Me a Coffee 링크
+            bmc_url = "https://buymeacoffee.com/ffamilist"
+            qr_path = str(Path(__file__).parent / "resources" / "bmc_qr.png")
+            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path, size=250)
+            bmc_label.setAlignment(Qt.AlignCenter)
+            
+            # PayPal 링크
+            paypal_url = "https://paypal.me/ffamilist"
+            qr_path = ""
+            paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path, size=250)
+            paypal_label.setAlignment(Qt.AlignCenter)
+            paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
+            
+            # 두 번째 행에 링크 추가
+            row2_layout.addWidget(bmc_label)
+            row2_layout.addWidget(paypal_label)
+            
+            # 링크 컨테이너에 두 행 추가
+            links_layout.addWidget(row1_container)
+            links_layout.addWidget(row2_container)
+            
+            # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
+            ko_payment_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
+            ko_payment_layout.addWidget(links_container, 1)  # 나머지 공간 차지
+            
+            # 후원 레이아웃에 최종 컨테이너 추가
+            donation_layout.addWidget(ko_payment_container)
 
-            # 영어 설정일 때 결제 링크 표시
-            if current_language == "en":
-                # 커피 이모지를 후원 섹션 전체의 왼쪽에 배치하기 위한 컨테이너
-                donation_content_container = QWidget()
-                donation_content_layout = QHBoxLayout(donation_content_container)
-                donation_content_layout.setContentsMargins(0, 0, 0, 0)
-                
-                # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
-                coffee_icon_path = self.resource_path("resources/coffee_icon.png")  # 이미지 파일 경로 지정
-                coffee_icon = QPixmap(coffee_icon_path)
-                coffee_emoji = QLabel()
-                if not coffee_icon.isNull():
-                    # 이미지 크기 조정 (적절한 크기로 조정)
-                    coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    coffee_emoji.setPixmap(coffee_icon)
-                else:
-                    # 이미지 로드 실패 시 텍스트로 대체
-                    coffee_emoji.setText("☕")
-                coffee_emoji.setFixedWidth(60)  # 이미지에 적절한 너비 설정
-                coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
-                coffee_emoji.setAlignment(Qt.AlignCenter)  # 중앙 정렬
+        donation_layout.addStretch(1)  # 하단 여백 확보
 
-                # 결제 링크 컨테이너 (세로 레이아웃)
-                links_container = QWidget()
-                links_layout = QVBoxLayout(links_container)
-                links_layout.setContentsMargins(0, 0, 0, 0)
-                links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
-                
-                # 첫 번째 행: 바이미어커피와 페이팔
-                row1_container = QWidget()
-                row1_layout = QHBoxLayout(row1_container)
-                row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-                
-                # 바이미어커피 링크
-                bmc_url = "https://buymeacoffee.com/ffamilist"
-                qr_path = self.resource_path("resources/bmc_qr.png")
-                bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path, size=250)
-                bmc_label.setAlignment(Qt.AlignCenter)
-                
-                # 페이팔 링크
-                paypal_url = "https://paypal.me/ffamilist"
-                qr_path = ""
-                paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path, size=250)
-                paypal_label.setAlignment(Qt.AlignCenter)
-                paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
-                
-                # 첫 번째 행에 링크 추가
-                row1_layout.addWidget(bmc_label)
-                row1_layout.addWidget(paypal_label)
-                
-                # 두 번째 행: 카카오페이와 네이버페이
-                row2_container = QWidget()
-                row2_layout = QHBoxLayout(row2_container)
-                row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-                
-                # 카카오페이 링크
-                kakaopay_url = ""
-                qr_path = str(Path(__file__).parent / "resources" / "kakaopay_qr.png")
-                kakaopay_label = QRLinkLabel("KakaoPay 🇰🇷", kakaopay_url, qr_path)
-                kakaopay_label.setAlignment(Qt.AlignCenter)
-                
-                # 네이버페이 링크
-                naverpay_url = ""
-                qr_path = str(Path(__file__).parent / "resources" / "naverpay_qr.png")
-                naverpay_label = QRLinkLabel("NaverPay 🇰🇷", naverpay_url, qr_path, size=250)
-                naverpay_label.setAlignment(Qt.AlignCenter)
-                
-                # 두 번째 행에 링크 추가
-                row2_layout.addWidget(kakaopay_label)
-                row2_layout.addWidget(naverpay_label)
-                
-                # 링크 컨테이너에 두 행 추가
-                links_layout.addWidget(row1_container)
-                links_layout.addWidget(row2_container)
-                
-                # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
-                donation_content_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
-                donation_content_layout.addWidget(links_container, 1)  # 나머지 공간 차지
-                
-                # 후원 레이아웃에 최종 컨테이너 추가
-                donation_layout.addWidget(donation_content_container)
-            else:  # "ko"
-                # 결제 링크를 담을 컨테이너 생성
-                ko_payment_container = QWidget()
-                ko_payment_layout = QHBoxLayout(ko_payment_container)
-                ko_payment_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-                
-                # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
-                coffee_icon_path = str(Path(__file__).parent / "resources" / "coffee_icon.png")
-                coffee_icon = QPixmap(coffee_icon_path)
-                coffee_emoji = QLabel()
-                if not coffee_icon.isNull():
-                    coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    coffee_emoji.setPixmap(coffee_icon)
-                else:
-                    coffee_emoji.setText("☕")
-                coffee_emoji.setFixedWidth(60)
-                coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
-                coffee_emoji.setAlignment(Qt.AlignCenter)
-                
-                # 결제 링크 컨테이너 (세로 레이아웃)
-                links_container = QWidget()
-                links_layout = QVBoxLayout(links_container)
-                links_layout.setContentsMargins(0, 0, 0, 0)
-                links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
-                
-                # 첫 번째 행: 카카오페이와 네이버페이
-                row1_container = QWidget()
-                row1_layout = QHBoxLayout(row1_container)
-                row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-                
-                # 카카오페이 링크
-                kakaopay_url = ""
-                qr_path = str(Path(__file__).parent / "resources" / "kakaopay_qr.png")
-                kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), kakaopay_url, qr_path)
-                kakaopay_label.setAlignment(Qt.AlignCenter)
-                
-                # 네이버페이 링크
-                naverpay_url = ""
-                qr_path = str(Path(__file__).parent / "resources" / "naverpay_qr.png")
-                naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), naverpay_url, qr_path, size=250)
-                naverpay_label.setAlignment(Qt.AlignCenter)
-                
-                # 첫 번째 행에 링크 추가
-                row1_layout.addWidget(kakaopay_label)
-                row1_layout.addWidget(naverpay_label)
-                
-                # 두 번째 행: Buy Me a Coffee와 PayPal
-                row2_container = QWidget()
-                row2_layout = QHBoxLayout(row2_container)
-                row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-                
-                # Buy Me a Coffee 링크
-                bmc_url = "https://buymeacoffee.com/ffamilist"
-                qr_path = str(Path(__file__).parent / "resources" / "bmc_qr.png")
-                bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path, size=250)
-                bmc_label.setAlignment(Qt.AlignCenter)
-                
-                # PayPal 링크
-                paypal_url = "https://paypal.me/ffamilist"
-                qr_path = ""
-                paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path, size=250)
-                paypal_label.setAlignment(Qt.AlignCenter)
-                paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
-                
-                # 두 번째 행에 링크 추가
-                row2_layout.addWidget(bmc_label)
-                row2_layout.addWidget(paypal_label)
-                
-                # 링크 컨테이너에 두 행 추가
-                links_layout.addWidget(row1_container)
-                links_layout.addWidget(row2_container)
-                
-                # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
-                ko_payment_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
-                ko_payment_layout.addWidget(links_container, 1)  # 나머지 공간 차지
-                
-                # 후원 레이아웃에 최종 컨테이너 추가
-                donation_layout.addWidget(ko_payment_container)
+        # ──────────────────────────────
+        # [8] 메인 레이아웃에 구성요소 순서대로 추가
+        # ──────────────────────────────
+        main_layout.addWidget(settings_section)  # 상단 설정 패널
+        main_layout.addWidget(separator1)        # 첫 번째 구분선
+        main_layout.addWidget(info_section)      # 중단 정보 패널
+        main_layout.addWidget(separator2)        # 두 번째 구분선
+        main_layout.addWidget(donation_section)  # 하단 후원 패널
+        main_layout.addSpacing(UIScaleManager.get("bottom_space", 25))       # 하단 여백 확보
 
-            donation_layout.addStretch(1)  # 하단 여백 확보
+        # ──────────────────────────────
+        # [9] 팝업 실행
+        # ──────────────────────────────
+        self.settings_popup.exec_()
 
-            # ──────────────────────────────
-            # [8] 메인 레이아웃에 구성요소 순서대로 추가
-            # ──────────────────────────────
-            main_layout.addWidget(settings_section)  # 상단 설정 패널
-            main_layout.addWidget(separator1)        # 첫 번째 구분선
-            main_layout.addWidget(info_section)      # 중단 정보 패널
-            main_layout.addWidget(separator2)        # 두 번째 구분선
-            main_layout.addWidget(donation_section)  # 하단 후원 패널
-            main_layout.addSpacing(UIScaleManager.get("bottom_space", 30))       # 하단 여백 확보
 
-            # ──────────────────────────────
-            # [9] 팝업 실행
-            # ──────────────────────────────
-            self.settings_popup.exec_()
+    def show_shortcuts_popup(self):
+        """단축키 안내 팝업창을 표시합니다."""
+        if hasattr(self, 'shortcuts_info_popup') and self.shortcuts_info_popup.isVisible():
+            self.shortcuts_info_popup.activateWindow()
+            return
+
+        self.shortcuts_info_popup = QDialog(self)
+        self.shortcuts_info_popup.setWindowTitle(LanguageManager.translate("단축키")) # 새 번역 키
+        
+        # 다크 테마 적용 (기존 show_themed_message_box 또는 settings_popup 참조)
+        if sys.platform == "win32":
+            try:
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
+                # ... (타이틀바 다크모드 설정 코드) ...
+                hwnd = int(self.shortcuts_info_popup.winId()); value = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+            except Exception: pass
+        palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+        self.shortcuts_info_popup.setPalette(palette); self.shortcuts_info_popup.setAutoFillBackground(True)
+
+        layout = QVBoxLayout(self.shortcuts_info_popup)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # 스크롤 가능한 텍스트 영역으로 변경 (내용이 길어지므로)
+        text_browser = QTextBrowser() # QLabel 대신 QTextBrowser 사용
+        text_browser.setReadOnly(True)
+        text_browser.setOpenExternalLinks(False) # 이 팝업에는 링크가 없을 것이므로
+        text_browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: transparent; /* 부모 위젯 배경색 사용 */
+                color: {ThemeManager.get_color('text')};
+                border: none; /* 테두리 없음 */
+            }}
+        """)
+        html_content = self._build_shortcut_popup_content_html() # 위에서 만든 함수 호출
+        text_browser.setHtml(html_content)
+        
+        # 텍스트 브라우저의 최소/권장 크기 설정 (내용에 따라 조절)
+        text_browser.setMinimumHeight(880)
+        text_browser.setMinimumWidth(550)
+
+        layout.addWidget(text_browser)
+
+        close_button = QPushButton(LanguageManager.translate("닫기"))
+        # ... (닫기 버튼 스타일 설정 - 기존 설정 팝업의 버튼 스타일 재사용 가능) ...
+        button_style = f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
+                border: none; padding: 8px 16px; border-radius: 4px; min-width: 80px;
+            }}
+            QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
+            QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
+        """
+        close_button.setStyleSheet(button_style)
+        close_button.clicked.connect(self.shortcuts_info_popup.accept)
+        
+        button_layout = QHBoxLayout() # 버튼 중앙 정렬용
+        button_layout.addStretch(1)
+        button_layout.addWidget(close_button)
+        button_layout.addStretch(1)
+        layout.addLayout(button_layout)
+
+        self.shortcuts_info_popup.exec_()
+
+
 
     def create_translated_info_text(self):
         """현재 언어에 맞게 번역된 정보 텍스트를 생성하여 반환"""
@@ -4187,7 +4561,7 @@ class PhotoSortApp(QMainWindow):
 
         info_text = f"""
         <h2>PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.05.24</p>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.05.26</p>
         <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
@@ -4645,30 +5019,23 @@ class PhotoSortApp(QMainWindow):
 
     def apply_zoom_to_image(self):
         """현재 이미지에 확대 모드 적용 (Grid Off 모드에서만 사용)"""
-        if self.grid_mode != "Off": return # Grid 모드에서는 이 함수 사용 안 함
+        if self.grid_mode != "Off": return
 
         if not self.original_pixmap:
             return
 
-        # 패닝 위치 초기화 여부 결정 (방향이 다를 때만)
-        reset_panning = False
+        reset_panning_due_to_orientation_change = False
         if self.zoom_mode in ["100%", "200%"]:
-            # 방향이 바뀌었는지 확인 (둘 다 None이 아니고 서로 다를 때)
-            if (self.previous_image_orientation and self.current_image_orientation and 
+            if (self.previous_image_orientation and self.current_image_orientation and
                 self.previous_image_orientation != self.current_image_orientation):
-                reset_panning = True
-                print(f"이미지 방향 변경 감지: {self.previous_image_orientation} -> {self.current_image_orientation}, 뷰포트 중앙 이동")
+                reset_panning_due_to_orientation_change = True
+                logging.debug(f"이미지 방향 변경 감지: {self.previous_image_orientation} -> {self.current_image_orientation}, 뷰포트 중앙 이동 준비")
 
-        # 방향이 다르거나 처음 로드되는 경우 패닝 위치 초기화
-        if reset_panning or not self.previous_image_orientation:
-            self.scroll_pos = QPoint(0, 0)
-        
-        # 이미지 표시 전에 캔버스 초기화 (중요)
-        # 이 코드를 추가하여 이미지 갱신 문제 해결
-        self.image_label.clear()
-        self.image_label.setPixmap(QPixmap())  # 빈 픽스맵 설정으로 이전 이미지 완전히 제거
+        # self.image_label.clear() # 이미지를 깨끗하게 다시 그리기 위해
+        # self.image_label.setPixmap(QPixmap())
 
         if self.zoom_mode == "Fit":
+            # ... (Fit 모드 로직은 기존과 동일) ...
             scaled_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
             self.image_label.setPixmap(scaled_pixmap)
             self.image_label.setGeometry(
@@ -4677,127 +5044,75 @@ class PhotoSortApp(QMainWindow):
                 scaled_pixmap.width(),
                 scaled_pixmap.height()
             )
-            self.image_container.setMinimumSize(1, 1) # Fit 모드에서는 컨테이너 크기 고정 안 함
+            self.image_container.setMinimumSize(1, 1)
         else:  # 100% or 200%
-            # 확대 비율 계산
             zoom_percent = 1.0 if self.zoom_mode == "100%" else 2.0
-            
-            # 이미지와 뷰 크기 계산
             img_width = self.original_pixmap.width()
             img_height = self.original_pixmap.height()
             view_width = self.scroll_area.width()
             view_height = self.scroll_area.height()
-            
-            # 확대된 크기 계산
             zoomed_width = int(img_width * zoom_percent)
             zoomed_height = int(img_height * zoom_percent)
-            
-            # 100% <-> 200% 전환 시 화면 위치 유지를 위한 비율 계산
-            maintain_position = False
-            rel_x, rel_y = 0.5, 0.5  # 기본값은 중앙
 
-            # 현재 이미지 위치 및 이전 줌 배율
-            current_pos = self.image_label.pos()
-            old_zoom = 1.0 if hasattr(self, 'last_zoom_mode') and self.last_zoom_mode == "100%" else 2.0
+            new_x, new_y = 0, 0
 
-            # 이미지 위치 계산 로직
-            if reset_panning or self.center_image or not hasattr(self, 'last_zoom_mode'):
-                # 가운데 정렬 (Fit에서 전환 시 또는 방향 변경 시)
+            # --- 플래그에 따른 위치 결정 우선순위 ---
+            # 1. 더블클릭 지점 중심 확대 (center_on_click이 True일 때 최우선)
+            if self.center_on_click:
+                logging.debug("apply_zoom_to_image: center_on_click=True, 더블클릭 지점 중심으로 확대")
+                scaled_pixmap_for_fit_calc = self.high_quality_resize_to_fit(self.original_pixmap) # Fit일 때 크기 기준
+                fit_width = scaled_pixmap_for_fit_calc.width()
+                fit_height = scaled_pixmap_for_fit_calc.height()
+                img_x_fit = (view_width - fit_width) // 2
+                img_y_fit = (view_height - fit_height) // 2
+                click_x_in_fit_image = self.double_click_pos.x() - img_x_fit
+                click_y_in_fit_image = self.double_click_pos.y() - img_y_fit
+                
+                rel_x = click_x_in_fit_image / fit_width if fit_width > 0 else 0.5
+                rel_y = click_y_in_fit_image / fit_height if fit_height > 0 else 0.5
+                rel_x = max(0, min(1, rel_x)); rel_y = max(0, min(1, rel_y))
+
+                target_x_in_zoomed = int(rel_x * zoomed_width)
+                target_y_in_zoomed = int(rel_y * zoomed_height)
+                new_x = (view_width // 2) - target_x_in_zoomed
+                new_y = (view_height // 2) - target_y_in_zoomed
+
+            # 2. 이미지 방향 변경으로 인한 중앙 정렬 또는 Fit에서 전환 시 중앙 정렬 (center_image)
+            elif self.center_image or reset_panning_due_to_orientation_change:
+                if self.center_image: logging.debug("apply_zoom_to_image: center_image=True, 중앙 정렬")
+                if reset_panning_due_to_orientation_change: logging.debug("apply_zoom_to_image: reset_panning_due_to_orientation_change=True, 중앙 정렬")
+                
                 new_x = (view_width - zoomed_width) // 2
                 new_y = (view_height - zoomed_height) // 2
-                
-                # 이미지가 뷰보다 클 경우 조정 (항상 일부가 표시되게)
-                if zoomed_width > view_width:
-                    new_x = (view_width - zoomed_width) // 2
-                if zoomed_height > view_height:
-                    new_y = (view_height - zoomed_height) // 2
-            elif self.center_on_click:
-                # 더블클릭한 지점을 중심으로 (Fit에서 더블클릭으로 100% 전환 시)
-                # Fit 모드에서의 이미지 크기 및 위치 계산
-                scaled_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-                fit_width = scaled_pixmap.width()
-                fit_height = scaled_pixmap.height()
-                
-                # 이미지 좌상단 위치 계산 (Fit 모드에서는 중앙 정렬)
-                img_x = (view_width - fit_width) // 2
-                img_y = (view_height - fit_height) // 2
-                
-                # 더블클릭 위치에서 이미지 내 상대 위치 계산
-                click_x = self.double_click_pos.x() - img_x
-                click_y = self.double_click_pos.y() - img_y
-                
-                if fit_width > 0 and fit_height > 0:
-                    rel_x = click_x / fit_width
-                    rel_y = click_y / fit_height
-                    
-                    # 클릭 위치가 이미지 외부일 경우 조정
-                    rel_x = max(0, min(1, rel_x))
-                    rel_y = max(0, min(1, rel_y))
-                
-                # 확대된 이미지에서 클릭 위치 계산
-                target_x = int(rel_x * zoomed_width)
-                target_y = int(rel_y * zoomed_height)
-                
-                # 클릭 위치가 화면 중앙에 오도록 이미지 위치 계산
-                new_x = (view_width // 2) - target_x
-                new_y = (view_height // 2) - target_y
-                
-                # 이미지 경계 보정
-                if zoomed_width <= view_width:
-                    new_x = (view_width - zoomed_width) // 2
-                else:
-                    new_x = min(0, max(view_width - zoomed_width, new_x))
-                    
-                if zoomed_height <= view_height:
-                    new_y = (view_height - zoomed_height) // 2
-                else:
-                    new_y = min(0, max(view_height - zoomed_height, new_y))
-            else:
-                # 100% <-> 200% 전환 시 위치 유지
-                if hasattr(self, 'last_zoom_mode') and self.last_zoom_mode in ["100%", "200%"]:
-                    maintain_position = True
-                    
-                    # 현재 보고 있는 이미지 영역의 중심 계산
-                    old_zoomed_width = int(img_width * old_zoom)
-                    old_zoomed_height = int(img_height * old_zoom)
-                    
-                    # 현재 뷰포트에 보이는 이미지의 중심 상대 위치 구하기
-                    view_center_x = view_width / 2 - current_pos.x()
-                    view_center_y = view_height / 2 - current_pos.y()
-                    
-                    # 이미지 내의 상대 위치 계산 (0~1 범위)
-                    rel_x = view_center_x / old_zoomed_width if old_zoomed_width > 0 else 0.5
-                    rel_y = view_center_y / old_zoomed_height if old_zoomed_height > 0 else 0.5
-                    
-                    # 새 확대 비율에서의 위치 계산
-                    target_x = int(rel_x * zoomed_width)
-                    target_y = int(rel_y * zoomed_height)
-                    
-                    # 해당 위치가 화면 중앙에 오도록 계산
-                    new_x = (view_width // 2) - target_x
-                    new_y = (view_height // 2) - target_y
-                    
-                    # 위치 제한 (이미지가 화면 밖으로 나가지 않도록)
-                    if zoomed_width > view_width:
-                        new_x = min(0, max(view_width - zoomed_width, new_x))
-                    else:
-                        new_x = (view_width - zoomed_width) // 2
-                        
-                    if zoomed_height > view_height:
-                        new_y = min(0, max(view_height - zoomed_height, new_y))
-                    else:
-                        new_y = (view_height - zoomed_height) // 2
-                else:
-                    # 기본 위치 (가운데)
-                    new_x = (view_width - zoomed_width) // 2
-                    new_y = (view_height - zoomed_height) // 2
-                    
-                    # 이미지가 뷰포트보다 크면 좌상단 표시
-                    if zoomed_width > view_width:
-                        new_x = 0
-                    if zoomed_height > view_height:
-                        new_y = 0
             
+            # 3. 이전 위치 유지 (100% <-> 200% 전환 또는 일반 패닝)
+            else:
+                logging.debug("apply_zoom_to_image: 이전 위치 유지 또는 일반 패닝")
+                # 이전에 저장된 self.image_label.pos() 또는 현재 self.image_label.pos()를 기준으로
+                # 확대/축소 비율에 따라 위치를 조정하는 로직이 필요.
+                # 여기서는 단순화를 위해, 만약 self.image_label.pos()가 유효하다면 그 값을 사용하고,
+                # 그렇지 않으면 중앙 정렬을 기본으로 할 수 있음.
+                # 스페이스바로 Fit -> 100% 갈때도 center_image=True 설정했으므로, 이 경우는 잘 처리될 것.
+                # 100% <-> 200% 전환 시 위치 유지는 on_zoom_changed에서 last_zoom_mode를 활용한 로직이
+                # new_x, new_y를 설정해줘야 함. apply_zoom_to_image는 그 결과를 받아서 그리는 역할.
+                # 지금은 image_mouse_move_event에서만 위치가 바뀌므로, 그 외에는 중앙 정렬이 기본이 될 수 있음.
+                # on_zoom_changed에서 이전에 계산된 위치를 전달하거나, 여기서 직접 계산.
+                # 일단 여기서는 self.image_label.pos()를 사용하되, 범위 보정은 아래에서.
+                current_img_pos = self.image_label.pos()
+                
+                # 확대/축소 비율에 따른 위치 조정 (이전 줌 레벨과 현재 줌 레벨 비교 필요)
+                # 이 부분은 on_zoom_changed에서 처리하고, 여기서는 최종 위치만 받는 것이 더 깔끔.
+                # 지금은 단순하게 현재 위치를 유지하려 시도.
+                new_x = current_img_pos.x() 
+                new_y = current_img_pos.y()
+
+
+            # 위치 제한 (이미지가 화면 밖으로 나가지 않도록) - 모든 경우에 공통 적용
+            if zoomed_width <= view_width: new_x = (view_width - zoomed_width) // 2
+            else: new_x = min(0, max(view_width - zoomed_width, new_x))
+            if zoomed_height <= view_height: new_y = (view_height - zoomed_height) // 2
+            else: new_y = min(0, max(view_height - zoomed_height, new_y))
+
             # 확대 모드에 따른 이미지 설정
             if self.zoom_mode == "100%":
                 self.image_label.setPixmap(self.original_pixmap)
@@ -4808,18 +5123,15 @@ class PhotoSortApp(QMainWindow):
                 )
                 self.image_label.setPixmap(scaled_pixmap)
             
-            # 이미지 위치 및 크기 설정
-            self.image_label.setGeometry(new_x, new_y, zoomed_width, zoomed_height)
+            self.image_label.setGeometry(int(new_x), int(new_y), zoomed_width, zoomed_height)
             self.image_container.setMinimumSize(zoomed_width, zoomed_height)
 
-        # 현재 줌 모드 저장 (다음 전환 시 위치 유지 위해)
         self.last_zoom_mode = self.zoom_mode
         
-        # 플래그 초기화
+        # --- 사용된 플래그들 초기화 ---
         self.center_image = False
-        self.center_on_click = False
+        self.center_on_click = False # <<< 여기서 반드시 초기화!
 
-        # 미니맵 업데이트 (Grid Off이고 미니맵 활성화 시)
         if self.minimap_toggle.isChecked():
             self.toggle_minimap(True)
 
@@ -5335,9 +5647,9 @@ class PhotoSortApp(QMainWindow):
         html_wrapper_end = "</div>"
 
         if is_compatible:
-            dialog.setMinimumWidth(550)
-            msg_template_key = ("{model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.<br>"
-                                "{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 {prev_res_placeholder}입니다.<br>"
+            dialog.setMinimumWidth(917)
+            msg_template_key = ("{model_name_placeholder}의 원본 이미지 해상도는 <b>{orig_res_placeholder}</b>입니다.<br>"
+                                "{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 <b>{prev_res_placeholder}</b>입니다.<br>"
                                 "미리보기를 통해 이미지를 보시겠습니까, RAW 파일을 디코딩해서 보시겠습니까?")
             translated_msg_template = LanguageManager.translate(msg_template_key)
             formatted_text = translated_msg_template.format(
@@ -5348,8 +5660,11 @@ class PhotoSortApp(QMainWindow):
             # HTML로 감싸기
             message_label.setText(f"{html_wrapper_start}{formatted_text}{html_wrapper_end}")
             
-            preview_radio.setText(LanguageManager.translate("미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우)")) # 새 번역 키
-            decode_radio.setText(LanguageManager.translate("RAW 디코딩 (원본 해상도가 필요한 경우)")) # 새 번역 키
+            preview_radio.setText(LanguageManager.translate("미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우.)"))
+
+            # "RAW 디코딩" 라디오 버튼 텍스트 설정 시 \n 포함된 키 사용
+            decode_radio_key = "RAW 디코딩 (느림. 일부 카메라 호환성 문제 있음.\n미리보기의 해상도가 너무 작거나 원본 해상도가 반드시 필요한 경우에만 사용 권장.)"
+            decode_radio.setText(LanguageManager.translate(decode_radio_key))
             
             radio_group.addButton(preview_radio, 0) # preview = 0
             radio_group.addButton(decode_radio, 1)  # decode = 1
@@ -5370,10 +5685,10 @@ class PhotoSortApp(QMainWindow):
             else:
                 return None, False # 대화상자 닫힘
         else: # 호환 안됨
-            dialog.setMinimumWidth(500)
-            msg_template_key_incompatible = ("호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다. "
-                                             "RAW 파일에 포함된 {prev_res_placeholder}의 미리보기 이미지를 사용하겠습니다.<br>"
-                                             "({model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.)")
+            dialog.setMinimumWidth(933)
+            msg_template_key_incompatible = ("호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다.<br>"
+                                             "RAW 파일에 포함된 <b>{prev_res_placeholder}</b>의 미리보기 이미지를 사용하겠습니다.<br>"
+                                             "({model_name_placeholder}의 원본 이미지 해상도는 <b>{orig_res_placeholder}</b>입니다.)")
             translated_msg_template_incompatible = LanguageManager.translate(msg_template_key_incompatible)
             formatted_text = translated_msg_template_incompatible.format(
                 model_name_placeholder=model_name,
@@ -5754,135 +6069,6 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"폴더 열기 실패: {e}")
     
-    # eventFilter()와 중복되는 함수. 혹시 몰라 주석 처리.
-    # def keyPressEvent(self, event: QKeyEvent):
-    #     """키보드 이벤트 처리 (Grid 모드 추가)"""
-    #     key = event.key()
-    #     modifiers = event.modifiers()
-        
-    #     # --- Enter 키 처리 추가 ---
-    #     if key == Qt.Key_Return or key == Qt.Key_Enter:
-    #         if self.image_files: # 로드된 이미지가 있을 때만 실행
-    #             # 현재 선택된 이미지의 인덱스 결정
-    #             current_selected_index = -1
-    #             if self.grid_mode == "Off":
-    #                 current_selected_index = self.current_image_index
-    #             else: # Grid 모드일 때
-    #                 potential_index = self.grid_page_start_index + self.current_grid_index
-    #                 if 0 <= potential_index < len(self.image_files):
-    #                     current_selected_index = potential_index
-
-    #             # 유효한 인덱스가 있을 때만 대화상자 표시
-    #             if current_selected_index != -1:
-    #                 dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
-    #                 dialog.exec_() # 모달 대화상자로 실행
-    #             else:
-    #                 logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.") # 디버깅용
-    #         else:
-    #             logging.debug("Enter 키: 로드된 이미지가 없습니다.") # 디버깅용
-    #         return # Enter 키 이벤트 처리 완료
-    #     # --- Enter 키 처리 끝 ---
-
-    #     # 새로운 단축키 처리 (F1, F2, F3, Delete)
-    #     if key == Qt.Key_F1:
-    #         # F1: Grid Off
-    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-    #         self.grid_off_radio.setChecked(True)
-    #         self.on_grid_changed(self.grid_off_radio)
-    #         return True
-    #     elif key == Qt.Key_F2:
-    #         # F2: Grid 2x2
-    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-    #         self.grid_2x2_radio.setChecked(True)
-    #         self.on_grid_changed(self.grid_2x2_radio)
-    #         return True
-    #     elif key == Qt.Key_F3:
-    #         # F3: Grid 3x3
-    #         self.force_refresh = True # 강제 새로고침 플래그 설정 추가
-    #         self.grid_3x3_radio.setChecked(True)
-    #         self.on_grid_changed(self.grid_3x3_radio)
-    #         return True
-        
-    #     # ESC 키 처리: 확대 모드에서는 Fit 모드로 우선 돌아가고, Grid Off 모드에서만 이전 그리드로 복원
-    #     if key == Qt.Key_Escape:
-    #         # 우선순위 1: 100% 또는 200% 확대 모드에서는 항상 Fit 모드로 돌아가기
-    #         if self.zoom_mode != "Fit":
-    #             self.fit_radio.setChecked(True)
-    #             self.on_zoom_changed(self.fit_radio)
-    #             return
-    #         # 우선순위 2: Grid Off 모드에서만 이전 그리드 모드로 복원 (이미 Fit 모드일 때)
-    #         elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
-    #             if self.previous_grid_mode == "2x2":
-    #                 self.grid_2x2_radio.setChecked(True)
-    #                 # 강제 새로고침 플래그 설정 추가
-    #                 self.force_refresh = True
-    #                 self.on_grid_changed(self.grid_2x2_radio)
-    #             elif self.previous_grid_mode == "3x3":
-    #                 self.grid_3x3_radio.setChecked(True)
-    #                 # 강제 새로고침 플래그 설정 추가
-    #                 self.force_refresh = True
-    #                 self.on_grid_changed(self.grid_3x3_radio)
-    #             return
-        
-    #     # 스페이스바 처리: 그리드 모드에서 Grid Off로 전환
-    #     if key == Qt.Key_Space and self.grid_mode != "Off":
-    #         # 이전 그리드 모드 저장
-    #         self.previous_grid_mode = self.grid_mode
-    #         # Grid Off로 전환 (직접 모드 설정 방식으로 변경)
-    #         self.grid_mode = "Off"
-    #         self.grid_off_radio.setChecked(True)
-            
-    #         # 스페이스바로 전환 시 이전 모드 유지를 위한 플래그 설정
-    #         self.space_pressed = True
-            
-    #         # 그리드 뷰 업데이트
-    #         self.update_grid_view()
-            
-    #         # 줌 라디오 버튼 상태 업데이트
-    #         self.update_zoom_radio_buttons_state()
-    #         return
-        
-    #     if self.grid_mode != "Off":
-    #         # --- Grid 모드 키 처리 ---
-    #         # Shift+A/D 또는 Shift+Left/Right 처리
-    #         if modifiers & Qt.ShiftModifier:
-    #             if key == Qt.Key_A or key == Qt.Key_Left: # Shift+A 또는 Shift+Left
-    #                 self.navigate_to_adjacent_page(-1)  # 이전 페이지
-    #                 return
-    #             elif key == Qt.Key_D or key == Qt.Key_Right: # Shift+D 또는 Shift+Right
-    #                 self.navigate_to_adjacent_page(1)   # 다음 페이지
-    #                 return
-
-    #         # --- 기존 WASD/Arrow 키 네비게이션 로직 수정 ---
-    #         rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-
-    #         if key == Qt.Key_A or key == Qt.Key_Left:
-    #             self.navigate_grid(-1) # 좌측/이전
-    #         elif key == Qt.Key_D or key == Qt.Key_Right:
-    #             self.navigate_grid(1)  # 우측/다음
-    #         elif key == Qt.Key_W or key == Qt.Key_Up:
-    #             self.navigate_grid(-cols) # 위
-    #         elif key == Qt.Key_S or key == Qt.Key_Down:
-    #             self.navigate_grid(cols)  # 아래
-    #         # --- 수정 끝 ---
-
-    #         # 폴더 이동 (1, 2, 3 키)
-    #         elif Qt.Key_1 <= key <= Qt.Key_3:
-    #             folder_index = key - Qt.Key_1
-    #             self.move_grid_image(folder_index)
-    #         else:
-    #              pass # Grid 모드에서 처리 안 된 키는 무시
-    #     else:
-    #         # --- Grid Off 모드 키 처리 (기존 로직 유지) ---
-    #         if key == Qt.Key_A or key == Qt.Key_Left: # 여기는 원래 or 조건으로 잘 되어 있음
-    #             self.show_previous_image()
-    #         elif key == Qt.Key_D or key == Qt.Key_Right: # 여기도 원래 or 조건으로 잘 되어 있음
-    #             self.show_next_image()
-    #         elif Qt.Key_1 <= key <= Qt.Key_3:
-    #             folder_index = key - Qt.Key_1
-    #             self.move_current_image_to_folder(folder_index)
-    #         else:
-    #             super().keyPressEvent(event)
     
     def navigate_to_adjacent_page(self, direction):
         """그리드 모드에서 페이지 단위 이동 처리 (순환 기능 추가)"""
@@ -7993,40 +8179,52 @@ class PhotoSortApp(QMainWindow):
             return False
 
     def _on_image_loaded_for_display(self, pixmap, image_path, requested_index):
-        """이미지 로드 완료 후 UI 스레드에서 실행"""
-        # 요청 시점의 인덱스와 현재 인덱스 비교 (이미지 변경 여부 확인)
         if self.current_image_index != requested_index:
-            print(f"이미지가 변경되어 로드 결과 무시: 요청={requested_index}, 현재={self.current_image_index}")
             return
-        
-        # 로딩 인디케이터 타이머 중지
-        if hasattr(self, 'loading_indicator_timer'):
-            self.loading_indicator_timer.stop()
+        if hasattr(self, 'loading_indicator_timer'): self.loading_indicator_timer.stop()
             
         if pixmap.isNull():
             self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}")
             self.original_pixmap = None
+            self.update_counters()
             return
             
-        # 로딩 성공 처리
-        # 이전 이미지 방향을 저장
-        self.previous_image_orientation = self.current_image_orientation
+        # --- 이미지 방향 변경에 따른 중앙 정렬 처리 ---
+        new_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
         
-        # 새 이미지의 방향 설정
-        if pixmap.width() >= pixmap.height():
-            self.current_image_orientation = "landscape"
-        else:
-            self.current_image_orientation = "portrait"
-            
+        # self.center_on_click은 image_mouse_double_click_event에서 설정되고,
+        # apply_zoom_to_image에서 사용 후 False로 초기화됨.
+        # 따라서, 사진을 "넘겨서" 이 함수가 호출될 때는 self.center_on_click은 False일 것임.
+        # 그러므로 이 시점에서는 center_on_click을 고려할 필요가 거의 없음.
+        # 하지만 만약 더블클릭 액션이 비동기 로드를 유발하고 이 함수가 호출된다면 고려해야 함.
+        # 현재 더블클릭은 on_zoom_changed -> apply_zoom_to_image를 직접 타므로 괜찮을 듯.
+
+        # 사진을 "넘겨서" 로드된 경우에만 방향 비교 및 center_image 설정
+        # (force_refresh는 모드 변경 등 다른 이유로도 True가 될 수 있으므로,
+        #  사진이 실제로 "변경"되었는지 여부를 판단하는 것이 더 정확할 수 있음.
+        #  예: self.previous_image_path != image_path 와 같은 방식)
+        # 여기서는 self.previous_image_orientation을 활용
+        
+        set_center_due_to_orientation = False
+        if self.previous_image_orientation is not None and self.previous_image_orientation != new_orientation:
+            # Fit이 아닌 100% 또는 200% 줌 상태에서 사진을 넘겼고 방향이 바뀌었다면 중앙 정렬
+            if self.zoom_mode in ["100%", "200%"]:
+                set_center_due_to_orientation = True
+                logging.debug(f"_on_image_loaded_for_display: 방향 변경으로 중앙 정렬 플래그 설정 ({self.previous_image_orientation} -> {new_orientation})")
+        
+        self.previous_image_orientation = self.current_image_orientation # 이전 방향 저장
+        self.current_image_orientation = new_orientation                 # 새 방향 설정
         self.original_pixmap = pixmap
+
+        if set_center_due_to_orientation:
+            self.center_image = True # apply_zoom_to_image에서 사용됨
+            # self.center_on_click은 False여야 함 (사진 넘기기 상황이므로)
+            self.center_on_click = False
+        # else: self.center_image는 변경하지 않음 (이전 상태 유지 또는 False)
         
-        # Zoom 모드 적용
-        self.apply_zoom_to_image()
+        self.apply_zoom_to_image() # 줌 모드 및 중앙 정렬 플래그에 따라 이미지 표시
         
-        # 미니맵 업데이트
-        if self.minimap_toggle.isChecked():
-            self.toggle_minimap(True)
-            
+        if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
         self.update_counters()
 
 
@@ -8244,6 +8442,7 @@ class PhotoSortApp(QMainWindow):
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
             "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
+            "saved_sessions": self.saved_sessions,
         }
 
         save_path = self.get_script_dir() / self.STATE_FILE
@@ -8263,30 +8462,48 @@ class PhotoSortApp(QMainWindow):
 
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
-            self.camera_raw_settings = {} # 첫 실행 시 빈 딕셔너리로 초기화
-            # 첫 실행 시 UI 기본 상태 설정
-            self.update_jpg_folder_ui_state() # 폴더 레이블 "폴더 경로"로, 버튼 상태 등
-            self.update_raw_folder_ui_state()
-            self.update_folder_buttons()      # 분류 폴더 레이블 "폴더 경로"로
-
-            self.show_grid_filenames = False # 첫 실행 시 파일명 표시 기본값 Off
-            if hasattr(self, 'filename_toggle_grid'):
-                self.filename_toggle_grid.setChecked(self.show_grid_filenames)
-
-            # ImageLoader가 생성된 후 기본 전략 설정
+            # --- 첫 실행 시 기본값 설정 ---
+            self.camera_raw_settings = {} 
+            LanguageManager.set_language("ko") 
+            ThemeManager.set_theme("default")  
+            DateFormatManager.set_date_format("yyyy-mm-dd")
+            # RAW 전략은 ImageLoader 생성 후 설정
             if hasattr(self, 'image_loader'):
-                self.image_loader.set_raw_load_strategy("preview") # 첫 실행 시 기본값
+                self.image_loader.set_raw_load_strategy("preview")
             
-            # 다른 기본 설정값들 (언어, 테마 등은 팝업에서 선택 후 저장되거나, 기본값 유지)
-            LanguageManager.set_language("ko") # 예시: 기본 한국어
-            ThemeManager.set_theme("default")  # 예시: 기본 테마
-            DateFormatManager.set_date_format("yyyy-mm-dd") # 예시: 기본 날짜 형식
+            # 기타 상태 변수 기본값
+            self.current_folder = ""
+            self.raw_folder = ""
+            self.image_files = []
+            self.raw_files = {}
+            self.is_raw_only_mode = False
+            self.move_raw_files = True
+            self.target_folders = ["", "", ""]
+            self.zoom_mode = "Fit"
+            self.grid_mode = "Off"
+            self.current_image_index = -1
+            self.current_grid_index = 0
+            self.grid_page_start_index = 0
+            self.previous_grid_mode = None
+            self.original_pixmap = None
+            self.last_processed_camera_model = None
+            self.viewport_move_speed = 5
+            self.show_grid_filenames = False
+            self.control_panel_on_right = False # 기본값 왼쪽
+            # --- 첫 실행 시 기본값 설정 끝 ---
 
-            self.show_first_run_settings_popup() # 설정 팝업 표시 (여기서 사용자가 설정 후 저장)
+            self.update_all_ui_after_load_failure_or_first_run() # UI를 기본 상태로
+
+            accepted_first_run = self.show_first_run_settings_popup() # <<< 반환 값 받기
+
+            if not accepted_first_run: # 사용자가 확인 안 누르고 닫았다면
+                logging.info("PhotoSortApp.load_state: 첫 실행 설정이 완료되지 않아 앱을 시작하지 않습니다.")
+                return False # <<< 앱 시작 안 함을 알림
             
-            QTimer.singleShot(0, self._apply_panel_position) # 패널 위치 적용
+            # accepted_first_run이 True이면 (즉, 확인 누르고 save_state 실행됨) 계속 진행
+            QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-            return
+            return True # <<< 앱 정상 시작을 알림
 
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
@@ -8312,6 +8529,9 @@ class PhotoSortApp(QMainWindow):
             
             self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도 추가, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
+
+            self.saved_sessions = loaded_data.get("saved_sessions", {}) # <<< 추가, 없으면 빈 딕셔너리
+            logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
 
             # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
             if hasattr(self, 'language_group'):
@@ -8503,28 +8723,85 @@ class PhotoSortApp(QMainWindow):
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
             logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
+            return True # 정상적으로 상태 로드 완료
 
         except json.JSONDecodeError as e:
             logging.error(f"PhotoSortApp.load_state: 상태 파일 JSON 디코딩 오류: {e}. 기본 설정으로 시작합니다.")
-            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("상태 로드 오류"), LanguageManager.translate("저장된 상태 파일을 읽는 중 오류가 발생했습니다. 기본 설정으로 시작합니다."))
-            # 첫 실행과 유사한 초기화 로직 호출 또는 플래그 설정
-            self.is_first_run = True # 임시 플래그로 첫 실행 로직 유도
-            QTimer.singleShot(0, self.load_state) # 재시도 (첫 실행 로직으로)
-        except Exception as e: # 모든 예외를 잡도록 변경
+            self.show_themed_message_box(QMessageBox.Warning, 
+                                         LanguageManager.translate("상태 로드 오류"), 
+                                         LanguageManager.translate("저장된 상태 파일을 읽는 중 오류가 발생했습니다. 기본 설정으로 시작합니다."))
+            # 여기서 안전한 초기화 로직 호출
+            self.initialize_to_default_state() # <<< 새 헬퍼 함수 호출
+            self.update_all_ui_after_load_failure_or_first_run()
+            QTimer.singleShot(0, self._apply_panel_position) # 패널 위치도 기본값으로
+            self.setFocus()
+            return True # 오류가 있었지만 기본값으로 계속 실행함을 알림
+        except Exception as e: # JSONDecodeError 외의 다른 모든 예외
             logging.error(f"PhotoSortApp.load_state: 상태 불러오는 중 예외 발생: {e}")
             import traceback
             traceback.print_exc()
-            # 오류 발생 시 안전하게 기본값으로 초기화하거나, 사용자에게 알림.
-            # 여기서는 첫 실행과 유사한 기본 상태로 앱을 시작하도록 유도할 수 있습니다.
-            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("상태 로드 오류"), f"{LanguageManager.translate('저장된 상태 파일을 불러오는 데 실패했습니다. 기본 설정으로 시작합니다.')}\n\nError: {e}")
-            # 안전한 초기화 로직 (예: 첫 실행 시와 유사하게)
-            self.current_folder = ""
-            self.raw_folder = ""
-            self.image_files = []
-            # ... 기타 변수 초기화 ... 추가 필요.
-            if hasattr(self, 'image_loader'): self.image_loader.set_raw_load_strategy("preview")
-            self.update_all_ui_after_load_failure_or_first_run() # UI 초기화 함수 호출
+            self.show_themed_message_box(QMessageBox.Critical, 
+                                         LanguageManager.translate("상태 로드 오류"), 
+                                         f"{LanguageManager.translate('저장된 상태 파일을 불러오는 데 실패했습니다. 기본 설정으로 시작합니다.')}\n\nError: {e}")
+            # 여기서도 안전한 초기화 로직 호출
+            self.initialize_to_default_state() # <<< 새 헬퍼 함수 호출
+            self.update_all_ui_after_load_failure_or_first_run()
+            QTimer.singleShot(0, self._apply_panel_position)
+            self.setFocus()
+            return True # 오류가 있었지만 기본값으로 계속 실행함을 알림
 
+    def initialize_to_default_state(self):
+        """애플리케이션 상태를 안전한 기본값으로 초기화합니다 (파일 로드 실패 시 등)."""
+        logging.info("PhotoSortApp.initialize_to_default_state: 앱 상태를 기본값으로 초기화합니다.")
+
+        # 언어, 테마 등은 이전 세션 값이나 설치 시 기본값 유지 또는 여기서 명시적 기본값 설정
+        # LanguageManager.set_language("ko") # 이미 load_state 시작 시 또는 첫 실행 시 설정됨
+        # ThemeManager.set_theme("default")
+        # DateFormatManager.set_date_format("yyyy-mm-dd")
+        # self.loaded_raw_strategy는 사용 안 함
+
+        # 폴더 및 파일 관련 상태
+        self.current_folder = ""
+        self.raw_folder = ""
+        self.image_files = []
+        self.raw_files = {}
+        self.is_raw_only_mode = False
+        self.move_raw_files = True # RAW 이동 기본값
+        self.target_folders = ["", "", ""]
+        
+        # 뷰 관련 상태
+        self.zoom_mode = "Fit"
+        self.grid_mode = "Off"
+        self.current_image_index = -1
+        self.current_grid_index = 0
+        self.grid_page_start_index = 0
+        self.previous_grid_mode = None
+        self.original_pixmap = None
+        self.fit_pixmap_cache.clear() # Fit 모드 캐시 비우기
+        self.last_fit_size = (0,0)
+
+        # ImageLoader 상태 (존재한다면)
+        if hasattr(self, 'image_loader'):
+            self.image_loader.clear_cache() # ImageLoader 캐시 비우기
+            self.image_loader.set_raw_load_strategy("preview") # ImageLoader 전략 기본값으로
+
+        # 카메라별 RAW 설정은 유지 (요구사항에 따라)
+        # self.camera_raw_settings = {} # 만약 이것도 초기화하려면 주석 해제
+
+        # 기타 UI 관련 상태
+        self.last_processed_camera_model = None
+        self.viewport_move_speed = 5 # 뷰포트 이동 속도 기본값
+        self.show_grid_filenames = False # 파일명 표시 기본값 Off
+        self.control_panel_on_right = False # 컨트롤 패널 위치 기본값 왼쪽
+
+        # Undo/Redo 히스토리 초기화
+        self.move_history = []
+        self.history_pointer = -1
+
+        # 로딩 관련 타이머 등 중지 (필요시)
+        if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
+            self.loading_indicator_timer.stop()
+        # ... (다른 타이머나 백그라운드 작업 관련 상태 초기화)
 
     def update_all_ui_after_load_failure_or_first_run(self):
         """load_state 실패 또는 첫 실행 시 UI를 기본 상태로 설정하는 헬퍼"""
@@ -9430,6 +9707,7 @@ class PhotoSortApp(QMainWindow):
 
             # 팝업 내부 위젯 텍스트 업데이트 (재귀 함수 호출)
             self.update_settings_labels_texts(self.settings_popup)
+            
 
             # '확인' 버튼 텍스트 업데이트 (첫 실행 팝업에만 존재)
             if hasattr(self.settings_popup, 'confirm_button'):
@@ -9456,18 +9734,27 @@ class PhotoSortApp(QMainWindow):
 
             # 카메라 RAW 설정 초기화 라벨 업데이트
             raw_reset_label_widget = self.settings_popup.findChild(QLabel, "raw_reset_label")
-            if raw_reset_label_widget:
+            if raw_reset_label_widget: # 위젯이 존재할 때만 텍스트 설정
                 raw_reset_label_widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
             
             # 카메라 RAW 설정 초기화 버튼 텍스트 업데이트
-            # 버튼은 self.reset_camera_settings_button으로 직접 접근 가능
-            if hasattr(self, 'reset_camera_settings_button') and self.reset_camera_settings_button.parentWidget() is not None and self.reset_camera_settings_button.parentWidget().isVisible():
-                 self.reset_camera_settings_button.setText(LanguageManager.translate("설정 초기화"))
-
+            # 버튼은 self.reset_camera_settings_button으로 직접 접근 가능하지만,
+            # 이 버튼도 일반 설정 팝업에만 있으므로 존재 여부 확인
+            if hasattr(self, 'reset_camera_settings_button') and \
+               self.reset_camera_settings_button and \
+               self.reset_camera_settings_button.isVisible() and \
+               self.reset_camera_settings_button.window() is self.settings_popup: # 현재 팝업 내의 버튼인지 확인
+                 self.reset_camera_settings_button.setText(LanguageManager.translate("초기화"))
             # 뷰포트 이동 속도 라벨 업데이트
             viewport_speed_label_widget = self.settings_popup.findChild(QLabel, "viewport_speed_label")
-            if viewport_speed_label_widget:
-                viewport_speed_label_widget.setText(LanguageManager.translate("뷰포트 이동 속도 (키보드):"))
+            if viewport_speed_label_widget: # 위젯이 존재할 때만 텍스트 설정
+                viewport_speed_label_widget.setText(LanguageManager.translate("뷰포트 이동 속도"))
+
+            # 세션 관리 링크 라벨 업데이트 (일반 설정 팝업에만 존재)
+            if not self.settings_popup.property("is_first_run_popup"):
+                session_link_label_widget = self.settings_popup.findChild(QLabel, "session_management_link_label")
+                if session_link_label_widget:
+                    session_link_label_widget.setText(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
 
         
             print("설정 팝업 텍스트 업데이트 완료.")
@@ -9486,7 +9773,7 @@ class PhotoSortApp(QMainWindow):
             if widget_object_name == "first_run_welcome_label":
                 widget.setText(LanguageManager.translate("기본 설정을 선택해주세요."))
             elif widget_object_name == "shortcuts_title_label":
-                widget.setText(LanguageManager.translate("단축키 안내"))
+                widget.setText(LanguageManager.translate("단축키"))
             elif widget_object_name == "shortcuts_content_label":
                 self._update_shortcut_label_text(widget) # 헬퍼 함수 사용
             elif widget_object_name == "panel_pos_title_label":
@@ -9497,13 +9784,8 @@ class PhotoSortApp(QMainWindow):
                  widget.setText(LanguageManager.translate("날짜 형식"))
             elif widget_object_name == "theme_title_label": # setup_settings_ui에서 설정 필요
                  widget.setText(LanguageManager.translate("테마"))
-            elif widget_object_name == "shortcut_info_label":
-                widget.setText(LanguageManager.translate("∗ 단축키 확인 ⓘ")) # 라벨 텍스트 업데이트
-                tooltip_text = self._build_shortcut_tooltip_text() # 툴팁 텍스트 재생성
-                widget.setToolTip(tooltip_text) # 툴팁 업데이트
-            elif widget_object_name == "shortcut_icon_label":
-                tooltip_text = self._build_shortcut_tooltip_text() # 툴팁 내용 재생성
-                widget.setToolTip(tooltip_text) # 툴팁 업데이트
+            elif widget_object_name == "settings_shortcut_info_label":
+                widget.setText(LanguageManager.translate("단축키 확인 🖜")) # 라벨 텍스트 업데이트
             # ===============================================================
 
             # 2. ObjectName으로 찾지 못한 경우, 기존 방식대로 텍스트 내용으로 확인 (차선책)
@@ -9860,7 +10142,7 @@ class GridCellWidget(QWidget):
     def text(self):
         return self._filename
 
-    # 파일명 상단 중앙
+    # 그리드 파일명 상단 중앙
     # def paintEvent(self, event):
     #     painter = QPainter(self)
     #     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -9928,7 +10210,7 @@ class GridCellWidget(QWidget):
     # 대신, GridCellWidget에 인덱스나 경로 정보를 저장하고,
     # PhotoSortApp에서 클릭된 GridCellWidget을 식별하는 방식이 필요합니다.
 
-    # 파일명 상단 좌측
+    # 그리드 파일명 상단 좌측
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -9990,6 +10272,172 @@ class GridCellWidget(QWidget):
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
         painter.end()
+
+
+class SessionManagementDialog(QDialog):
+    def __init__(self, parent_widget: QWidget, main_app_logic: PhotoSortApp): # 부모 위젯과 로직 객체를 분리
+        super().__init__(parent_widget) # QDialog의 부모 설정
+        self.parent_app = main_app_logic # PhotoSortApp의 메서드 호출을 위해 저장
+
+        self.setWindowTitle(LanguageManager.translate("세션 관리"))
+        self.setMinimumSize(500, 400) # 팝업창 최소 크기
+
+        # 다크 테마 적용 (PhotoSortApp의 show_themed_message_box 또는 settings_popup 참조)
+        if sys.platform == "win32":
+            try:
+                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
+                hwnd = int(self.winId()); value = ctypes.c_int(1)
+                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+            except Exception: pass
+        palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+        self.setPalette(palette); self.setAutoFillBackground(True)
+
+        # --- 메인 레이아웃 ---
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+
+        # --- 1. 현재 세션 저장 버튼 ---
+        self.save_current_button = QPushButton(LanguageManager.translate("현재 세션 저장"))
+        self.save_current_button.setStyleSheet(self.parent_app.load_button.styleSheet()) # PhotoSortApp의 버튼 스타일 재활용
+        self.save_current_button.clicked.connect(self.prompt_and_save_session)
+        main_layout.addWidget(self.save_current_button)
+
+        # --- 2. 저장된 세션 목록 ---
+        list_label = QLabel(LanguageManager.translate("저장된 세션 목록 (최대 20개):"))
+        list_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; margin-top: 10px;")
+        main_layout.addWidget(list_label)
+
+        self.session_list_widget = QListWidget()
+        self.session_list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: 3px; padding: 5px;
+            }}
+            QListWidget::item {{ padding: 3px 2px; }}
+            QListWidget::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                color: white; /* 선택 시 텍스트 색상 */
+            }}
+        """)
+        self.session_list_widget.currentItemChanged.connect(self.update_button_states) # 시그널 연결 확인
+        main_layout.addWidget(self.session_list_widget, 1) # 목록이 남은 공간 차지
+
+        # --- 3. 불러오기 및 삭제 버튼 ---
+        buttons_layout = QHBoxLayout()
+        self.load_button = QPushButton(LanguageManager.translate("선택 세션 불러오기"))
+        self.load_button.setStyleSheet(self.parent_app.load_button.styleSheet())
+        self.load_button.clicked.connect(self.load_selected_session)
+        self.load_button.setEnabled(False) # 초기에는 비활성화
+
+        self.delete_button = QPushButton(LanguageManager.translate("선택 세션 삭제"))
+        # 삭제 버튼은 좀 더 위험하므로 다른 스타일 적용 가능 (예: 빨간색 계열 호버)
+        # 여기서는 일단 동일 스타일 사용
+        delete_button_style = f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
+                border: none; padding: {UIScaleManager.get("button_padding")}px; border-radius: 3px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
+            }}
+            QPushButton:hover {{ background-color: #D32F2F; color: white; }} /* 빨간색 계열 호버 */
+            QPushButton:pressed {{ background-color: #B71C1C; }}
+            QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; opacity: 0.7;}}
+        """
+        self.delete_button.setStyleSheet(delete_button_style)
+        self.delete_button.clicked.connect(self.delete_selected_session)
+        self.delete_button.setEnabled(False) # 초기에는 비활성화
+
+        buttons_layout.addStretch(1)
+        buttons_layout.addWidget(self.load_button)
+        buttons_layout.addWidget(self.delete_button)
+        buttons_layout.addStretch(1)
+        main_layout.addLayout(buttons_layout)
+        
+        self.populate_session_list() # 처음 열릴 때 목록 채우기
+
+    def populate_session_list(self):
+        """PhotoSortApp의 saved_sessions를 가져와 목록 위젯을 채웁니다."""
+        self.session_list_widget.clear()
+        # 저장된 세션을 타임스탬프(또는 이름) 역순으로 정렬하여 최신 항목이 위로 오도록
+        # 세션 이름에 날짜시간이 포함되므로, 이름 자체로 역순 정렬하면 어느 정도 최신순이 됨
+        sorted_session_names = sorted(self.parent_app.saved_sessions.keys(), reverse=True)
+        
+        for session_name in sorted_session_names:
+            # 세션 정보에서 타임스탬프를 가져와 함께 표시 (선택 사항)
+            session_data = self.parent_app.saved_sessions.get(session_name, {})
+            timestamp = session_data.get("timestamp", "")
+            display_text = session_name
+            if timestamp:
+                try: # 저장된 타임스탬프 형식에 맞춰 파싱 및 재포맷
+                    dt_obj = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                    formatted_ts = dt_obj.strftime("%y/%m/%d %H:%M") # 예: 23/05/24 10:30
+                    display_text = f"{session_name} ({formatted_ts})"
+                except ValueError:
+                    pass # 파싱 실패 시 이름만 표시
+            
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, session_name) # 실제 세션 이름(키)을 데이터로 저장
+            self.session_list_widget.addItem(item)
+        self.update_button_states()
+
+    def update_button_states(self, current_item=None, previous_item=None): # currentItemChanged 시그널은 이 인자들을 전달
+        logging.debug("update_button_states CALLED") # <<< 로그 추가: 함수 호출 확인
+        
+        # 시그널에서 전달된 current_item을 사용하거나, 리스트 위젯에서 직접 가져올 수 있습니다.
+        # 여기서는 리스트 위젯에서 직접 가져오는 방식을 유지하겠습니다.
+        selected_item = self.session_list_widget.currentItem()
+        
+        is_item_selected = selected_item is not None
+
+        self.load_button.setEnabled(is_item_selected)
+        self.delete_button.setEnabled(is_item_selected)
+        
+        if selected_item:
+            logging.debug(f"update_button_states: Item selected - Text: '{selected_item.text()}'. Buttons enabled: {is_item_selected}")
+        else:
+            logging.debug(f"update_button_states: No item selected. Buttons enabled: {is_item_selected}")
+
+
+    def prompt_and_save_session(self):
+        """세션 저장 이름 입력을 받고 PhotoSortApp의 저장을 호출합니다."""
+        default_name = self.parent_app._generate_default_session_name()
+        
+        text, ok = QInputDialog.getText(self, 
+                                         LanguageManager.translate("세션 이름"), # 대화상자 제목
+                                         LanguageManager.translate("저장할 세션 이름을 입력하세요:"), # 라벨 텍스트
+                                         QLineEdit.Normal, 
+                                         default_name) # 기본 제안 이름
+        if ok and text:
+            self.parent_app.save_current_session(text)
+            # self.populate_session_list() # save_current_session 내부에서 호출될 것임
+        elif ok and not text: # 이름 입력 안하고 확인 누른 경우
+            self.parent_app.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("저장 오류"), LanguageManager.translate("세션 이름을 입력해야 합니다."))
+
+
+    def load_selected_session(self):
+        selected_items = self.session_list_widget.selectedItems()
+        if selected_items:
+            session_name_to_load = selected_items[0].data(Qt.UserRole) # 저장된 실제 이름 가져오기
+            self.parent_app.load_session(session_name_to_load)
+            # self.accept() # load_session 내부에서 이 팝업을 닫을 수 있음
+
+    def delete_selected_session(self):
+        selected_items = self.session_list_widget.selectedItems()
+        if selected_items:
+            session_name_to_delete = selected_items[0].data(Qt.UserRole)
+            reply = self.parent_app.show_themed_message_box(
+                QMessageBox.Question,
+                LanguageManager.translate("삭제 확인"),
+                LanguageManager.translate("'{session_name}' 세션을 정말 삭제하시겠습니까?").format(session_name=session_name_to_delete),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.parent_app.delete_session(session_name_to_delete)
+                # self.populate_session_list() # delete_session 내부에서 호출될 것임
+
 
 
 def main():
@@ -10065,16 +10513,33 @@ def main():
         "컨트롤 패널": "Control Panel",
         "좌측": "Left",
         "우측": "Right",
-        "단축키 안내": "Keyboard Shortcuts",
-        "∗ 단축키 확인 ⓘ": "∗ View Shortcuts ⓘ",
         "닫기": "Close",
-        "▪ WASD 또는 방향키: 사진 넘기기": "▪ WASD or Arrow Keys: Next/Previous Photo",
-        "▪ Shift+WASD 또는 Shift+방향키: 그리드 페이지 넘기기": "▪ Shift + WASD/Arrows: Next/Previous Grid Page",
-        "▪ 1, 2, 3: 지정한 폴더로 이동": "▪ 1, 2, 3: Move to Assigned Folder",
-        "▪ F1, F2, F3: 그리드 옵션 변경": "▪ F1, F2, F3: Change Grid Mode",
-        "▪ Ctrl + Z: 파일 이동 취소": "▪ Ctrl + Z: Undo File Move",
-        "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행": "▪ Ctrl + Y or Ctrl + Shift + Z: Redo File Move",
-        "▪ Delete: 프로그램 초기화": "▪ Delete: Reset App",
+        "▪ 1, 2, 3: 지정한 폴더로 사진 이동": "▪ 1, 2, 3: Move Photo to Assigned Folder",
+        # --- 단축키 안내 (새로운 상세 버전) ---
+        "단축키": "Keyboard Shortcuts", # 팝업창 제목
+        "▪ WASD: 사진 넘기기": "▪ WASD: Navigate Photos", # Grid Off 시, Grid On 시 셀 이동은 별도 항목이나 통합 설명
+        "▪ 방향키:": "▪ Arrow Keys:",
+        "  - 사진 넘기기": "  - Navigate Photos (Fit mode)",
+        "  - Zoom 100%/200%: 뷰포트 이동": "  - Pan Viewport (Zoom 100%/200%)",
+        # 또는 방향키 통합 설명
+        "▪ Shift + WASD:": "▪ Shift + WASD:",
+        "  - Grid On: 그리드 페이지 넘기기 (좌/우)": "  - Navigate Grid Page (Left/Right when Grid On)",
+        "  - Zoom 100%/200%: 뷰포트 이동": "  - Pan Viewport (Zoom 100%/200%)",
+        # 또는 Shift + WASD 통합 설명
+        "▪ 1, 2, 3: 지정한 폴더로 이동": "▪ 1, 2, 3: Move to Assigned Folder", # 기존 유지
+        "▪ Space:": "▪ Spacebar:",
+        "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)": "  - Grid Off: Toggle Zoom Mode (Fit ↔ 100%)",
+        "  - Grid On: 선택한 이미지 확대 보기": "  - Grid On: Zoom into Selected Image (to Grid Off)",
+        "▪ F1, F2, F3: 그리드 옵션 변경": "▪ F1, F2, F3: Change Grid Mode", # 기존 유지
+        "▪ ESC:": "▪ ESC:",
+        "  - Zoom 100% / 200%: 이미지 축소(Fit)": "  - Zoom 100% / 200%: Zoom out to Fit",
+        "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀": "  - When zoomed from Grid: Return to previous Grid view",
+        "  - 파일 목록: 닫기": "  - File List Dialog: Close",
+        "▪ Ctrl + Z: 파일 이동 취소": "▪ Ctrl + Z: Undo File Move", # 기존 유지
+        "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행": "▪ Ctrl + Y or Ctrl + Shift + Z: Redo File Move", # 기존 유지
+        "▪ Delete: 작업 상태 초기화": "▪ Delete: Reset Working State", # "프로그램 초기화"에서 변경
+        "▪ Enter: 파일 목록 표시": "▪ Enter: Show File List",
+        "단축키 확인 🖜": "View Shortcuts 🖜",
         "조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is completely free software with no restrictions — use it as you like.",
         "제작자 정보를 바꿔서 배포하지만 말아주세요.": "Just please don't redistribute it under someone else's name.",
         "이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.": "If you truly enjoy this app, consider supporting it with a cup of coffee!",
@@ -10086,29 +10551,48 @@ def main():
         "이미지 로드 중...": "Loading image...",
         "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)": "▪ Space: Enlarge photo in grid mode / Toggle zoom mode (Fit ↔ 100%)",
         "파일명": "Filename",
-        "설정 초기화": "Reset Settings",
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
         "알 수 없는 카메라": "Unknown Camera",
         "정보 없음": "N/A",
         "RAW 파일 처리 방식 선택": "Select RAW Processing Method",
         "{camera_model_placeholder}의 RAW 처리 방식에 대해 다시 묻지 않습니다.": "Don't ask again for {camera_model_placeholder} RAW processing method.",
-        "{model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.<br>{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 {prev_res_placeholder}입니다.<br>미리보기를 통해 이미지를 보시겠습니까, RAW 파일을 디코딩해서 보시겠습니까?":
-            "The original image resolution for {model_name_placeholder} is {orig_res_placeholder}.<br>"
-            "The embedded preview image resolution in the RAW file for {model_name_placeholder} is {prev_res_placeholder}.<br>"
+        "{model_name_placeholder}의 원본 이미지 해상도는 <b>{orig_res_placeholder}</b>입니다.<br>{model_name_placeholder}의 RAW 파일에 포함된 미리보기(프리뷰) 이미지의 해상도는 <b>{prev_res_placeholder}</b>입니다.<br>미리보기를 통해 이미지를 보시겠습니까, RAW 파일을 디코딩해서 보시겠습니까?":
+            "The original image resolution for {model_name_placeholder} is <b>{orig_res_placeholder}</b>.<br>"
+            "The embedded preview image resolution in the RAW file for {model_name_placeholder} is <b>{prev_res_placeholder}</b>.<br>"
             "Would you like to view images using the preview or by decoding the RAW file?",
-        "미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우)": "Use Preview Image (if preview resolution is sufficient for you or speed is important)",
-        "RAW 디코딩 (원본 해상도가 필요한 경우)": "Decode RAW File (if original resolution is needed)",
-        "호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다. RAW 파일에 포함된 {prev_res_placeholder}의 미리보기 이미지를 사용하겠습니다.<br>({model_name_placeholder}의 원본 이미지 해상도는 {orig_res_placeholder}입니다.)":
-            "Due to compatibility issues, RAW files from {model_name_placeholder} cannot be decoded. The preview image with resolution {prev_res_placeholder} will be used.<br>"
-            "(Note: The original image resolution for {model_name_placeholder} is {orig_res_placeholder}.)",
+        "미리보기 이미지 사용 (미리보기의 해상도가 충분하거나 빠른 작업 속도가 중요한 경우.)": "Use Preview Image (if preview resolution is sufficient for you or speed is important.)",
+        "RAW 디코딩 (느림. 일부 카메라 호환성 문제 있음.\n미리보기의 해상도가 너무 작거나 원본 해상도가 반드시 필요한 경우에만 사용 권장.)": 
+            "Decode RAW File (Slower. Compatibility issues with some cameras.\nRecommended only if preview resolution is too low or original resolution is essential.)",
+        "호환성 문제로 {model_name_placeholder}의 RAW 파일을 디코딩 할 수 없습니다.<br>RAW 파일에 포함된 <b>{prev_res_placeholder}</b>의 미리보기 이미지를 사용하겠습니다.<br>({model_name_placeholder}의 원본 이미지 해상도는 <b>{orig_res_placeholder}</b>입니다.)":
+            "Due to compatibility issues, RAW files from {model_name_placeholder} cannot be decoded.<br>"
+            "The embedded preview image with resolution <b>{prev_res_placeholder}</b> will be used.<br>"
+            "(Note: The original image resolution for {model_name_placeholder} is <b>{orig_res_placeholder}</b>.)",
         "저장된 RAW 처리 방식": "Saved RAW Processing Methods",
-        "설정 초기화": "Reset All Settings",
+        "초기화": "Reset",
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
         "초기화 완료": "Reset Complete",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
         "로드된 파일과 현재 작업 상태를 초기화하시겠습니까?": "Are you sure you want to reset loaded files and the current working state?",
-        "뷰포트 이동 속도 (키보드):": "Viewport Move Speed (Keyboard):",
+        "뷰포트 이동 속도": "Viewport Move Speed",
+        "세션 저장 및 불러오기 🖜": "Save/Load Session 🖜", # 텍스트 링크용 (🖜 아이콘은 시스템/폰트 따라 다를 수 있음)
+        "세션 관리": "Session Management", # 팝업창 제목
+        "현재 세션 저장": "Save Current Session",
+        "세션 이름": "Session Name",
+        "저장할 세션 이름을 입력하세요:": "Enter a name for this session:",
+        "선택 세션 불러오기": "Load Selected Session",
+        "선택 세션 삭제": "Delete Selected Session",
+        "저장된 세션 목록 (최대 20개):": "Saved Sessions (Max 20):",
+        "저장 오류": "Save Error",
+        "세션 이름을 입력해야 합니다.": "Session name cannot be empty.",
+        "저장 한도 초과": "Save Limit Exceeded",
+        "최대 20개의 세션만 저장할 수 있습니다. 기존 세션을 삭제 후 다시 시도해주세요.": "You can only save up to 20 sessions. Please delete an existing session and try again.",
+        "불러오기 오류": "Load Error",
+        "선택한 세션을 찾을 수 없습니다.": "The selected session could not be found.",
+        "삭제 확인": "Confirm Deletion",
+        "'{session_name}' 세션을 정말 삭제하시겠습니까?": "Are you sure you want to delete the session '{session_name}'?",
+        "불러오기 완료": "Load Complete", # 이미 있을 수 있음
+        "'{session_name}' 세션을 불러왔습니다.": "Session '{session_name}' has been loaded.",
     }
     
     LanguageManager.initialize_translations(translations)
@@ -10120,7 +10604,12 @@ def main():
     app.setFont(application_font) # 애플리케이션 기본 폰트 설정
 
     window = PhotoSortApp()
-    window.load_state()
+
+    # load_state()의 결과를 확인하여 앱 실행 여부 결정
+    if not window.load_state(): # load_state가 False를 반환하면 (첫 실행 설정 취소 등)
+        logging.info("main: load_state가 False를 반환하여 애플리케이션을 시작하지 않습니다.")
+        sys.exit(0) # 또는 return, 어쨌든 app.exec()를 호출하지 않음
+
     window.show()
     sys.exit(app.exec()) #수정
 
