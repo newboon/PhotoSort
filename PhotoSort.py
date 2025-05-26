@@ -1093,7 +1093,7 @@ class ResourceManager:
     def calculate_optimal_raw_processes(self):
         """시스템 사양에 맞는 최적의 RAW 프로세스 수 계산"""
         # RAW 처리는 메모리 집약적이므로 메모리 우선 고려
-        if self.system_memory_gb >= 15: # 32gb, 24gb, 16gb 중 구체적인 숫자는 조율 필요.
+        if self.system_memory_gb >= 12: # 32gb, 24gb, 16gb 중 구체적인 숫자는 조율 필요.
             return min(2, max(1, self.available_cores // 4))
         else:
             return 1  # 8GB-15GB 시스템에서는 1개로 제한
@@ -1354,25 +1354,30 @@ class ImageLoader(QObject):
         except:
             return 8.0  # 기본값 8GB
         
-
-    def calculate_adaptive_cache_size(self):
-        """시스템 메모리 기반으로 캐시 크기 계산"""
-        # 메모리 사용량에 따라 캐시 크기를 동적으로 조정하는 상세 로직
-        # 8GB 시스템: 기본 25개 이미지 (기존 30개에서 줄임)
-        # 16GB 시스템: 약 50개 이미지
-        # 32GB 시스템: 약 100개 이미지
-        base_cache_size = 25
         
-        if self.system_memory_gb >= 31:
-            return base_cache_size * 4
-        elif self.system_memory_gb >= 23:
-            return base_cache_size * 3
-        elif self.system_memory_gb >= 15:
-            return base_cache_size * 2
-        else:
-            return base_cache_size
+    def calculate_adaptive_cache_size(self):
+        """시스템 메모리 기반으로 캐시 크기를 더 세분화하여 계산합니다 (절대값 할당)."""
+        
+        calculated_size = 10 # 기본값 (가장 낮은 메모리 구간 또는 예외 상황)
     
-    def create_lru_cache(self, max_size):
+        # 메모리 구간 및 캐시 크기 설정 (GB 단위)
+        if self.system_memory_gb >= 45: # 48GB 이상
+            calculated_size = 120
+        elif self.system_memory_gb >= 30: # 32GB 가정
+            calculated_size = 80
+        elif self.system_memory_gb >= 22: # 24GB 가정
+            calculated_size = 60
+        elif self.system_memory_gb >= 14: # 16GB 가정
+            calculated_size = 40
+        elif self.system_memory_gb >= 7: # 8GB 가정
+            calculated_size = 20
+        else: # 7GB 미만 (매우 낮은 사양)
+            calculated_size = 10 # 최소 캐시
+
+        logging.info(f"System Memory: {self.system_memory_gb:.1f}GB -> Cache Limit (Image Count): {calculated_size}")
+        return calculated_size
+    
+    def create_lru_cache(self, max_size): # 이 함수는 OrderedDict를 반환하며, 실제 크기 제한은 _add_to_cache에서 self.cache_limit을 사용하여 관리됩니다.
         """LRU 캐시 생성 (OrderedDict 기반)"""
         from collections import OrderedDict
         return OrderedDict()
@@ -2079,6 +2084,14 @@ class PhotoSortApp(QMainWindow):
         self.memory_monitor_timer.setInterval(10000)  # 10초마다 확인
         self.memory_monitor_timer.timeout.connect(self.check_memory_usage)
         self.memory_monitor_timer.start()
+
+
+        # current_image_index 주기적 저장을 위한
+        self.state_save_timer = QTimer(self)
+        self.state_save_timer.setSingleShot(True) # 한 번만 실행되도록 설정
+        self.state_save_timer.setInterval(5000)  # 5초 (5000ms)
+        self.state_save_timer.timeout.connect(self._trigger_state_save_for_index) # 새 슬롯 연결
+
         
         # 시스템 사양 검사
         self.system_memory_gb = self.get_system_memory_gb()
@@ -2094,6 +2107,7 @@ class PhotoSortApp(QMainWindow):
         self.grid_mode = "Off" # 'Off', '2x2', '3x3'
         self.current_grid_index = 0 # 현재 선택된 그리드 셀 인덱스 (0부터 시작)
         self.grid_page_start_index = 0 # 현재 그리드 페이지의 시작 이미지 인덱스
+        self.previous_grid_mode = None # 이전 그리드 모드 저장 변수
         self.grid_layout = None # 그리드 레이아웃 객체
         self.grid_labels = []   # 그리드 셀 QLabel 목록
 
@@ -2151,8 +2165,6 @@ class PhotoSortApp(QMainWindow):
         self.image_loader.loadFailed.connect(self._on_image_load_failed)  # 새 시그널 연결
         self.image_loader.decodingFailedForFile.connect(self.handle_raw_decoding_failure) # <<< 새 시그널 연결
 
-        # 시스템 사양에 따른 설정 조정
-        self.adjust_settings_for_system()
         
         # 그리드 로딩 시 빠른 표시를 위한 플레이스홀더 이미지
         self.placeholder_pixmap = QPixmap(100, 100)
@@ -2535,9 +2547,6 @@ class PhotoSortApp(QMainWindow):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setFocus()
         
-        # 이전 그리드 모드 저장 변수 추가 (ESC 키로 돌아가기 위함)
-        self.previous_grid_mode = None
-        
         # 더블클릭 줌 관련 변수 추가
         self.center_image = False  # 이미지를 가운데로 이동할지 여부 플래그
         self.center_on_click = False  # 클릭한 지점을 중심으로 줌할지 여부 플래그
@@ -2601,6 +2610,14 @@ class PhotoSortApp(QMainWindow):
         self.exif_cache = {}  # 파일 경로 -> EXIF 데이터 딕셔너리
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
+
+
+    # PhotoSortApp에 새 메서드 추가
+    def _trigger_state_save_for_index(self):
+        """current_image_index를 포함한 전체 상태를 저장합니다 (주로 타이머에 의해 호출)."""
+        logging.debug(f"Index save timer triggered. Saving state (current_image_index: {self.current_image_index}).")
+        self.save_state()
+
 
     def _save_orientation_viewport_focus(self, orientation_type: str, rel_center: QPointF, zoom_level_str: str):
         """주어진 화면 방향 타입('landscape' 또는 'portrait')에 대한 뷰포트 중심과 줌 레벨을 저장합니다."""
@@ -3128,22 +3145,7 @@ class PhotoSortApp(QMainWindow):
             return psutil.virtual_memory().total / (1024 * 1024 * 1024)
         except:
             return 8.0  # 기본값 8GB
-        
-    def adjust_settings_for_system(self):
-        """시스템 사양에 맞게 설정 조정"""
-        # 메모리 크기에 따라 기능 조정
-        if self.system_memory_gb < 12:
-            # 8GB-12GB RAM: 최소 기능만 유지
-            self.image_loader.cache_limit = 20  # 캐시 크기 제한
-            self.reduce_background_tasks = True  # 백그라운드 작업 축소
-        elif self.system_memory_gb < 24:
-            # 12GB-24GB RAM: 적절한 균형
-            self.image_loader.cache_limit = 40  # 캐시 크기 제한
-            self.reduce_background_tasks = False  # 백그라운드 작업 정상 실행
-        else:
-            # 24GB 이상: 최대 성능
-            self.image_loader.cache_limit = 80  # 캐시 크기 확장
-            self.reduce_background_tasks = False  # 백그라운드 작업 정상 실행
+    
 
     def check_memory_usage(self):
         """메모리 사용량 모니터링 및 필요시 최적화 조치"""
@@ -4920,6 +4922,7 @@ class PhotoSortApp(QMainWindow):
                 self.current_folder = folder_path
                 self.folder_path_label.setText(folder_path)
                 self.update_jpg_folder_ui_state() # UI 상태 업데이트
+                self.save_state() # <<< 저장
             else:
                 # 로드 실패 시 상태 초기화 반영
                 self.current_folder = ""
@@ -5387,8 +5390,8 @@ class PhotoSortApp(QMainWindow):
         )
 
         if folder_path:
-            # RAW 폴더 경로 업데이트는 match_raw_files 내부에서 매칭 성공 시 수행
-            self.match_raw_files(folder_path)
+            if self.match_raw_files(folder_path): # match_raw_files가 성공 여부 반환하도록 수정 필요
+                self.save_state() # <<< 저장
 
     def load_raw_only_folder(self):
         """ RAW 파일만 로드하는 기능, 첫 파일 분석 및 사용자 선택 요청 """
@@ -5609,6 +5612,7 @@ class PhotoSortApp(QMainWindow):
             self.grid_mode = "Off"
             self.grid_off_radio.setChecked(True)
             self.update_zoom_radio_buttons_state()
+            self.save_state() # <<< 저장
 
             self.current_image_index = 0
             # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
@@ -5786,7 +5790,7 @@ class PhotoSortApp(QMainWindow):
             self.raw_files = {}
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 레이블 리셋
             self.update_raw_folder_ui_state() # X 버튼, 레이블 스타일, 토글 업데이트
-            return
+            return False
         # --- 검사 끝 ---
 
         # 매칭 성공 시 실제 변수 업데이트
@@ -5821,6 +5825,9 @@ class PhotoSortApp(QMainWindow):
             # EXIF 정보도 다시 로드(또는 캐시 사용)합니다.
             self.update_file_info_display(current_displaying_image_path_str)
         # --- 즉시 업데이트 로직 끝 ---
+
+        self.save_state() # <<< 성공 시 저장
+        return True # <<< 성공 시 True 반환
 
 
     def get_bundled_exiftool_path(self):
@@ -6084,6 +6091,7 @@ class PhotoSortApp(QMainWindow):
             self.folder_path_labels[index].setText(folder_path, max_length=28, prefix_length=15, suffix_length=12) # 분류폴더 경로 레이블 글자수 설정
             # 폴더 설정 후 UI 업데이트
             self.update_folder_buttons()
+            self.save_state() # <<< 저장
     
     def clear_category_folder(self, index):
         """분류 폴더 지정 취소"""
@@ -6091,6 +6099,8 @@ class PhotoSortApp(QMainWindow):
         self.folder_path_labels[index].setText(LanguageManager.translate("폴더 경로"))
         # 폴더 설정 취소 후 UI 업데이트
         self.update_folder_buttons()
+        self.save_state() # <<< 저장
+
     
     def open_category_folder(self, index, folder_path): # folder_path 인자 추가
         """선택된 분류 폴더를 탐색기에서 열기 (full_path 사용)"""
@@ -7000,93 +7010,85 @@ class PhotoSortApp(QMainWindow):
     def on_grid_changed(self, button):
         """Grid 모드 변경 처리"""
         previous_grid_mode = self.grid_mode
-        new_grid_mode = "Off" # 기본값
+        new_grid_mode = "" # 초기화
 
-        # 이전 그리드 모드에서의 선택 인덱스 저장 (Off로 갈 때 사용)
-        last_selected_image_index = -1
-        if previous_grid_mode != "Off":
-            global_index = self.grid_page_start_index + self.current_grid_index
-            # global_index가 실제 이미지 리스트 범위 내에 있는지 확인
-            if 0 <= global_index < len(self.image_files):
-                last_selected_image_index = global_index
+        # last_selected_image_index는 Grid On -> Off로 전환 시에만 의미가 있음
+        last_selected_image_index_from_grid = -1
+        if previous_grid_mode != "Off": # 이전 모드가 Grid On이었을 때만 계산
+            global_idx = self.grid_page_start_index + self.current_grid_index
+            if 0 <= global_idx < len(self.image_files):
+                last_selected_image_index_from_grid = global_idx
             elif self.image_files: # 유효한 선택이 없었지만 이미지가 있다면 첫번째 이미지로
-                last_selected_image_index = 0
+                last_selected_image_index_from_grid = 0
+
 
         if button == self.grid_off_radio:
             new_grid_mode = "Off"
-            # 스페이스바로 전환된 경우가 아닐 때만 previous_grid_mode 초기화
-            if not self.space_pressed:
-                self.previous_grid_mode = None
-            else:
-                # 스페이스바 플래그 초기화
-                self.space_pressed = False
-            
-            # Off 모드로 전환 시, 이전 선택 이미지 인덱스를 current_image_index로 설정
-            if last_selected_image_index != -1:
-                self.current_image_index = last_selected_image_index
-                
-                # 이미지 변경 시 강제 새로고침 플래그 설정 추가
-                self.force_refresh = True
-                
-                # Fit 모드인 경우 기존 캐시 무효화 추가
-                if self.zoom_mode == "Fit":
-                    self.last_fit_size = (0, 0)
-                    self.fit_pixmap_cache.clear()
-                    
-            elif self.image_files: # 이미지 파일이 있는데 선택 정보가 없으면 첫 이미지
-                self.current_image_index = 0
-                
-                # 이미지 변경 시 강제 새로고침 플래그 설정 추가
-                self.force_refresh = True
-                
-                # Fit 모드인 경우 기존 캐시 무효화 추가
-                if self.zoom_mode == "Fit":
-                    self.last_fit_size = (0, 0)
-                    self.fit_pixmap_cache.clear()
-                    
-            else: # 이미지 파일이 아예 없으면
-                self.current_image_index = -1
-
         elif button == self.grid_2x2_radio:
             new_grid_mode = "2x2"
-            if self.zoom_mode != "Fit":
-                self.zoom_mode = "Fit"
-                self.fit_radio.setChecked(True)
         elif button == self.grid_3x3_radio:
             new_grid_mode = "3x3"
-            if self.zoom_mode != "Fit":
-                self.zoom_mode = "Fit"
-                self.fit_radio.setChecked(True)
+        else:
+            return # 알 수 없는 버튼이면 아무것도 안 함
 
-        # Grid 모드가 실제로 변경되었는지 확인
+        # --- 모드가 실제로 변경되었을 때만 주요 로직 수행 ---
         if previous_grid_mode != new_grid_mode:
-            # Grid Off에서 다른 모드로 전환 시, 이전 모드 저장은 하지 않음
-            
-            self.grid_mode = new_grid_mode # 새 모드 적용
+            logging.debug(f"Grid mode changed: {previous_grid_mode} -> {new_grid_mode}")
+            self.grid_mode = new_grid_mode
 
-            # 모드 변경 시 그리드 관련 상태 초기화 또는 조정
-            if new_grid_mode != "Off":
-                # Off -> Grid 전환 시, 현재 단일 이미지 인덱스를 기준으로 페이지 및 셀 결정
+            if new_grid_mode == "Off":
+                # Grid On -> Off 로 변경된 경우
+                if not self.space_pressed:
+                    self.previous_grid_mode = None
+                else:
+                    self.space_pressed = False
+                
+                if last_selected_image_index_from_grid != -1:
+                    self.current_image_index = last_selected_image_index_from_grid
+                elif self.image_files: # 이전 그리드에서 유효 선택 없었지만 파일은 있으면
+                    self.current_image_index = 0 
+                else:
+                    self.current_image_index = -1
+                
+                self.force_refresh = True
+                if self.zoom_mode == "Fit": # Fit 모드 캐시 관련
+                    self.last_fit_size = (0, 0)
+                    self.fit_pixmap_cache.clear()
+
+            else: # Grid Off -> Grid On 또는 Grid On -> 다른 Grid On 으로 변경된 경우
+                if self.zoom_mode != "Fit": # Grid On으로 갈 땐 강제로 Fit
+                    self.zoom_mode = "Fit"
+                    self.fit_radio.setChecked(True)
+
                 if previous_grid_mode == "Off" and self.current_image_index != -1:
-                      rows, cols = (2, 2) if new_grid_mode == '2x2' else (3, 3)
-                      num_cells = rows * cols
-                      self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
-                      self.current_grid_index = self.current_image_index % num_cells
-                else: # Grid -> Grid 전환 (또는 초기 상태)
-                      pass # Grid -> Grid 전환 시 상태 유지
+                    # Grid Off에서 Grid On으로 전환: 현재 이미지를 기준으로 그리드 위치 설정
+                    rows, cols = (2, 2) if new_grid_mode == '2x2' else (3, 3)
+                    num_cells = rows * cols
+                    self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
+                    self.current_grid_index = self.current_image_index % num_cells
+                # else: Grid On -> 다른 Grid On. 이 경우 페이지/셀 인덱스는 어떻게 할지 정책 필요.
+                    # 현재는 특별한 처리 없이 기존 self.grid_page_start_index, self.current_grid_index 유지.
+                    # 또는 0으로 초기화하거나, 이전 그리드 셀의 내용을 최대한 유지하려는 시도 가능.
+                    # 예를 들어, (2x2의 1번셀 -> 3x3의 몇번셀?) 같은 변환 로직.
+                    # 지금은 유지하는 것으로 가정.
 
-            # 뷰 업데이트
-            self.update_grid_view()
-            
-            # 줌 라디오 버튼 상태 업데이트
+            self.update_grid_view() # 뷰 업데이트는 모드 변경 시 항상 필요
             self.update_zoom_radio_buttons_state()
-
-            # 카운터 레이아웃 업데이트 (Grid 모드 변경에 따라)
             self.update_counter_layout()
 
-        # 미니맵 활성화/비활성화 및 상태 업데이트
+        # Grid Off 상태에서 F1 (즉, Off->Off)을 눌렀을 때 force_refresh가 설정되었으므로
+        # display_current_image를 호출하여 화면을 다시 그리도록 함 (선택적)
+        # 하지만 current_image_index가 바뀌지 않았으므로 실제로는 큰 변화 없을 것임.
+        # 만약 Off->Off일 때 아무것도 안 하게 하려면, 위 if 블록 밖에서 처리하거나,
+        # F1 키 처리 부분에서 self.force_refresh를 조건부로 설정.
+        elif new_grid_mode == "Off" and getattr(self, 'force_refresh', False): # 모드 변경은 없지만 강제 새로고침 요청
+            logging.debug("Grid mode Off, force_refresh 요청됨. display_current_image 호출.")
+            self.display_current_image() # 겉보기엔 변화 없어도 강제 리드로우
+            # self.force_refresh = False # 사용 후 초기화는 display_current_image에서 할 수도 있음
+
+        # 미니맵 상태 업데이트 (모드 변경 여부와 관계없이 현재 grid_mode에 따라)
         if self.grid_mode != "Off":
-            self.toggle_minimap(False) # 그리드 모드에서는 미니맵 숨김
+            self.toggle_minimap(False)
         else:
             self.toggle_minimap(self.minimap_toggle.isChecked())
 
@@ -7264,6 +7266,10 @@ class PhotoSortApp(QMainWindow):
             self.update_file_info_display(None)
         self.update_counters()
 
+        if self.grid_mode != "Off" and self.image_files:
+            self.state_save_timer.start()
+            logging.debug(f"update_grid_view: Index save timer (re)started for grid (page_start={self.grid_page_start_index}, cell={self.current_grid_index})")
+
 
     def on_filename_toggle_changed(self, checked):
         """그리드 파일명 표시 토글 상태 변경 시 호출"""
@@ -7296,6 +7302,7 @@ class PhotoSortApp(QMainWindow):
                 #    명시적으로 호출하여 확실하게 합니다.
                 #    (GridCellWidget의 setShowFilename, setText 메서드에서 이미 update()를 호출한다면 중복될 수 있으니 확인 필요)
                 cell_widget.update() # paintEvent를 다시 호출하게 함
+
 
         # Grid Off 모드에서는 이 설정이 현재 뷰에 직접적인 영향을 주지 않으므로
         # 별도의 즉각적인 뷰 업데이트는 필요하지 않습니다.
@@ -8059,7 +8066,6 @@ class PhotoSortApp(QMainWindow):
             )
 
     def display_current_image(self):
-        """현재 선택된 이미지 표시 (비동기 방식)"""
         force_refresh = getattr(self, 'force_refresh', False)
         if force_refresh:
             self.last_fit_size = (0, 0)
@@ -8072,7 +8078,7 @@ class PhotoSortApp(QMainWindow):
 
         if not self.image_files or self.current_image_index < 0 or self.current_image_index >= len(self.image_files):
             self.image_label.clear()
-            self.image_label.setStyleSheet("background-color: transparent;") # 이전엔 black이었으나, 이미지 없을 땐 투명이 더 나을 수 있음
+            self.image_label.setStyleSheet("background-color: transparent;")
             self.setWindowTitle("PhotoSort")
             self.original_pixmap = None
             self.update_file_info_display(None)
@@ -8080,34 +8086,73 @@ class PhotoSortApp(QMainWindow):
             self.current_image_orientation = None
             if self.minimap_visible:
                 self.minimap_widget.hide()
-                # self.minimap_visible = False
-            self.update_counters() # 카운터도 업데이트 필요
+            self.update_counters()
+            self.state_save_timer.stop() # 이미지가 없으면 저장 타이머 중지
             return
                 
         try:
             current_index = self.current_image_index
-            image_path = self.image_files[current_index] # Path 객체
-            image_path_str = str(image_path) # --- 여기에 image_path_str 정의 추가 ---
+            image_path = self.image_files[current_index]
+            image_path_str = str(image_path)
 
-            logging.info(f"display_current_image 호출: index={current_index}, path='{image_path.name}'") # 로그에는 Path 객체의 name 사용
+            logging.info(f"display_current_image 호출: index={current_index}, path='{image_path.name}'")
 
-            self.update_file_info_display(image_path_str) # 파일 정보는 문자열 경로로 전달
+            self.update_file_info_display(image_path_str)
             self.setWindowTitle(f"PhotoSort - {image_path.name}")
             
+            # --- 캐시 확인 및 즉시 적용 로직 ---
             if image_path_str in self.image_loader.cache:
                 cached_pixmap = self.image_loader.cache[image_path_str]
                 if cached_pixmap and not cached_pixmap.isNull():
                     logging.info(f"display_current_image: 캐시된 이미지 즉시 적용 - '{image_path.name}'")
+                    
+                    # _on_image_loaded_for_display와 유사한 로직으로 UI 업데이트
                     self.previous_image_orientation = self.current_image_orientation
                     new_orientation = "landscape" if cached_pixmap.width() >= cached_pixmap.height() else "portrait"
+                    # 사진 변경 시 뷰포트 처리 로직 (캐시 히트 시에도 필요)
+                    prev_orientation_for_decision = getattr(self, 'previous_image_orientation_for_carry_over', None) # 이전 사진의 방향
+                    is_photo_actually_changed = (hasattr(self, 'previous_image_path_for_focus_carry_over') and
+                                                 self.previous_image_path_for_focus_carry_over is not None and
+                                                 self.previous_image_path_for_focus_carry_over != image_path_str)
+
+                    if is_photo_actually_changed:
+                        prev_zoom_for_decision = getattr(self, 'previous_zoom_mode_for_carry_over', "Fit")
+                        prev_rel_center_for_decision = getattr(self, 'previous_active_rel_center_for_carry_over', QPointF(0.5, 0.5))
+                        if prev_zoom_for_decision in ["100%", "200%"] and prev_orientation_for_decision == new_orientation:
+                            self.zoom_mode = prev_zoom_for_decision
+                            self.current_active_rel_center = prev_rel_center_for_decision
+                            self.current_active_zoom_level = self.zoom_mode
+                            self.zoom_change_trigger = "photo_change_carry_over_focus"
+                            if image_path_str: self._save_orientation_viewport_focus(new_orientation, self.current_active_rel_center, self.current_active_zoom_level)
+                        else:
+                            self.zoom_mode = "Fit"
+                            self.current_active_rel_center = QPointF(0.5, 0.5)
+                            self.current_active_zoom_level = "Fit"
+                            self.zoom_change_trigger = "photo_change_to_fit"
+                    # 라디오 버튼 UI 동기화
+                    if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
+                    elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
+                    elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+
                     self.current_image_orientation = new_orientation
                     self.original_pixmap = cached_pixmap
-                    self.apply_zoom_to_image()
+                    
+                    self.apply_zoom_to_image() # 줌 적용
+                    
                     if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
                     self.update_counters()
-                    # 파일 정보는 이미 위에서 update_file_info_display로 업데이트 했으므로 여기서 또 할 필요 없음
-                    return
-
+                    
+                    # --- 캐시 히트 후 타이머 시작 ---
+                    if self.grid_mode == "Off":
+                        self.state_save_timer.start()
+                        logging.debug(f"display_current_image (cache hit): Index save timer (re)started for index {self.current_image_index}")
+                    # --- 타이머 시작 끝 ---
+                    
+                    # 사용한 임시 변수 초기화
+                    if hasattr(self, 'previous_image_path_for_focus_carry_over'): self.previous_image_path_for_focus_carry_over = None
+                    return # 캐시 사용했으므로 비동기 로딩 불필요
+            
+            # --- 캐시에 없거나 유효하지 않으면 비동기 로딩 요청 ---
             logging.info(f"display_current_image: 캐시에 없음. 비동기 로딩 시작 및 로딩 인디케이터 타이머 설정 - '{image_path.name}'")
             if not hasattr(self, 'loading_indicator_timer'):
                 self.loading_indicator_timer = QTimer(self)
@@ -8117,15 +8162,16 @@ class PhotoSortApp(QMainWindow):
             self.loading_indicator_timer.stop() 
             self.loading_indicator_timer.start(500)
             
-            self.load_image_async(image_path_str, current_index) # 비동기 로딩에는 문자열 경로 전달
+            self.load_image_async(image_path_str, current_index) # 비동기 로딩
             
         except Exception as e:
-            logging.error(f"display_current_image에서 오류 발생: {e}") # 상세 오류 로깅
+            logging.error(f"display_current_image에서 오류 발생: {e}")
             import traceback
             traceback.print_exc()
             self.image_label.setText(f"{LanguageManager.translate('이미지 표시 중 오류 발생')}: {str(e)}")
             self.original_pixmap = None
             self.update_counters()
+            self.state_save_timer.stop() # 오류 시 타이머 중지
 
     def show_loading_indicator(self):
         """로딩 중 표시"""
@@ -8177,20 +8223,22 @@ class PhotoSortApp(QMainWindow):
             raw_processing_method = self.image_loader._raw_load_strategy
 
             if is_raw and raw_processing_method == "decode":
-                logging.info(f"_load_image_task: RAW 파일 '{file_path_obj.name}'의 'decode' 요청. RawDecoderPool에 제출합니다.")
-                # RawDecoderPool에 디코딩 작업 제출
-                # 콜백으로 _on_raw_decoded_for_display를 사용, requested_index도 전달해야 함.
-                # submit_raw_decoding의 콜백은 result 딕셔너리 하나만 받으므로, 람다나 functools.partial 사용.
-                from functools import partial
-                callback_with_index = partial(self._on_raw_decoded_for_display, requested_index=requested_index)
+                logging.info(f"_load_image_task: RAW 파일 '{file_path_obj.name}'의 'decode' 요청. RawDecoderPool에 제출.")
                 
-                # submit_raw_decoding은 작업 ID를 반환. 현재는 사용하지 않음.
-                task_id = resource_manager.submit_raw_decoding(image_path, callback_with_index)
-                if task_id is None: # 제출 실패 (예: 풀 종료 중)
+                # --- 콜백 래핑 시작 ---
+                # requested_index와 is_main_display_image 값을 캡처하는 람다 함수 사용
+                # 이 람다 함수는 오직 'result' 딕셔너리 하나만 인자로 받음
+                wrapped_callback = lambda result_dict: self._on_raw_decoded_for_display(
+                    result_dict, 
+                    requested_index=requested_index, # 캡처된 값 사용
+                    is_main_display_image=True     # 캡처된 값 사용
+                )
+                # --- 콜백 래핑 끝 ---
+                
+                task_id = self.resource_manager.submit_raw_decoding(image_path, wrapped_callback) # 래핑된 콜백 전달
+                if task_id is None: 
                     raise RuntimeError("Failed to submit RAW decoding task.")
-                # 디코딩 작업은 비동기이므로, 이 함수는 여기서 결과를 기다리지 않고 반환합니다.
-                # 콜백이 나중에 호출되어 실제 이미지 처리를 완료합니다.
-                return True # 작업 제출 성공
+                return True 
             else:
                 # JPG 또는 RAW (preview 모드)는 기존 ImageLoader.load_image_with_orientation 직접 호출
                 logging.info(f"_load_image_task: '{file_path_obj.name}' 직접 로드 시도 (JPG 또는 RAW-preview).")
@@ -8231,7 +8279,6 @@ class PhotoSortApp(QMainWindow):
     def _on_image_loaded_for_display(self, pixmap, image_path_str_loaded, requested_index):
         if self.current_image_index != requested_index: # ... (무시 로직) ...
             return
-        # ... (로딩 인디케이터 중지, pixmap null 체크) ...
         if hasattr(self, 'loading_indicator_timer'): self.loading_indicator_timer.stop()
         if pixmap.isNull():
             self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}")
@@ -8284,15 +8331,18 @@ class PhotoSortApp(QMainWindow):
         if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
         self.update_counters()
 
-    def _on_raw_decoded_for_display(self, result: dict, requested_index: int):
+        # --- 이미지 표시 완료 후 상태 저장 타이머 시작 ---
+        if self.grid_mode == "Off": # Grid Off 모드에서만 이 경로로 current_image_index가 안정화됨
+            self.state_save_timer.start()
+            logging.debug(f"_on_image_loaded_for_display: Index save timer (re)started for index {self.current_image_index}")
+        # --- 타이머 시작 끝 ---
+
+
+    def _on_raw_decoded_for_display(self, result: dict, requested_index: int, is_main_display_image: bool = False):
         file_path = result.get('file_path')
         success = result.get('success', False)
         logging.info(f"_on_raw_decoded_for_display 시작: 파일='{Path(file_path).name if file_path else 'N/A'}', 요청 인덱스={requested_index}, 성공={success}") # 상세 로그
 
-        # 현재 표시해야 할 이미지와 디코딩된 이미지가 일치하는지 확인
-        # 이 조건은 매우 중요합니다. 사용자가 빠르게 이미지를 넘기면, 이전 이미지의 디코딩 결과가
-        # 현재 이미지 표시에 영향을 주지 않도록 하기 위함입니다.
-        # 하지만 "아무리 기다려도 안 보인다"는 것은 이 조건 외의 문제일 가능성이 큽니다.
         current_path_to_display = None
         if self.grid_mode == "Off":
             if 0 <= self.current_image_index < len(self.image_files):
@@ -8352,6 +8402,13 @@ class PhotoSortApp(QMainWindow):
                 self.update_counters()
                 logging.info(f"  _on_raw_decoded_for_display: UI 업데이트 완료. 파일='{Path(file_path).name}'")
 
+                # --- 이미지 표시 완료 후 상태 저장 타이머 시작 ---
+                if is_main_display_image and result.get('success') and self.grid_mode == "Off":
+                    # 현재 화면에 표시하기 위한 RAW 디코딩이었고 성공했다면
+                    self.state_save_timer.start()
+                    logging.debug(f"_on_raw_decoded_for_display: Index save timer (re)started for index {self.current_image_index} (main display RAW)")
+                # --- 타이머 시작 끝 ---
+
             except Exception as e:
                 logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 성공 후 QPixmap 처리 오류 ({Path(file_path).name if file_path else 'N/A'}): {e}")
                 # ... (기존 오류 시 UI 처리) ...
@@ -8394,98 +8451,225 @@ class PhotoSortApp(QMainWindow):
         self.original_pixmap = None
         self.update_counters()
 
-
+    # 구버전
+    # def preload_adjacent_images(self, current_index):
+    #     """인접 이미지 미리 로드 - 스마트 로딩 시스템"""
+    #     if not self.image_files:
+    #         return
+        
+    #     total_images = len(self.image_files)
+        
+    #     # 이동 방향 감지 (이전과 동일)
+    #     direction = 1  # 기본값: 앞으로 이동
+    #     if hasattr(self, 'previous_image_index'):
+    #         if self.previous_image_index < current_index:
+    #             direction = 1  # 앞으로 이동 중
+    #         elif self.previous_image_index > current_index:
+    #             direction = -1  # 뒤로 이동 중
+        
+    #     # 현재 인덱스 저장 (다음 호출에서 방향 감지용)
+    #     self.previous_image_index = current_index
+        
+    #     # 1. 이미지 로더 캐시 상태 확인
+    #     cached_images = set()
+    #     requested_images = set()  # 이미 요청된 이미지들
+        
+    #     # 현재 캐시에 있는 이미지 확인
+    #     for i in range(max(0, current_index - 3), min(total_images, current_index + 8)):
+    #         img_path = str(self.image_files[i])
+    #         if img_path in self.image_loader.cache:
+    #             cached_images.add(i)
+        
+    #     # 2. 우선적으로 로드해야 할 이미지 결정
+    #     # 앞으로 최대 6개, 뒤로 최대 2개의 이미지 로드
+    #     to_preload = []
+        
+    #     # 앞으로 이동 중이면 앞쪽을 더 많이 로드
+    #     if direction >= 0:
+    #         # 앞쪽 6개
+    #         for offset in range(1, 7):
+    #             idx = (current_index + offset) % total_images
+    #             if idx not in cached_images:
+    #                 to_preload.append((idx, "forward", offset))
+            
+    #         # 뒤쪽 2개
+    #         for offset in range(1, 3):
+    #             idx = (current_index - offset) % total_images
+    #             if idx not in cached_images:
+    #                 to_preload.append((idx, "backward", offset))
+    #     else:
+    #         # 뒤로 이동 중이면 뒤쪽을 더 많이 로드
+    #         # 뒤쪽 6개
+    #         for offset in range(1, 7):
+    #             idx = (current_index - offset) % total_images
+    #             if idx not in cached_images:
+    #                 to_preload.append((idx, "backward", offset))
+            
+    #         # 앞쪽 2개
+    #         for offset in range(1, 3):
+    #             idx = (current_index + offset) % total_images
+    #             if idx not in cached_images:
+    #                 to_preload.append((idx, "forward", offset))
+        
+    #     # 3. 우선순위에 따라 로드 요청
+    #     for idx, direction_type, offset in to_preload:
+    #         img_path = str(self.image_files[idx])
+    #         if img_path in requested_images:
+    #             continue
+            
+    #         # 우선순위 결정
+    #         if direction_type == "forward":
+    #             if offset <= 3:
+    #                 priority = 'high'  # 앞으로 가까운 이미지
+    #             else:
+    #                 priority = 'medium'  # 앞으로 먼 이미지
+    #         else:  # backward
+    #             if offset <= 2:
+    #                 priority = 'medium'  # 뒤로 가까운 이미지
+    #             else:
+    #                 priority = 'low'  # 뒤로 먼 이미지
+            
+    #         # 로드 요청 제출
+    #         self.resource_manager.submit_imaging_task_with_priority(
+    #             priority,
+    #             self.image_loader._preload_image,
+    #             img_path
+    #         )
+            
+    #         requested_images.add(img_path)
+            
+    #         # 디버그 정보 추가
+    #         if offset <= 3:
+    #             logging.debug(f"Preloading: {direction_type} {offset} (priority: {priority}): {Path(img_path).name}")
 
 
     def preload_adjacent_images(self, current_index):
-        """인접 이미지 미리 로드 - 스마트 로딩 시스템"""
+        """인접 이미지 미리 로드 - 시스템 메모리에 따라 동적으로 범위 조절."""
         if not self.image_files:
             return
         
         total_images = len(self.image_files)
         
-        # 이동 방향 감지 (이전과 동일)
-        direction = 1  # 기본값: 앞으로 이동
-        if hasattr(self, 'previous_image_index'):
-            if self.previous_image_index < current_index:
-                direction = 1  # 앞으로 이동 중
-            elif self.previous_image_index > current_index:
-                direction = -1  # 뒤로 이동 중
+        # --- 시스템 메모리 기반으로 미리 로드할 앞/뒤 개수 결정 ---
+        forward_preload_count = 0
+        backward_preload_count = 0
+        priority_close_threshold = 0 # 가까운 이미지에 'high' 우선순위를 줄 범위
+
+        # self.system_memory_gb는 PhotoSortApp.__init__에서 psutil을 통해 설정됨
+        if self.system_memory_gb >= 45: # 48GB 이상 (매우 적극적)
+            forward_preload_count = 12 # 예: 앞으로 10개
+            backward_preload_count = 4  # 예: 뒤로 4개
+            priority_close_threshold = 5 # 앞/뒤 5개까지 high/medium
+        elif self.system_memory_gb >= 30: # 32GB 이상 (적극적)
+            forward_preload_count = 9
+            backward_preload_count = 3
+            priority_close_threshold = 4
+        elif self.system_memory_gb >= 22: # 24GB 이상 (보통)
+            forward_preload_count = 7 
+            backward_preload_count = 2
+            priority_close_threshold = 3
+        elif self.system_memory_gb >= 14: # 16GB 이상 (약간 보수적)
+            forward_preload_count = 5
+            backward_preload_count = 2
+            priority_close_threshold = 2
+        elif self.system_memory_gb >= 7: # 8GB 이상 (보수적)
+            forward_preload_count = 4
+            backward_preload_count = 2
+            priority_close_threshold = 2
+        else: # 7GB 미만 (매우 보수적)
+            forward_preload_count = 3
+            backward_preload_count = 1
+            priority_close_threshold = 1
         
-        # 현재 인덱스 저장 (다음 호출에서 방향 감지용)
-        self.previous_image_index = current_index
+        logging.debug(f"preload_adjacent_images: System Memory={self.system_memory_gb:.1f}GB -> FwdPreload={forward_preload_count}, BwdPreload={backward_preload_count}, PrioCloseThr={priority_close_threshold}")
+        # --- 미리 로드 개수 결정 끝 ---
+
+        direction = 1
+        if hasattr(self, 'previous_image_index') and self.previous_image_index != current_index : # 실제로 인덱스가 변경되었을 때만 방향 감지
+            if self.previous_image_index < current_index or \
+               (self.previous_image_index == total_images - 1 and current_index == 0): # 순환 포함
+                direction = 1  # 앞으로 이동
+            elif self.previous_image_index > current_index or \
+                 (self.previous_image_index == 0 and current_index == total_images - 1): # 순환 포함
+                direction = -1 # 뒤로 이동
         
-        # 1. 이미지 로더 캐시 상태 확인
+        self.previous_image_index = current_index # 현재 인덱스 저장
+        
         cached_images = set()
-        requested_images = set()  # 이미 요청된 이미지들
+        requested_images = set()
         
-        # 현재 캐시에 있는 이미지 확인
-        for i in range(max(0, current_index - 3), min(total_images, current_index + 8)):
-            img_path = str(self.image_files[i])
-            if img_path in self.image_loader.cache:
+        # 캐시된 이미지 확인 범위도 동적으로 조절 가능 (선택적, 여기서는 기존 범위 유지)
+        # 예: max(forward_preload_count, backward_preload_count) + 약간의 여유
+        check_range = max(forward_preload_count, backward_preload_count, 3) + 5 
+        for i in range(max(0, current_index - check_range), min(total_images, current_index + check_range + 1)):
+            img_path_str = str(self.image_files[i])
+            if img_path_str in self.image_loader.cache:
                 cached_images.add(i)
         
-        # 2. 우선적으로 로드해야 할 이미지 결정
-        # 앞으로 최대 6개, 뒤로 최대 2개의 이미지 로드
         to_preload = []
         
-        # 앞으로 이동 중이면 앞쪽을 더 많이 로드
-        if direction >= 0:
-            # 앞쪽 6개
-            for offset in range(1, 7):
+        # 이동 방향에 따라 미리 로드 대상 및 우선순위 결정
+        if direction >= 0: # 앞으로 이동 중 (또는 정지 상태)
+            # 앞쪽 이미지 우선 로드
+            for offset in range(1, forward_preload_count + 1):
                 idx = (current_index + offset) % total_images
                 if idx not in cached_images:
-                    to_preload.append((idx, "forward", offset))
-            
-            # 뒤쪽 2개
-            for offset in range(1, 3):
-                idx = (current_index - offset) % total_images
+                    priority = 'high' if offset <= priority_close_threshold else ('medium' if offset <= priority_close_threshold * 2 else 'low')
+                    to_preload.append((idx, "forward", priority, offset)) # 우선순위 문자열 직접 전달
+            # 뒤쪽 이미지 로드
+            for offset in range(1, backward_preload_count + 1):
+                idx = (current_index - offset + total_images) % total_images # 음수 인덱스 방지
                 if idx not in cached_images:
-                    to_preload.append((idx, "backward", offset))
-        else:
-            # 뒤로 이동 중이면 뒤쪽을 더 많이 로드
-            # 뒤쪽 6개
-            for offset in range(1, 7):
-                idx = (current_index - offset) % total_images
+                    priority = 'medium' if offset <= priority_close_threshold else 'low'
+                    to_preload.append((idx, "backward", priority, offset))
+        else: # 뒤로 이동 중
+            # 뒤쪽 이미지 우선 로드
+            for offset in range(1, forward_preload_count + 1): # 변수명은 forward_preload_count 지만 실제로는 뒤쪽
+                idx = (current_index - offset + total_images) % total_images
                 if idx not in cached_images:
-                    to_preload.append((idx, "backward", offset))
-            
-            # 앞쪽 2개
-            for offset in range(1, 3):
+                    priority = 'high' if offset <= priority_close_threshold else ('medium' if offset <= priority_close_threshold * 2 else 'low')
+                    to_preload.append((idx, "backward", priority, offset))
+            # 앞쪽 이미지 로드
+            for offset in range(1, backward_preload_count + 1):
                 idx = (current_index + offset) % total_images
                 if idx not in cached_images:
-                    to_preload.append((idx, "forward", offset))
+                    priority = 'medium' if offset <= priority_close_threshold else 'low'
+                    to_preload.append((idx, "forward", priority, offset))
         
-        # 3. 우선순위에 따라 로드 요청
-        for idx, direction_type, offset in to_preload:
+        # 로드 요청 제출 (우선순위 사용)
+        for idx, direction_type_log, priority_str_to_use, offset_log in to_preload:
             img_path = str(self.image_files[idx])
             if img_path in requested_images:
                 continue
             
-            # 우선순위 결정
-            if direction_type == "forward":
-                if offset <= 3:
-                    priority = 'high'  # 앞으로 가까운 이미지
-                else:
-                    priority = 'medium'  # 앞으로 먼 이미지
-            else:  # backward
-                if offset <= 2:
-                    priority = 'medium'  # 뒤로 가까운 이미지
-                else:
-                    priority = 'low'  # 뒤로 먼 이미지
-            
-            # 로드 요청 제출
-            self.resource_manager.submit_imaging_task_with_priority(
-                priority,
-                self.image_loader._preload_image,
-                img_path
-            )
-            
+            # 실제 로드할 RAW 파일의 처리 방식 결정 (decode or preview)
+            file_path_obj_preload = Path(img_path)
+            is_raw_preload = file_path_obj_preload.suffix.lower() in self.raw_extensions
+            # ImageLoader의 현재 전역 전략을 따르거나, 미리 로딩 시에는 강제로 preview만 하도록 결정 가능
+            # 여기서는 ImageLoader의 현재 전략을 따른다고 가정 (이전과 동일)
+            raw_processing_method_preload = self.image_loader._raw_load_strategy # ImageLoader의 현재 전략
+
+            if is_raw_preload and raw_processing_method_preload == "decode":
+                logging.debug(f"Preloading adjacent RAW (decode): {file_path_obj_preload.name} ...")
+                # --- 콜백 래핑 시작 ---
+                wrapped_preload_callback = lambda result_dict, req_idx=idx: self._on_raw_decoded_for_display(
+                    result_dict,
+                    requested_index=req_idx, # 람다 기본 인자로 캡처
+                    is_main_display_image=False # 미리 로딩이므로 False
+                )
+                # --- 콜백 래핑 끝 ---
+                self.resource_manager.submit_raw_decoding(img_path, wrapped_preload_callback)
+                # --- 수정 끝 ---
+            else:
+                # JPG 또는 RAW (preview 모드) 미리 로딩
+                logging.debug(f"Preloading adjacent JPG/RAW_Preview: {Path(img_path).name} with priority {priority_str_to_use}")
+                self.resource_manager.submit_imaging_task_with_priority(
+                    priority_str_to_use,
+                    self.image_loader._preload_image, 
+                    img_path
+                )
             requested_images.add(img_path)
-            
-            # 디버그 정보 추가
-            if offset <= 3:
-                logging.debug(f"Preloading: {direction_type} {offset} (priority: {priority}): {Path(img_path).name}")
+
 
     def on_grid_cell_clicked(self, clicked_widget, clicked_index): # 파라미터 이름을 clicked_widget으로 명확히
         """그리드 셀 클릭 이벤트 핸들러"""
@@ -8523,14 +8707,24 @@ class PhotoSortApp(QMainWindow):
                     # 이미지 경로 속성이 없는 경우 (예: 마지막 페이지의 완전히 빈 셀)
                     logging.debug(f"빈 셀 클릭됨 (이미지 경로 없음): index {clicked_index}")
                     self.update_file_info_display(None)
+                
+                if clicked_widget.property("image_path"): # 유효한 이미지 셀 클릭 시
+                    self.current_grid_index = clicked_index
+                    # ... (UI 업데이트) ...
+                    self.state_save_timer.start() # <<< 타이머 (재)시작
+                    logging.debug(f"on_grid_cell_clicked: Index save timer (re)started for grid cell {self.current_grid_index}")
+
             else:
                 # 클릭된 인덱스가 현재 페이지의 유효한 이미지 범위를 벗어난 경우
                 logging.debug(f"유효하지 않은 셀 클릭됨 (인덱스 범위 초과): index {clicked_index}, page_img_count {current_page_image_count}")
                 self.update_file_info_display(None)
+                
+            self.update_counters()
 
         except Exception as e:
              logging.error(f"셀 클릭 처리 중 오류 발생: {e}")
              self.update_file_info_display(None)
+             
 
     def update_image_count_label(self):
         """이미지 및 페이지 카운트 레이블 업데이트"""
@@ -8577,6 +8771,9 @@ class PhotoSortApp(QMainWindow):
 
     def save_state(self):
         """현재 애플리케이션 상태를 JSON 파일에 저장"""
+
+        logging.critical("SAVE_STATE CALLED!")
+        traceback.print_stack()
         
         # --- 현재 실제로 선택/표시된 이미지의 '전체 리스트' 인덱스 계산 ---
         actual_current_image_list_index = -1
@@ -8628,6 +8825,7 @@ class PhotoSortApp(QMainWindow):
 
         load_path = self.get_script_dir() / self.STATE_FILE
         is_first_run = not load_path.exists()
+        logging.debug(f"  load_state: is_first_run = {is_first_run}")
 
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
@@ -9800,6 +9998,7 @@ class PhotoSortApp(QMainWindow):
         self.update_counters()
         self.setWindowTitle("PhotoSort") # 창 제목 초기화
 
+        self.save_state() # <<< 초기화 후 상태 저장
         print("JPG 폴더 지정 해제됨.")
 
     def clear_raw_folder(self):
@@ -9923,6 +10122,7 @@ class PhotoSortApp(QMainWindow):
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
             self.update_raw_folder_ui_state() # 레이블 스타일, X 버튼, 토글 상태 업데이트
             self.update_match_raw_button_state() # RAW 버튼 상태 업데이트 ("JPG - RAW 연결"로)
+            self.save_state() # <<< 상태 변경 후 저장
 
             print("RAW 폴더 지정 해제됨.")
 
