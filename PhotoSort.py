@@ -8173,14 +8173,58 @@ class PhotoSortApp(QMainWindow):
             self.update_counters()
             self.state_save_timer.stop() # 오류 시 타이머 중지
 
+
     def show_loading_indicator(self):
-        """로딩 중 표시"""
-        # 로딩 플레이스홀더 표시
-        loading_pixmap = QPixmap(200, 200)
-        loading_pixmap.fill(QColor(40, 40, 40))
+        """로딩 중 표시 (image_label을 image_container 크기로 설정)"""
+        logging.debug("show_loading_indicator: 로딩 인디케이터 표시 시작")
+
+        # 1. image_label의 부모가 image_container인지, 그리고 유효한지 확인
+        if self.image_label.parent() is not self.image_container or \
+           not self.image_container or \
+           self.image_container.width() <= 0 or \
+           self.image_container.height() <= 0:
+            logging.warning("show_loading_indicator: image_container가 유효하지 않거나 크기가 없어 로딩 인디케이터 중앙 정렬 불가. 기본 동작 수행.")
+            # 기존 로직 (크기 설정 없이)
+            loading_pixmap = QPixmap(200, 200)
+            loading_pixmap.fill(QColor(40, 40, 40))
+            self.image_label.setPixmap(loading_pixmap)
+            self.image_label.setText(LanguageManager.translate("이미지 로드 중..."))
+            self.image_label.setStyleSheet("color: white; background-color: transparent;")
+            self.image_label.setAlignment(Qt.AlignCenter) # image_label 내부에서 중앙 정렬
+            return
+
+        # 2. image_container의 현재 크기를 가져옵니다.
+        container_width = self.image_container.width()
+        container_height = self.image_container.height()
+        logging.debug(f"  image_container 크기: {container_width}x{container_height}")
+
+        # 3. image_label의 geometry를 image_container의 전체 영역으로 설정합니다.
+        #    이렇게 하면 image_label이 image_container를 꽉 채우게 됩니다.
+        self.image_label.setGeometry(0, 0, container_width, container_height)
+        logging.debug(f"  image_label geometry 설정: 0,0, {container_width}x{container_height}")
+
+        # 4. 로딩 플레이스홀더 픽스맵 생성 (선택 사항: 크기를 image_label에 맞출 수도 있음)
+        #    기존 200x200 크기를 유지하고, image_label 내에서 중앙 정렬되도록 합니다.
+        #    또는, 로딩 아이콘이 너무 커지는 것을 방지하기 위해 적절한 크기를 유지합니다.
+        placeholder_size = min(200, container_width // 2, container_height // 2) # 너무 커지지 않도록 제한
+        if placeholder_size < 50: placeholder_size = 50 # 최소 크기 보장
+        
+        loading_pixmap = QPixmap(placeholder_size, placeholder_size)
+        loading_pixmap.fill(QColor(40, 40, 40)) # 어두운 회색 배경
+
+        # 5. image_label에 픽스맵과 텍스트 설정
         self.image_label.setPixmap(loading_pixmap)
         self.image_label.setText(LanguageManager.translate("이미지 로드 중..."))
+        
+        # 6. image_label의 스타일과 정렬 설정
+        #    - 배경은 투명하게 하여 image_container의 검은색 배경이 보이도록 합니다.
+        #    - 텍스트 색상은 흰색으로 합니다.
+        #    - setAlignment(Qt.AlignCenter)를 통해 픽스맵과 텍스트가 image_label의 중앙에 오도록 합니다.
+        #      (image_label이 이제 image_container 전체 크기이므로, 이는 곧 캔버스 중앙 정렬을 의미합니다.)
         self.image_label.setStyleSheet("color: white; background-color: transparent;")
+        self.image_label.setAlignment(Qt.AlignCenter)
+
+        logging.debug("show_loading_indicator: 로딩 인디케이터 표시 완료 (중앙 정렬됨)")
 
     def load_image_async(self, image_path, requested_index):
         """이미지 비동기 로딩 (높은 우선순위)"""
@@ -8451,96 +8495,6 @@ class PhotoSortApp(QMainWindow):
         self.original_pixmap = None
         self.update_counters()
 
-    # 구버전
-    # def preload_adjacent_images(self, current_index):
-    #     """인접 이미지 미리 로드 - 스마트 로딩 시스템"""
-    #     if not self.image_files:
-    #         return
-        
-    #     total_images = len(self.image_files)
-        
-    #     # 이동 방향 감지 (이전과 동일)
-    #     direction = 1  # 기본값: 앞으로 이동
-    #     if hasattr(self, 'previous_image_index'):
-    #         if self.previous_image_index < current_index:
-    #             direction = 1  # 앞으로 이동 중
-    #         elif self.previous_image_index > current_index:
-    #             direction = -1  # 뒤로 이동 중
-        
-    #     # 현재 인덱스 저장 (다음 호출에서 방향 감지용)
-    #     self.previous_image_index = current_index
-        
-    #     # 1. 이미지 로더 캐시 상태 확인
-    #     cached_images = set()
-    #     requested_images = set()  # 이미 요청된 이미지들
-        
-    #     # 현재 캐시에 있는 이미지 확인
-    #     for i in range(max(0, current_index - 3), min(total_images, current_index + 8)):
-    #         img_path = str(self.image_files[i])
-    #         if img_path in self.image_loader.cache:
-    #             cached_images.add(i)
-        
-    #     # 2. 우선적으로 로드해야 할 이미지 결정
-    #     # 앞으로 최대 6개, 뒤로 최대 2개의 이미지 로드
-    #     to_preload = []
-        
-    #     # 앞으로 이동 중이면 앞쪽을 더 많이 로드
-    #     if direction >= 0:
-    #         # 앞쪽 6개
-    #         for offset in range(1, 7):
-    #             idx = (current_index + offset) % total_images
-    #             if idx not in cached_images:
-    #                 to_preload.append((idx, "forward", offset))
-            
-    #         # 뒤쪽 2개
-    #         for offset in range(1, 3):
-    #             idx = (current_index - offset) % total_images
-    #             if idx not in cached_images:
-    #                 to_preload.append((idx, "backward", offset))
-    #     else:
-    #         # 뒤로 이동 중이면 뒤쪽을 더 많이 로드
-    #         # 뒤쪽 6개
-    #         for offset in range(1, 7):
-    #             idx = (current_index - offset) % total_images
-    #             if idx not in cached_images:
-    #                 to_preload.append((idx, "backward", offset))
-            
-    #         # 앞쪽 2개
-    #         for offset in range(1, 3):
-    #             idx = (current_index + offset) % total_images
-    #             if idx not in cached_images:
-    #                 to_preload.append((idx, "forward", offset))
-        
-    #     # 3. 우선순위에 따라 로드 요청
-    #     for idx, direction_type, offset in to_preload:
-    #         img_path = str(self.image_files[idx])
-    #         if img_path in requested_images:
-    #             continue
-            
-    #         # 우선순위 결정
-    #         if direction_type == "forward":
-    #             if offset <= 3:
-    #                 priority = 'high'  # 앞으로 가까운 이미지
-    #             else:
-    #                 priority = 'medium'  # 앞으로 먼 이미지
-    #         else:  # backward
-    #             if offset <= 2:
-    #                 priority = 'medium'  # 뒤로 가까운 이미지
-    #             else:
-    #                 priority = 'low'  # 뒤로 먼 이미지
-            
-    #         # 로드 요청 제출
-    #         self.resource_manager.submit_imaging_task_with_priority(
-    #             priority,
-    #             self.image_loader._preload_image,
-    #             img_path
-    #         )
-            
-    #         requested_images.add(img_path)
-            
-    #         # 디버그 정보 추가
-    #         if offset <= 3:
-    #             logging.debug(f"Preloading: {direction_type} {offset} (priority: {priority}): {Path(img_path).name}")
 
 
     def preload_adjacent_images(self, current_index):
