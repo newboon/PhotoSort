@@ -30,13 +30,12 @@ import rawpy
 from PIL import Image, ImageQt
 
 
-
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
-                           QThread, QTimer, QUrl, Signal, Q_ARG, QRect)
+                           QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, 
                           QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, 
-                          QPen, QPixmap, QWheelEvent, QFontMetrics)
+                          QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QDialog, QFileDialog, QFrame, QGridLayout, 
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
@@ -518,7 +517,7 @@ class UIScaleManager:
 
             screen_geometry = screen.geometry()
             vertical_resolution = screen_geometry.height()
-            is_compact = vertical_resolution < 1601 
+            is_compact = vertical_resolution < 1201 
 
             if is_compact:
                 cls._current_settings = cls.COMPACT_SETTINGS
@@ -1339,12 +1338,6 @@ class ImageLoader(QObject):
         self.last_requested_page = -1  # 마지막으로 요청된 페이지
         self._raw_load_strategy = "preview" # PhotoSortApp에서 명시적으로 설정하기 전까지의 기본값
         self.load_executor = self.resource_manager.imaging_thread_pool
-
-        # 디코더 결과 처리 타이머 설정
-        self.decoder_timer = QTimer()
-        self.decoder_timer.setInterval(100)  # 100ms 마다 결과 확인
-        self.decoder_timer.timeout.connect(self.check_decoder_results)
-        self.decoder_timer.start()
         
         # RAW 디코딩 보류 중인 파일 추적 
         self.pending_raw_decoding = set()
@@ -1583,14 +1576,16 @@ class ImageLoader(QObject):
         return None, None, None
     
     def load_image_with_orientation(self, file_path):
-        """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 방식은 _raw_load_strategy 따름)"""
-
-        logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 현재 내부 전략: {self._raw_load_strategy}") # <<< 로그 추가
+        """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 방식은 _raw_load_strategy 따름)
+           RAW 디코딩은 ResourceManager를 통해 요청하고, 이 메서드는 디코딩된 데이터 또는 미리보기를 반환합니다.
+           실제 디코딩 작업은 비동기로 처리될 수 있으며, 이 함수는 즉시 QPixmap을 반환하지 않을 수 있습니다.
+           대신 PhotoSortApp의 _load_image_task 에서 이 함수를 호출하고 콜백으로 결과를 받습니다.
+        """
+        logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 현재 내부 전략: {self._raw_load_strategy}")
 
         if not ResourceManager.instance()._running:
             logging.info(f"ImageLoader.load_image_with_orientation: ResourceManager 종료 중, 로드 중단 ({Path(file_path).name})")
-            return QPixmap() # 빈 QPixmap 반환
-        # --- 확인 끝 ---
+            return QPixmap()
 
         if file_path in self.cache:
             self.cache.move_to_end(file_path)
@@ -1598,13 +1593,11 @@ class ImageLoader(QObject):
 
         file_path_obj = Path(file_path)
         is_raw = file_path_obj.suffix.lower() in self.raw_extensions
-        pixmap = None # 결과 Pixmap 변수 초기화
+        pixmap = None
 
         if is_raw:
-            # PhotoSortApp에서 설정한 _raw_load_strategy 값을 사용
             current_processing_method = self._raw_load_strategy
             logging.debug(f"ImageLoader ({id(self)}): RAW 파일 '{file_path_obj.name}' 처리 시작, 방식: {current_processing_method}")
-
 
             if current_processing_method == "preview":
                 logging.info(f"ImageLoader: 'preview' 방식으로 로드 시도 ({file_path_obj.name})")
@@ -1613,172 +1606,118 @@ class ImageLoader(QObject):
                     pixmap = preview_pixmap_result
                 else:
                     logging.warning(f"'preview' 방식 실패, 미리보기 로드 불가 ({file_path_obj.name})")
-                    pixmap = QPixmap() # 빈 QPixmap 반환
+                    pixmap = QPixmap()
 
             elif current_processing_method == "decode":
-                logging.info(f"ImageLoader: 'decode' 방식으로 로드 시도 ({file_path_obj.name})")
-                
-                # 중복 디코딩 방지 로직 (기존 유지)
-                if file_path in self.pending_raw_decoding:
-                    logging.debug(f"이미 디코딩 작업 보류 중: {file_path_obj.name}")
-                    # return QPixmap() # 빈 픽스맵 또는 플레이스홀더 반환
-                    placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
-                    return placeholder
+                # "decode" 전략일 경우, 실제 디코딩은 PhotoSortApp._handle_raw_decode_request 를 통해
+                # ResourceManager.submit_raw_decoding 로 요청되고, 콜백으로 처리됩니다.
+                # 이 함수(load_image_with_orientation)는 해당 비동기 작업의 "결과"를 기다리거나
+                # 즉시 반환하는 동기적 디코딩을 수행하는 대신,
+                # "디코딩이 필요하다"는 신호나 플레이스홀더를 반환하고 실제 데이터는 콜백에서 처리되도록 설계해야 합니다.
+                # PhotoSortApp._load_image_task 에서 이미 이 함수를 호출하고 있으므로,
+                # 여기서는 "decode"가 필요하다는 것을 나타내는 특별한 값을 반환하거나,
+                # PhotoSortApp._load_image_task에서 이 분기를 직접 처리하도록 합니다.
 
+                # 현재 설계에서는 PhotoSortApp._load_image_task가 이 함수를 호출하고,
+                # 여기서 직접 rawpy 디코딩을 "시도"합니다. 만약 RawDecoderPool을 사용하려면,
+                # 이 부분이 크게 변경되어야 합니다.
+                # 여기서는 기존 방식(직접 rawpy 호출)을 유지하되, 그 호출이 스레드 풀 내에서 일어난다는 점을 명시합니다.
+                # RawDecoderPool을 사용하려면 PhotoSortApp._load_image_task에서 분기해야 합니다.
+
+                # --- 기존 직접 rawpy 디코딩 로직 (스레드 풀 내에서 실행됨) ---
+                logging.info(f"ImageLoader: 'decode' 방식으로 *직접* 로드 시도 (스레드 풀 내) ({file_path_obj.name})")
+                # (중복 디코딩 방지 로직 등은 기존대로 유지)
                 current_time = time.time()
                 if file_path_obj.name in self.recently_decoded:
                     last_decode_time = self.recently_decoded[file_path_obj.name]
                     if current_time - last_decode_time < self.decoding_cooldown:
-                        logging.debug(f"최근 디코딩한 파일: {file_path_obj.name}, 플레이스홀더 반환")
+                        logging.debug(f"최근 디코딩한 파일(성공/실패 무관): {file_path_obj.name}, 플레이스홀더 반환")
                         placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
                         return placeholder
                 
                 try:
-                    # 최근 디코딩 기록에 추가 (시작 시점)
-                    self.recently_decoded[file_path_obj.name] = current_time
-
-                    # --- rawpy.imread 호출 전 종료 플래그 확인 ---
-                    if not ResourceManager.instance()._running:
-                        logging.info(f"ImageLoader.load_image_with_orientation (decode): ResourceManager 종료 중, rawpy.imread 중단 ({Path(file_path).name})")
+                    self.recently_decoded[file_path_obj.name] = current_time # 시도 기록
+                    if not ResourceManager.instance()._running: # 추가 확인
                         return QPixmap()
 
                     with rawpy.imread(file_path) as raw:
-                        # postprocess 파라미터 확인 (use_camera_wb 등)
-                        rgb = raw.postprocess(use_camera_wb=True, output_bps=8, no_auto_bright=False) # no_auto_bright 추가 시도
+                        rgb = raw.postprocess(use_camera_wb=True, output_bps=8, no_auto_bright=False)
                         height, width, _ = rgb.shape
-                        rgb_contiguous = np.ascontiguousarray(rgb) # 메모리 연속성 보장
+                        rgb_contiguous = np.ascontiguousarray(rgb)
                         qimage = QImage(rgb_contiguous.data, width, height, rgb_contiguous.strides[0], QImage.Format_RGB888)
                         pixmap_result = QPixmap.fromImage(qimage)
 
                         if pixmap_result and not pixmap_result.isNull():
                             pixmap = pixmap_result
-                            logging.info(f"RAW 디코딩 성공 ({file_path_obj.name})")
-                        else:
-                            logging.warning(f"RAW 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
+                            logging.info(f"RAW 직접 디코딩 성공 (스레드 풀 내) ({file_path_obj.name})")
+                        else: # QPixmap 변환 실패
+                            logging.warning(f"RAW 직접 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
                             pixmap = QPixmap()
-                            self.decodingFailedForFile.emit(file_path) # 디코딩 실패 시그널 발생
+                            self.decodingFailedForFile.emit(file_path) # 시그널 발생
+                except Exception as e_raw_decode:
+                    logging.error(f"RAW 직접 디코딩 실패 (스레드 풀 내) ({file_path_obj.name}): {e_raw_decode}")
+                    pixmap = QPixmap()
+                    self.decodingFailedForFile.emit(file_path) # 시그널 발생
                 
-                except rawpy.LibRawIOError as e_io:
-                    logging.error(f"'decode' 방식 실패 (I/O 오류) ({file_path_obj.name}): {e_io}")
-                    pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path)
-                except rawpy.LibRawUnsupportedThumbnailError as e_thumb: #이건 미리보기 관련이지만, 디코딩 경로에서 나올수도있음
-                    logging.error(f"'decode' 방식 실패 (썸네일 관련 오류) ({file_path_obj.name}): {e_thumb}")
-                    pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path)
-                except rawpy.LibRawDecodingError as e_decode_err: # 명시적인 디코딩 에러
-                    logging.error(f"'decode' 방식 실패 (디코딩 오류) ({file_path_obj.name}): {e_decode_err}")
-                    pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path)
-                except Exception as e_raw_read: # 기타 rawpy 관련 또는 일반 예외
-                    logging.error(f"'decode' 방식 실패, 파일 읽기/처리 중 예상치 못한 오류 ({file_path_obj.name}): {e_raw_read}")
-                    import traceback
-                    traceback.print_exc()
-                    pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path) # 실패 시그널
-
                 self._clean_old_decoding_history(current_time)
+                # --- 기존 직접 rawpy 디코딩 로직 끝 ---
 
-            else: # _raw_load_strategy가 None이거나 알 수 없는 값일 경우 (기본값으로 preview 사용)
+            else: # 알 수 없는 전략
                 logging.warning(f"ImageLoader: 알 수 없거나 설정되지 않은 _raw_load_strategy ('{current_processing_method}'). 'preview' 사용 ({file_path_obj.name})")
+                # ... (preview 로직과 동일) ...
                 preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
                 if preview_pixmap_result and not preview_pixmap_result.isNull():
                     pixmap = preview_pixmap_result
                 else:
                     pixmap = QPixmap()
 
-            # 최종적으로 pixmap이 유효하면 캐시에 추가하고 반환
             if pixmap and not pixmap.isNull():
                 self._add_to_cache(file_path, pixmap)
                 return pixmap
             else:
-                # RAW 처리 (preview 또는 decode)가 실패했고, 빈 QPixmap이 반환될 경우
                 logging.error(f"RAW 처리 최종 실패 ({file_path_obj.name}), 빈 QPixmap 반환됨.")
-                return QPixmap() # 빈 QPixmap 반환
-        # --- RAW 파일 처리 로직 끝 ---
-
-        # --- JPG 파일 처리 로직 (수정) ---
-        else: # Not RAW
+                return QPixmap()
+        else: # JPG 파일
+            # ... (기존 JPG 로직은 변경 없음) ...
             try:
-                # --- Image.open 호출 전 종료 플래그 확인 ---
                 if not ResourceManager.instance()._running:
-                    logging.info(f"ImageLoader.load_image_with_orientation (JPG): ResourceManager 종료 중, Image.open 중단 ({Path(file_path).name})")
                     return QPixmap()
-                # --- 확인 끝 ---
-                # Use context manager for file opening
                 with open(file_path, 'rb') as f:
-                    # Load with PIL
                     image = Image.open(f)
-                    # Ensure image data is loaded to access EXIF before closing file
                     image.load()
-
                 orientation = 1
-                # Check EXIF using Pillow's method
-                if hasattr(image, 'getexif'): # Use getexif() for modern Pillow
+                if hasattr(image, 'getexif'):
                     exif = image.getexif()
                     if exif and 0x0112 in exif:
                         orientation = exif[0x0112]
-
-                # Apply orientation using Pillow
-                if orientation > 1:
-                    if orientation == 2: 
-                        image = image.transpose(Image.FLIP_LEFT_RIGHT)
-                    elif orientation == 3: 
-                        image = image.transpose(Image.ROTATE_180)
-                    elif orientation == 4: 
-                        image = image.transpose(Image.FLIP_TOP_BOTTOM)
-                    elif orientation == 5: 
-                        image = image.transpose(Image.TRANSPOSE)
-                    elif orientation == 6: 
-                        image = image.transpose(Image.ROTATE_270)
-                    elif orientation == 7: 
-                        image = image.transpose(Image.TRANSVERSE)
-                    elif orientation == 8: 
-                        image = image.transpose(Image.ROTATE_90)
-                    
-                # 이미지 모드 확인 및 변환 (필요시)
-                if image.mode == 'P' or image.mode == 'RGBA':
-                    image = image.convert('RGBA')
-                elif image.mode != 'RGB':
-                    image = image.convert('RGB')
-                    
-                # PIL Image를 QImage로 수동 변환 (ImageQt 사용하지 않음)
+                if orientation > 1: # ... (방향 전환 로직) ...
+                    if orientation == 2: image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                    elif orientation == 3: image = image.transpose(Image.ROTATE_180)
+                    elif orientation == 4: image = image.transpose(Image.FLIP_TOP_BOTTOM)
+                    elif orientation == 5: image = image.transpose(Image.TRANSPOSE)
+                    elif orientation == 6: image = image.transpose(Image.ROTATE_270)
+                    elif orientation == 7: image = image.transpose(Image.TRANSVERSE)
+                    elif orientation == 8: image = image.transpose(Image.ROTATE_90)
+                if image.mode == 'P' or image.mode == 'RGBA': image = image.convert('RGBA')
+                elif image.mode != 'RGB': image = image.convert('RGB')
                 img_format = QImage.Format_RGBA8888 if image.mode == 'RGBA' else QImage.Format_RGB888
                 bytes_per_pixel = 4 if image.mode == 'RGBA' else 3
-                
                 data = image.tobytes('raw', image.mode)
-                qimage = QImage(
-                    data, 
-                    image.width, 
-                    image.height,
-                    image.width * bytes_per_pixel,
-                    img_format
-                )
-                
-                # QImage에서 QPixmap 생성
+                qimage = QImage(data, image.width, image.height, image.width * bytes_per_pixel, img_format)
                 pixmap = QPixmap.fromImage(qimage)
-
                 if pixmap and not pixmap.isNull():
                     self._add_to_cache(file_path, pixmap)
                     return pixmap
-                else:
+                else: # QPixmap 변환 실패
                     logging.warning(f"JPG QPixmap 변환 실패 ({file_path_obj.name})")
-                    return QPixmap() # Return empty if conversion fails
-
-            except Exception as e:
-                logging.error(f"JPG 이미지 처리 오류 ({file_path_obj.name}): {e}")
-                # Fallback: Try loading directly with QPixmap
-                try:
+                    return QPixmap()
+            except Exception as e_jpg:
+                logging.error(f"JPG 이미지 처리 오류 ({file_path_obj.name}): {e_jpg}")
+                try: # Fallback
                     pixmap = QPixmap(file_path)
-                    if not pixmap.isNull():
-                        self._add_to_cache(file_path, pixmap)
-                        return pixmap
-                    else:
-                        logging.warning(f"기본 QPixmap 로드 실패 (JPG) ({file_path_obj.name})")
-                        return QPixmap() # Return empty if fallback fails
-                except Exception as e2:
-                    logging.exception(f"기본 QPixmap 로드 중 예외 (JPG) ({file_path_obj.name}): {e2}")
-                    return QPixmap() # Return empty on exception
+                    if not pixmap.isNull(): self._add_to_cache(file_path, pixmap); return pixmap
+                    else: return QPixmap()
+                except Exception: return QPixmap()
 
     
     def set_raw_load_strategy(self, strategy: str):
@@ -2116,7 +2055,24 @@ class PhotoSortApp(QMainWindow):
         self.viewport_move_timer.setInterval(16) # 약 60 FPS (1000ms / 60 ~= 16ms)
         self.viewport_move_timer.timeout.connect(self.smooth_viewport_move)
         self.pressed_keys_for_viewport = set() # 현재 뷰포트 이동을 위해 눌린 키 저장
-        # --- 변수 추가 끝 ---
+
+        # 뷰포트 저장 및 복구를 위한 변수
+        self.viewport_focus_by_orientation = {
+            # "landscape": {"rel_center": QPointF(0.5, 0.5), "zoom_level": "100%"},
+            # "portrait": {"rel_center": QPointF(0.5, 0.5), "zoom_level": "100%"}
+        } # 초기에는 비어있거나 기본값으로 채울 수 있음
+        # --- ---
+
+        self.current_active_rel_center = QPointF(0.5, 0.5)
+        self.current_active_zoom_level = "Fit"
+        self.zoom_change_trigger = None        
+        # self.zoom_triggered_by_double_click = False # 이전 플래그 -> self.zoom_change_trigger로 대체
+        # 현재 활성화된(보여지고 있는) 뷰포트의 상대 중심과 줌 레벨
+        # 이 정보는 사진 변경 시 다음 사진으로 "이어질" 수 있음
+        self.current_active_rel_center = QPointF(0.5, 0.5)
+        self.current_active_zoom_level = "Fit" # 초기값은 Fit
+        self.zoom_change_trigger = None # "double_click", "space_key_to_zoom", "radio_button", "photo_change_same_orientation", "photo_change_diff_orientation"
+
 
         # 메모리 모니터링 및 자동 조정을 위한 타이머
         self.memory_monitor_timer = QTimer(self)
@@ -2143,6 +2099,13 @@ class PhotoSortApp(QMainWindow):
 
         # 리소스 매니저 초기화
         self.resource_manager = ResourceManager.instance()
+
+        # RAW 디코더 결과 처리 타이머 
+        if not hasattr(self, 'raw_result_processor_timer'): # 중복 생성 방지
+            self.raw_result_processor_timer = QTimer(self)
+            self.raw_result_processor_timer.setInterval(100)  # 0.1초마다 결과 확인 (조정 가능)
+            self.raw_result_processor_timer.timeout.connect(self.process_pending_raw_results)
+            self.raw_result_processor_timer.start()
 
         # --- 그리드 썸네일 사전 생성을 위한 변수 추가 ---
         self.grid_thumbnail_cache_2x2 = {} # 2x2 그리드 썸네일 캐시 (key: image_path, value: QPixmap)
@@ -2639,6 +2602,73 @@ class PhotoSortApp(QMainWindow):
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
 
+    def _save_orientation_viewport_focus(self, orientation_type: str, rel_center: QPointF, zoom_level_str: str):
+        """주어진 화면 방향 타입('landscape' 또는 'portrait')에 대한 뷰포트 중심과 줌 레벨을 저장합니다."""
+        if orientation_type not in ["landscape", "portrait"]:
+            logging.warning(f"잘못된 orientation_type으로 포커스 저장 시도: {orientation_type}")
+            return
+
+        focus_point_info = {
+            "rel_center": rel_center,
+            "zoom_level": zoom_level_str
+        }
+        self.viewport_focus_by_orientation[orientation_type] = focus_point_info
+        logging.debug(f"방향별 뷰포트 포커스 저장: {orientation_type} -> {focus_point_info}")
+
+    def _get_current_view_relative_center(self):
+        """현재 image_label의 뷰포트 중심의 상대 좌표를 반환합니다."""
+        if not self.original_pixmap or self.zoom_mode == "Fit": # Fit 모드에서는 항상 (0.5,0.5)로 간주 가능
+            return QPointF(0.5, 0.5)
+
+        view_rect = self.scroll_area.viewport().rect()
+        image_label_pos = self.image_label.pos()
+        current_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        zoomed_img_width = self.original_pixmap.width() * current_zoom_factor
+        zoomed_img_height = self.original_pixmap.height() * current_zoom_factor
+
+        if zoomed_img_width <= 0 or zoomed_img_height <= 0: return QPointF(0.5, 0.5)
+
+        viewport_center_x_abs = view_rect.center().x() - image_label_pos.x()
+        viewport_center_y_abs = view_rect.center().y() - image_label_pos.y()
+        
+        rel_x = max(0.0, min(1.0, viewport_center_x_abs / zoomed_img_width))
+        rel_y = max(0.0, min(1.0, viewport_center_y_abs / zoomed_img_height))
+        return QPointF(rel_x, rel_y)
+
+    def _get_orientation_viewport_focus(self, orientation_type: str, requested_zoom_level: str):
+        """
+        주어진 화면 방향 타입에 저장된 포커스 정보를 반환합니다.
+        저장된 상대 중심과 "요청된" 줌 레벨을 함께 반환합니다.
+        정보가 없으면 기본값(중앙, 요청된 줌 레벨)을 반환합니다.
+        """
+        if orientation_type in self.viewport_focus_by_orientation:
+            saved_focus = self.viewport_focus_by_orientation[orientation_type]
+            # 저장된 상대 중심은 사용하되, 줌 레벨은 현재 요청된 줌 레벨을 따름
+            logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 사용: rel_center={saved_focus['rel_center']} (원래 줌: {saved_focus['zoom_level']}), 요청 줌: {requested_zoom_level}")
+            return saved_focus["rel_center"], requested_zoom_level # 상대 중심과 "요청된" 줌 레벨
+        
+        logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 없음. 중앙 및 요청 줌({requested_zoom_level}) 사용.")
+        return QPointF(0.5, 0.5), requested_zoom_level # 기본값: 중앙, 요청된 줌 레벨
+
+
+    def _prepare_for_photo_change(self):
+        """사진 변경 직전에 현재 활성 뷰포트와 이전 이미지 상태를 기록합니다."""
+        # 현재 활성 뷰포트 정보를 "방향 타입" 고유 포커스로 저장
+        if self.grid_mode == "Off" and self.current_active_zoom_level in ["100%", "200%"] and \
+           self.original_pixmap and hasattr(self, 'current_image_orientation') and self.current_image_orientation:
+            self._save_orientation_viewport_focus(
+                self.current_image_orientation, # 현재 이미지의 방향 타입
+                self.current_active_rel_center, 
+                self.current_active_zoom_level
+            )
+        
+        # 다음 이미지 로드 시 비교를 위한 정보 저장
+        self.previous_image_orientation_for_carry_over = self.current_image_orientation
+        self.previous_zoom_mode_for_carry_over = self.current_active_zoom_level # 현재 "활성" 줌 레벨
+        self.previous_active_rel_center_for_carry_over = self.current_active_rel_center # 현재 "활성" 중심
+
+
+
     def _generate_default_session_name(self):
         """현재 상태를 기반으로 기본 세션 이름을 생성합니다."""
         base_folder_name = "Untitled"
@@ -2848,7 +2878,7 @@ class PhotoSortApp(QMainWindow):
         self.update_counter_layout()
         self.toggle_minimap(self.minimap_toggle.isChecked())
         if self.grid_mode == "Off" and images_loaded_successfully:
-            self.start_background_image_preloading()
+            self.start_background_thumbnail_preloading()
         
         # 세션 관리 팝업이 열려있다면 닫기
         if self.session_management_popup and self.session_management_popup.isVisible():
@@ -3463,7 +3493,7 @@ class PhotoSortApp(QMainWindow):
         # 현재 카운트 정보 업데이트
         self.update_image_count_label()
 
-    def start_background_image_preloading(self):
+    def start_background_thumbnail_preloading(self):
         """Grid Off 상태일 때 2x2 및 3x3 썸네일 백그라운드 생성을 시작합니다."""
         if self.grid_mode != "Off" or not self.image_files:
             return  # Grid 모드이거나 이미지 파일이 없으면 실행 안 함
@@ -3481,7 +3511,7 @@ class PhotoSortApp(QMainWindow):
             return
         
         # 시스템 메모리에 따라 프리로드 범위 조정
-        preload_range = self.calculate_adaptive_preload_range()
+        preload_range = self.calculate_adaptive_thumbnail_preload_range()
         
         # 인접 이미지 우선 처리 (현재 이미지 ± preload_range)
         futures = []
@@ -3531,20 +3561,20 @@ class PhotoSortApp(QMainWindow):
         self.active_thumbnail_futures = futures
         logging.info(f"총 {len(futures)}개의 이미지 사전 로딩 작업 제출됨.")
 
-    def calculate_adaptive_preload_range(self):
+    def calculate_adaptive_thumbnail_preload_range(self):
         """시스템 메모리에 따라 프리로딩 범위 결정"""
         try:
             import psutil
             system_memory_gb = psutil.virtual_memory().total / (1024 * 1024 * 1024)
             
-            if system_memory_gb >= 32:
+            if system_memory_gb >= 24:
+                return 8  # 앞뒤 각각 8개 이미지 (총 17개)
+            elif system_memory_gb >= 12:
                 return 5  # 앞뒤 각각 5개 이미지 (총 11개)
-            elif system_memory_gb >= 16:
-                return 3  # 앞뒤 각각 3개 이미지 (총 7개)
             else:
-                return 2  # 앞뒤 각각 2개 이미지 (총 5개)
+                return 3  # 앞뒤 각각 3개 이미지 (총 7개)
         except:
-            return 2  # 기본값
+            return 3  # 기본값
 
     def _preload_image_for_grid(self, image_path):
         """
@@ -4994,7 +5024,7 @@ class PhotoSortApp(QMainWindow):
 
         # --- Grid Off 상태이면 백그라운드 썸네일 생성 시작 ---
         if self.grid_mode == "Off":
-            self.start_background_image_preloading()
+            self.start_background_thumbnail_preloading()
 
         return True # 파일 로드 성공 반환
     
@@ -5017,123 +5047,122 @@ class PhotoSortApp(QMainWindow):
         """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (캐시 활용)"""
         return self.image_loader.load_image_with_orientation(file_path)
 
-    def apply_zoom_to_image(self):
-        """현재 이미지에 확대 모드 적용 (Grid Off 모드에서만 사용)"""
-        if self.grid_mode != "Off": return
 
+
+    def apply_zoom_to_image(self):
+        if self.grid_mode != "Off": return # Grid 모드에서는 이 함수 사용 안 함
         if not self.original_pixmap:
+            logging.debug("apply_zoom_to_image: original_pixmap 없음. 아무것도 하지 않음.")
+            # 이미지가 없으면 Fit 모드처럼 빈 화면을 중앙에 표시하거나,
+            # 아예 아무 작업도 하지 않도록 여기서 명확히 return.
+            # display_current_image에서 original_pixmap이 없으면 이미 빈 화면 처리함.
             return
 
-        reset_panning_due_to_orientation_change = False
-        if self.zoom_mode in ["100%", "200%"]:
-            if (self.previous_image_orientation and self.current_image_orientation and
-                self.previous_image_orientation != self.current_image_orientation):
-                reset_panning_due_to_orientation_change = True
-                logging.debug(f"이미지 방향 변경 감지: {self.previous_image_orientation} -> {self.current_image_orientation}, 뷰포트 중앙 이동 준비")
+        view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
+        img_width_orig = self.original_pixmap.width(); img_height_orig = self.original_pixmap.height()
+        
+        # 현재 이미지의 방향 ("landscape" 또는 "portrait") - self.current_image_orientation은 이미 설정되어 있어야 함
+        image_orientation_type = self.current_image_orientation 
+        if not image_orientation_type: # 비정상 상황
+            logging.warning("apply_zoom_to_image: current_image_orientation이 설정되지 않음!")
+            image_orientation_type = "landscape" # 기본값
 
-        # self.image_label.clear() # 이미지를 깨끗하게 다시 그리기 위해
-        # self.image_label.setPixmap(QPixmap())
-
+        # 1. Fit 모드 처리
         if self.zoom_mode == "Fit":
-            # ... (Fit 모드 로직은 기존과 동일) ...
+            # Fit으로 변경될 때, 이전 100/200 상태의 "활성" 포커스를 해당 "방향 타입"의 고유 포커스로 저장
+            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "200%"]:
+                self._save_orientation_viewport_focus(
+                    image_orientation_type, # 현재 이미지의 방향에
+                    self.current_active_rel_center, # 현재 활성 중심을
+                    self.current_active_zoom_level  # 현재 활성 줌 레벨로 저장
+                )
+            
+            # ... (Fit 모드 표시 로직) ...
             scaled_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-            self.image_label.setPixmap(scaled_pixmap)
+            self.image_label.setPixmap(scaled_pixmap);
             self.image_label.setGeometry(
-                (self.scroll_area.width() - scaled_pixmap.width()) // 2,
-                (self.scroll_area.height() - scaled_pixmap.height()) // 2,
-                scaled_pixmap.width(),
-                scaled_pixmap.height()
+                (view_width - scaled_pixmap.width()) // 2, (view_height - scaled_pixmap.height()) // 2,
+                scaled_pixmap.width(), scaled_pixmap.height()
             )
             self.image_container.setMinimumSize(1, 1)
-        else:  # 100% or 200%
-            zoom_percent = 1.0 if self.zoom_mode == "100%" else 2.0
-            img_width = self.original_pixmap.width()
-            img_height = self.original_pixmap.height()
-            view_width = self.scroll_area.width()
-            view_height = self.scroll_area.height()
-            zoomed_width = int(img_width * zoom_percent)
-            zoomed_height = int(img_height * zoom_percent)
 
-            new_x, new_y = 0, 0
+            self.current_active_zoom_level = "Fit"
+            self.current_active_rel_center = QPointF(0.5, 0.5)
+            self.zoom_change_trigger = None
+            if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
+            return
 
-            # --- 플래그에 따른 위치 결정 우선순위 ---
-            # 1. 더블클릭 지점 중심 확대 (center_on_click이 True일 때 최우선)
-            if self.center_on_click:
-                logging.debug("apply_zoom_to_image: center_on_click=True, 더블클릭 지점 중심으로 확대")
-                scaled_pixmap_for_fit_calc = self.high_quality_resize_to_fit(self.original_pixmap) # Fit일 때 크기 기준
-                fit_width = scaled_pixmap_for_fit_calc.width()
-                fit_height = scaled_pixmap_for_fit_calc.height()
-                img_x_fit = (view_width - fit_width) // 2
-                img_y_fit = (view_height - fit_height) // 2
-                click_x_in_fit_image = self.double_click_pos.x() - img_x_fit
-                click_y_in_fit_image = self.double_click_pos.y() - img_y_fit
-                
-                rel_x = click_x_in_fit_image / fit_width if fit_width > 0 else 0.5
-                rel_y = click_y_in_fit_image / fit_height if fit_height > 0 else 0.5
-                rel_x = max(0, min(1, rel_x)); rel_y = max(0, min(1, rel_y))
-
-                target_x_in_zoomed = int(rel_x * zoomed_width)
-                target_y_in_zoomed = int(rel_y * zoomed_height)
-                new_x = (view_width // 2) - target_x_in_zoomed
-                new_y = (view_height // 2) - target_y_in_zoomed
-
-            # 2. 이미지 방향 변경으로 인한 중앙 정렬 또는 Fit에서 전환 시 중앙 정렬 (center_image)
-            elif self.center_image or reset_panning_due_to_orientation_change:
-                if self.center_image: logging.debug("apply_zoom_to_image: center_image=True, 중앙 정렬")
-                if reset_panning_due_to_orientation_change: logging.debug("apply_zoom_to_image: reset_panning_due_to_orientation_change=True, 중앙 정렬")
-                
-                new_x = (view_width - zoomed_width) // 2
-                new_y = (view_height - zoomed_height) // 2
-            
-            # 3. 이전 위치 유지 (100% <-> 200% 전환 또는 일반 패닝)
-            else:
-                logging.debug("apply_zoom_to_image: 이전 위치 유지 또는 일반 패닝")
-                # 이전에 저장된 self.image_label.pos() 또는 현재 self.image_label.pos()를 기준으로
-                # 확대/축소 비율에 따라 위치를 조정하는 로직이 필요.
-                # 여기서는 단순화를 위해, 만약 self.image_label.pos()가 유효하다면 그 값을 사용하고,
-                # 그렇지 않으면 중앙 정렬을 기본으로 할 수 있음.
-                # 스페이스바로 Fit -> 100% 갈때도 center_image=True 설정했으므로, 이 경우는 잘 처리될 것.
-                # 100% <-> 200% 전환 시 위치 유지는 on_zoom_changed에서 last_zoom_mode를 활용한 로직이
-                # new_x, new_y를 설정해줘야 함. apply_zoom_to_image는 그 결과를 받아서 그리는 역할.
-                # 지금은 image_mouse_move_event에서만 위치가 바뀌므로, 그 외에는 중앙 정렬이 기본이 될 수 있음.
-                # on_zoom_changed에서 이전에 계산된 위치를 전달하거나, 여기서 직접 계산.
-                # 일단 여기서는 self.image_label.pos()를 사용하되, 범위 보정은 아래에서.
-                current_img_pos = self.image_label.pos()
-                
-                # 확대/축소 비율에 따른 위치 조정 (이전 줌 레벨과 현재 줌 레벨 비교 필요)
-                # 이 부분은 on_zoom_changed에서 처리하고, 여기서는 최종 위치만 받는 것이 더 깔끔.
-                # 지금은 단순하게 현재 위치를 유지하려 시도.
-                new_x = current_img_pos.x() 
-                new_y = current_img_pos.y()
-
-
-            # 위치 제한 (이미지가 화면 밖으로 나가지 않도록) - 모든 경우에 공통 적용
-            if zoomed_width <= view_width: new_x = (view_width - zoomed_width) // 2
-            else: new_x = min(0, max(view_width - zoomed_width, new_x))
-            if zoomed_height <= view_height: new_y = (view_height - zoomed_height) // 2
-            else: new_y = min(0, max(view_height - zoomed_height, new_y))
-
-            # 확대 모드에 따른 이미지 설정
-            if self.zoom_mode == "100%":
-                self.image_label.setPixmap(self.original_pixmap)
-            else:  # 200%
-                scaled_pixmap = self.original_pixmap.scaled(
-                    zoomed_width, zoomed_height, 
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
-                self.image_label.setPixmap(scaled_pixmap)
-            
-            self.image_label.setGeometry(int(new_x), int(new_y), zoomed_width, zoomed_height)
-            self.image_container.setMinimumSize(zoomed_width, zoomed_height)
-
-        self.last_zoom_mode = self.zoom_mode
+        # 2. Zoom 100% 또는 200% 처리
+        new_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        new_zoomed_width = img_width_orig * new_zoom_factor
+        new_zoomed_height = img_height_orig * new_zoom_factor
         
-        # --- 사용된 플래그들 초기화 ---
-        self.center_image = False
-        self.center_on_click = False # <<< 여기서 반드시 초기화!
+        final_target_rel_center = QPointF(0.5, 0.5) # 기본값
+        trigger = self.zoom_change_trigger 
 
-        if self.minimap_toggle.isChecked():
-            self.toggle_minimap(True)
+        if trigger == "double_click":
+            # ... (더블클릭 시 final_target_rel_center 계산 로직 - 이전과 동일) ...
+            scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
+            fit_img_rect = QRect((view_width - scaled_fit_pixmap.width()) // 2, (view_height - scaled_fit_pixmap.height()) // 2, scaled_fit_pixmap.width(), scaled_fit_pixmap.height())
+            if fit_img_rect.width() > 0 and fit_img_rect.height() > 0:
+                rel_x = (self.double_click_pos.x() - fit_img_rect.x()) / fit_img_rect.width()
+                rel_y = (self.double_click_pos.y() - fit_img_rect.y()) / fit_img_rect.height()
+                final_target_rel_center = QPointF(max(0.0, min(1.0, rel_x)), max(0.0, min(1.0, rel_y)))
+            
+            # 더블클릭으로 설정된 이 중심을 현재 "활성" 포커스로, 그리고 "방향 타입"의 고유 포커스로 업데이트
+            self.current_active_rel_center = final_target_rel_center
+            self.current_active_zoom_level = "100%" # 더블클릭은 항상 100%
+            self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, "100%")
+        
+        elif trigger == "space_key_to_zoom" or trigger == "radio_button":
+            # Fit -> 100%/200% 또는 100% <-> 200%
+            # self.current_active_rel_center 와 self.current_active_zoom_level은 호출 전에 이미
+            # _get_orientation_viewport_focus 등을 통해 "방향 타입"에 저장된 값 또는 기본값으로 설정되어 있어야 함.
+            final_target_rel_center = self.current_active_rel_center
+            # 이 새 활성 포커스를 "방향 타입"의 고유 포커스로 저장 (주로 zoom_level 업데이트 목적)
+            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+
+        elif trigger == "photo_change_carry_over_focus":
+            # 사진 변경 (방향 동일), 이전 "활성" 포커스 이어받기
+            # _on_image_loaded_for_display에서 self.current_active_...가 이미 이전 사진의 것으로 설정됨.
+            final_target_rel_center = self.current_active_rel_center
+            # 이 이어받은 포커스를 새 사진의 "방향 타입" 고유 포커스로 저장 (덮어쓰기)
+            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+        
+        elif trigger == "photo_change_central_focus":
+            # 사진 변경 (방향 다름 등), 중앙 포커스
+            # _on_image_loaded_for_display에서 self.current_active_...가 (0.5,0.5) 및 이전 줌으로 설정됨.
+            final_target_rel_center = self.current_active_rel_center # 이미 (0.5, 0.5)
+            # 이 중앙 포커스를 새 사진의 "방향 타입" 고유 포커스로 저장
+            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+        
+        else: # 명시적 트리거 없는 경우 (예: 앱 첫 실행 후 첫 이미지 확대)
+              # 현재 이미지 방향 타입에 저장된 포커스 사용, 없으면 중앙
+            final_target_rel_center, new_active_zoom = self._get_orientation_viewport_focus(image_orientation_type, self.zoom_mode)
+            self.current_active_rel_center = final_target_rel_center
+            self.current_active_zoom_level = new_active_zoom # 요청된 줌 레벨로 활성 줌 업데이트
+            # 이 포커스를 현재 "방향 타입"의 고유 포커스로 저장 (없었다면 새로 저장, 있었다면 zoom_level 업데이트)
+            self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, self.current_active_zoom_level)
+
+        # --- final_target_rel_center를 기준으로 새 뷰포트 위치 계산 및 적용 ---
+        # ... (이하 위치 계산 및 이미지 설정 로직 - 이전 답변과 동일하게 유지) ...
+        target_abs_x = final_target_rel_center.x() * new_zoomed_width; target_abs_y = final_target_rel_center.y() * new_zoomed_height
+        new_x = view_width / 2 - target_abs_x; new_y = view_height / 2 - target_abs_y
+        if new_zoomed_width <= view_width: new_x = (view_width - new_zoomed_width) // 2
+        else: new_x = min(0, max(view_width - new_zoomed_width, new_x))
+        if new_zoomed_height <= view_height: new_y = (view_height - new_zoomed_height) // 2
+        else: new_y = min(0, max(view_height - new_zoomed_height, new_y))
+
+        if self.zoom_mode == "100%": self.image_label.setPixmap(self.original_pixmap)
+        else:
+            scaled_pixmap = self.original_pixmap.scaled(int(new_zoomed_width), int(new_zoomed_height), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.image_label.setPixmap(scaled_pixmap)
+        self.image_label.setGeometry(int(new_x), int(new_y), int(new_zoomed_width), int(new_zoomed_height))
+        self.image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
+
+        self.zoom_change_trigger = None 
+        if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
+
 
     def high_quality_resize_to_fit(self, pixmap):
         """고품질 이미지 리사이징 (Fit 모드용) - 메모리 최적화"""
@@ -5306,14 +5335,26 @@ class PhotoSortApp(QMainWindow):
                 if self.minimap_visible and self.minimap_widget.isVisible():
                     self.update_minimap()
     
-    def image_mouse_release_event(self, event):
-        """이미지 영역 마우스 릴리스 이벤트 처리"""
+    def image_mouse_release_event(self, event: QMouseEvent): # QMouseEvent 타입 명시
         if event.button() == Qt.LeftButton and self.panning:
-            # 패닝 상태 해제
             self.panning = False
             self.setCursor(Qt.ArrowCursor)
             
-            # 미니맵 최종 업데이트
+            # --- 수정 시작: _save_orientation_viewport_focus 호출 시 인자 전달 ---
+            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
+               self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
+                current_image_path_str = str(self.image_files[self.current_image_index])
+                current_rel_center = self._get_current_view_relative_center() # 현재 뷰 중심 계산
+                current_zoom_level = self.zoom_mode
+                
+                # 현재 활성 포커스도 업데이트
+                self.current_active_rel_center = current_rel_center
+                self.current_active_zoom_level = current_zoom_level
+                
+                # 이미지별 고유 포커스 저장
+                self._save_orientation_viewport_focus(current_image_path_str, current_rel_center, current_zoom_level)
+            # --- 수정 끝 ---
+            
             if self.minimap_visible and self.minimap_widget.isVisible():
                 self.update_minimap()
     
@@ -5575,7 +5616,7 @@ class PhotoSortApp(QMainWindow):
             self.display_current_image() 
 
             if self.grid_mode == "Off":
-                self.start_background_image_preloading()
+                self.start_background_thumbnail_preloading()
 
     def _show_raw_processing_choice_dialog(self, is_compatible, model_name, orig_res, prev_res):
         """RAW 처리 방식 선택을 위한 맞춤형 대화상자를 표시합니다."""
@@ -6095,42 +6136,36 @@ class PhotoSortApp(QMainWindow):
         # 그리드 뷰 업데이트
         self.update_grid_view()
     
+
     def show_previous_image(self):
-        """이전 이미지 표시 (순환 기능 추가)"""
-        if not self.image_files: # 이미지가 없으면 아무것도 안 함
-            return
-
-        if self.current_image_index <= 0: # 첫 이미지에서 이전으로 가면
-            self.current_image_index = len(self.image_files) - 1 # 마지막 이미지로
-        else:
-            self.current_image_index -= 1
-        
-        # 이미지 캐시는 유지하되, 강제 새로고침 플래그 설정
-        if self.zoom_mode == "Fit" and self.grid_mode == "Off":
-            self.force_refresh = True
-        else:
-            self.force_refresh = False
-        
-        self.display_current_image()
-
+        if not self.image_files: return
+        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
+        # ... (인덱스 변경 로직) ...
+        if self.current_image_index <= 0: self.current_image_index = len(self.image_files) - 1
+        else: self.current_image_index -= 1
+        self.force_refresh = True; self.display_current_image()
     
-    def show_next_image(self):
-        """다음 이미지 표시 (순환 기능 추가)"""
-        if not self.image_files: # 이미지가 없으면 아무것도 안 함
-            return
+    def set_current_image_from_dialog(self, index):
+        if not (0 <= index < len(self.image_files)): return
+        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
+        # ... (나머지 로직) ...
+        self.current_image_index = index
+        self.force_refresh = True
+        # ... (Grid 모드/Off 모드에 따른 display_current_image 또는 update_grid_view 호출) ...
+        if self.grid_mode != "Off":
+            # ... (그리드 인덱스 설정) ...
+            self.update_grid_view()
+        else:
+            self.display_current_image()
 
-        if self.current_image_index >= len(self.image_files) - 1: # 마지막 이미지에서 다음으로 가면
-            self.current_image_index = 0 # 첫 이미지로
-        else:
-            self.current_image_index += 1
-        
-        # 이미지 캐시는 유지하되, 강제 새로고침 플래그 설정
-        if self.zoom_mode == "Fit" and self.grid_mode == "Off":
-            self.force_refresh = True
-        else:
-            self.force_refresh = False
-        
-        self.display_current_image()
+
+    def show_next_image(self):
+        if not self.image_files: return
+        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
+        # ... (인덱스 변경 로직) ...
+        if self.current_image_index >= len(self.image_files) - 1: self.current_image_index = 0
+        else: self.current_image_index += 1
+        self.force_refresh = True; self.display_current_image()
     
     def move_current_image_to_folder(self, folder_index):
         """현재 이미지를 지정된 폴더로 이동 (Grid Off 모드 전용)"""
@@ -6389,79 +6424,74 @@ class PhotoSortApp(QMainWindow):
         
         self.control_layout.addWidget(minimap_container)
 
+
     def on_zoom_changed(self, button):
-            """확대 모드 변경 처리"""
-            old_zoom_mode = self.zoom_mode
+        old_zoom_mode = self.zoom_mode 
+        new_zoom_mode = ""
+        if button == self.fit_radio: new_zoom_mode = "Fit"
+        elif button == self.zoom_100_radio: new_zoom_mode = "100%"
+        elif button == self.zoom_200_radio: new_zoom_mode = "200%"
+        else: return
+
+        if old_zoom_mode == new_zoom_mode: return # 변경 없으면 아무것도 안 함
+
+        current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
+        current_orientation = self.current_image_orientation # 이미 로드된 이미지의 방향
+
+        # 1. 변경 "전" 상태가 100% 또는 200% 였다면, 현재 "활성" 포커스를 "방향 타입"의 고유 포커스로 저장
+        if old_zoom_mode in ["100%", "200%"] and current_orientation and current_image_path_str:
+            # self.current_active_rel_center 와 old_zoom_mode (self.current_active_zoom_level과 같아야 함) 사용
+            self._save_orientation_viewport_focus(
+                current_orientation,
+                self.current_active_rel_center, 
+                old_zoom_mode # 변경 전 줌 모드
+            )
             
-            if button == self.fit_radio:
-                self.zoom_mode = "Fit"
-                
-                # Fit 모드로 전환 시 현재 이미지가 실제로 표시 중인 이미지와 일치하는지 확인
-                if self.grid_mode == "Off" and self.image_files and 0 <= self.current_image_index < len(self.image_files):
-                    current_image_path = str(self.image_files[self.current_image_index])
-                    
-                    # 1. 캐시 초기화하여 강제 리로드
-                    self.last_fit_size = (0, 0)
-                    self.fit_pixmap_cache.clear()
-                    
-                    # 2. 캐시에서 현재 이미지 다시 가져오기
-                    cached_pixmap = self.image_loader.cache.get(current_image_path)
-                    if cached_pixmap and not cached_pixmap.isNull():
-                        # 캐시된 이미지가 있으면 현재 표시 중인 이미지와 다른지 확인
-                        if self.original_pixmap != cached_pixmap:
-                            # 이미지가 다르면 현재 올바른 이미지로 강제 업데이트
-                            self.original_pixmap = cached_pixmap
-                            # 이미지 방향 정보도 업데이트
-                            if cached_pixmap.width() >= cached_pixmap.height():
-                                self.current_image_orientation = "landscape"
-                            else:
-                                self.current_image_orientation = "portrait"
-                            
-                            print(f"Fit 모드 전환: 이미지 불일치 감지, '{Path(current_image_path).name}'으로 강제 업데이트")
-                    else:
-                        # 캐시에 없으면 강제 리로드 플래그 설정
-                        self.force_refresh = True
-                        self.display_current_image()
-                        return # 리로드 중이므로 여기서 종료
+        self.zoom_mode = new_zoom_mode # 새 줌 모드 설정
 
-            elif button == self.zoom_100_radio:
-                self.zoom_mode = "100%"
-                # 100% 또는 200% Zoom 시 Grid는 Off로 변경
-                if self.grid_mode != "Off":
-                    self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
-                    self.update_grid_view() # 그리드 뷰 끄기
-                    self.update_counter_layout() # 레이아웃 업데이트 호출
+        # 2. 새 줌 모드에 따른 "활성" 포커스 설정
+        if self.zoom_mode == "Fit":
+            self.current_active_rel_center = QPointF(0.5, 0.5)
+            self.current_active_zoom_level = "Fit"
+        else: # 100% 또는 200%
+            # 새 목표 줌 레벨에 대해 "방향 타입"에 저장된 고유 포커스 가져오기
+            # _get_orientation_viewport_focus는 (rel_center, zoom_level) 튜플 반환
+            # 여기서 zoom_level은 요청한 new_zoom_mode가 됨.
+            self.current_active_rel_center, self.current_active_zoom_level = \
+                self._get_orientation_viewport_focus(current_orientation, self.zoom_mode)
+            # 이 정보는 apply_zoom_to_image에서 사용 후, 다시 _save_orientation_viewport_focus를 통해
+            # 해당 방향 타입의 고유 정보로 (주로 zoom_level이 업데이트되어) 저장됨.
+            
+        self.zoom_change_trigger = "radio_button" 
 
-            elif button == self.zoom_200_radio:
-                self.zoom_mode = "200%"
-                # 100% 또는 200% Zoom 시 Grid는 Off로 변경
-                if self.grid_mode != "Off":
-                    self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
-                    self.update_grid_view() # 그리드 뷰 끄기
-                    self.update_counter_layout() # 레이아웃 업데이트 호출
+        # Grid Off로 강제 전환 로직 (100%/200% 줌 시)
+        if self.zoom_mode != "Fit" and self.grid_mode != "Off":
+            if self.image_files and 0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files):
+                 self.current_image_index = self.grid_page_start_index + self.current_grid_index
+            else: 
+                 self.current_image_index = 0 if self.image_files else -1 # 이미지가 있다면 첫번째, 없다면 -1
+            
+            self.grid_mode = "Off"; self.grid_off_radio.setChecked(True) # 라디오 버튼 UI 업데이트
+            self.update_grid_view() # Grid 뷰 끄고 단일 이미지 뷰로 전환
+            self.update_zoom_radio_buttons_state() # 줌 버튼 상태 업데이트
+            self.update_counter_layout() # 카운터 레이아웃 업데이트
+            
+            # original_pixmap이 아직 로드 안 된 상태일 수 있음 (Grid -> Off 전환 시)
+            if self.original_pixmap is None and self.current_image_index != -1 :
+                logging.debug("on_zoom_changed: Grid에서 Off로 전환, original_pixmap 로드 위해 display_current_image 호출")
+                self.display_current_image() # 여기서 original_pixmap 로드 후 apply_zoom_to_image 호출됨
+                # display_current_image 내부의 _on_image_loaded_for_display에서 apply_zoom_to_image 호출 시
+                # self.zoom_mode 와 self.current_active_... 값들이 이미 올바르게 설정되어 있어야 함.
+                # 위에서 이미 설정했으므로 괜찮음.
+                return # display_current_image가 알아서 apply_zoom_to_image 호출하므로 여기서 종료
+        
+        # original_pixmap이 이미 있거나, display_current_image가 호출되지 않는 경우
+        if self.original_pixmap:
+            logging.debug(f"on_zoom_changed: apply_zoom_to_image 호출 (줌: {self.zoom_mode}, 활성중심: {self.current_active_rel_center})")
+            self.apply_zoom_to_image()
+        # else: original_pixmap이 없고 이미지도 없는 경우 등은 아무것도 안 함
 
-
-            # Fit에서 100% 또는 200%로 바뀔 때는 가운데로, 
-            # 100%와 200% 사이에는 위치 유지
-            # center_on_click 플래그가 설정된 경우 그것을 우선 적용하지 않음
-            if old_zoom_mode != self.zoom_mode and self.original_pixmap and not self.center_on_click:
-                if old_zoom_mode == "Fit" and self.zoom_mode in ["100%", "200%"]:
-                    # Fit에서 다른 모드로 변경 시 가운데로
-                    self.center_image = True
-                elif old_zoom_mode in ["100%", "200%"] and self.zoom_mode in ["100%", "200%"]:
-                    # 100% <-> 200% 변경 시 위치 유지
-                    self.center_image = False
-
-            # 현재 이미지 다시 표시 (확대/Grid 모드 적용)
-            if self.original_pixmap and self.grid_mode == "Off":
-                self.apply_zoom_to_image()
-            elif self.grid_mode != "Off":
-                self.update_grid_view() # Zoom 변경 시 그리드 뷰도 업데이트
-
-            # 미니맵 상태 업데이트
-            self.toggle_minimap(self.minimap_toggle.isChecked())
+        self.toggle_minimap(self.minimap_toggle.isChecked())
 
     def toggle_minimap(self, show=None):
         """미니맵 표시 여부 토글"""
@@ -7624,49 +7654,61 @@ class PhotoSortApp(QMainWindow):
             # self.update_counters() # update_counter_layout() 내부에서 호출되므로 중복 가능성 있음
             pass
 
-    def image_mouse_double_click_event(self, event):
-        """이미지 컨테이너 더블클릭 이벤트"""
-        # Grid Off & Zoom Fit 모드에서 더블클릭 시 100% 확대
-        if self.grid_mode == "Off" and self.zoom_mode == "Fit" and self.original_pixmap:
-            # 더블클릭 위치 저장
-            self.double_click_pos = event.position().toPoint()
-            
-            # 클릭한 지점을 중심으로 확대하기 위한 추가 계산
-            # 현재 이미지 크기와 위치 계산
-            scaled_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-            fit_width = scaled_pixmap.width()
-            fit_height = scaled_pixmap.height()
-            
-            # 이미지 위치 (Fit 모드에서 이미지는 중앙 정렬됨)
-            view_width = self.scroll_area.width()
-            view_height = self.scroll_area.height()
-            img_x = (view_width - fit_width) // 2
-            img_y = (view_height - fit_height) // 2
-            
-            # 더블클릭 위치가 이미지 내부인지 확인
-            click_x = self.double_click_pos.x() - img_x
-            click_y = self.double_click_pos.y() - img_y
-            
-            if 0 <= click_x < fit_width and 0 <= click_y < fit_height:
-                # 먼저 클릭 위치 중심 플래그를 설정
-                self.center_on_click = True
-                self.center_image = False  # center_image가 우선순위가 높으므로 False로 설정
+
+    def image_mouse_double_click_event(self, event: QMouseEvent):
+        if self.grid_mode == "Off" and self.original_pixmap:
+            current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
+            current_orientation = self.current_image_orientation
+
+            if self.zoom_mode == "Fit":
+                # Fit -> 100% (더블클릭)
+                self.double_click_pos = event.position().toPoint()
                 
-                # 100% 줌 모드로 변경
-                self.zoom_mode = "100%"  # 직접 모드 설정
-                self.zoom_100_radio.setChecked(True)
+                scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
+                view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
+                fit_img_width = scaled_fit_pixmap.width(); fit_img_height = scaled_fit_pixmap.height()
+                fit_img_rect_in_view = QRect(
+                    (view_width - fit_img_width) // 2, (view_height - fit_img_height) // 2,
+                    fit_img_width, fit_img_height
+                )
+                click_x_vp = self.double_click_pos.x(); click_y_vp = self.double_click_pos.y()
+
+                if fit_img_rect_in_view.contains(int(click_x_vp), int(click_y_vp)):
+                    logging.debug("더블클릭: Fit -> 100% 요청")
+                    self.zoom_change_trigger = "double_click" # apply_zoom_to_image에서 이 트리거 사용
+                    
+                    # 이전 상태(Fit)의 포커스를 저장할 필요는 없음 (항상 0.5, 0.5, "Fit")
+                    self.zoom_mode = "100%" # 목표 줌 설정
+                    self.zoom_100_radio.setChecked(True)
+                    
+                    # current_active_...는 apply_zoom_to_image("double_click") 내부에서
+                    # 더블클릭 위치 기준으로 계산되고 설정된 후, 고유 포커스로 저장될 것임.
+                    self.apply_zoom_to_image() 
+                    self.toggle_minimap(self.minimap_toggle.isChecked())
+                else:
+                    logging.debug("더블클릭 위치가 이미지 바깥입니다 (Fit 모드).")
+
+            elif self.zoom_mode in ["100%", "200%"]:
+                # 100%/200% -> Fit (더블클릭)
+                logging.debug(f"더블클릭: {self.zoom_mode} -> Fit 요청")
+                # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
+                if current_orientation and current_image_path_str:
+                    self._save_orientation_viewport_focus(
+                        current_orientation,
+                        self.current_active_rel_center,
+                        self.current_active_zoom_level
+                    )
                 
-                # 직접 zoom 처리 (on_zoom_changed 호출하지 않음)
-                if self.original_pixmap and self.grid_mode == "Off":
-                    self.apply_zoom_to_image()
+                self.zoom_mode = "Fit"
+                self.current_active_rel_center = QPointF(0.5, 0.5)
+                self.current_active_zoom_level = "Fit"
                 
-                # 미니맵 업데이트
-                self.toggle_minimap(self.minimap_toggle.isChecked())
+                # self.zoom_change_trigger = "double_click_to_fit" # 또는 그냥 None
                 
-        # 100% 또는 200% 모드에서 더블클릭 시 Fit으로 복귀
-        elif self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"]:
-            self.fit_radio.setChecked(True)
-            self.on_zoom_changed(self.fit_radio)
+                self.fit_radio.setChecked(True)
+                self.apply_zoom_to_image()
+
+
 
     def reset_program_state(self):
         """프로그램 상태를 초기화 (Delete 키)"""
@@ -7734,6 +7776,12 @@ class PhotoSortApp(QMainWindow):
             # --- 그리드 썸네일 캐시 및 백그라운드 작업 초기화 ---
             self.grid_thumbnail_cache_2x2.clear()  # 2x2 그리드 캐시 초기화
             self.grid_thumbnail_cache_3x3.clear()  # 3x3 그리드 캐시 초기화
+
+            # --- 뷰포트 포커스 정보 초기화 ---
+            self.viewport_focus_by_orientation.clear()
+            self.current_active_rel_center = QPointF(0.5, 0.5)
+            self.current_active_zoom_level = "Fit"
+            logging.info("프로그램 초기화: 뷰포트 포커스 정보 초기화됨.")
 
             # --- UI 컨트롤 상태 설정 ---
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
@@ -8012,89 +8060,69 @@ class PhotoSortApp(QMainWindow):
 
     def display_current_image(self):
         """현재 선택된 이미지 표시 (비동기 방식)"""
-        # 강제 새로고침 플래그 확인
         force_refresh = getattr(self, 'force_refresh', False)
         if force_refresh:
-            # Fit 모드에서 캐시만 리셋하고 원본은 유지 (깜빡임 방지)
             self.last_fit_size = (0, 0)
             self.fit_pixmap_cache.clear()
-            # 플래그 초기화
             self.force_refresh = False
 
-        # 그리드 모드 또는 이미지 없는 경우 처리
         if self.grid_mode != "Off":
             self.update_grid_view()
             return
 
         if not self.image_files or self.current_image_index < 0 or self.current_image_index >= len(self.image_files):
-            # 이미지 없을 때 빈 화면만 표시 (텍스트 제거)
             self.image_label.clear()
-            self.image_label.setStyleSheet("background-color: transparent;")
+            self.image_label.setStyleSheet("background-color: transparent;") # 이전엔 black이었으나, 이미지 없을 땐 투명이 더 나을 수 있음
             self.setWindowTitle("PhotoSort")
             self.original_pixmap = None
             self.update_file_info_display(None)
-            
-            # 방향 정보 초기화
             self.previous_image_orientation = None
             self.current_image_orientation = None
-
-            # 미니맵 숨기기 추가
             if self.minimap_visible:
                 self.minimap_widget.hide()
-                self.minimap_visible = False
+                # self.minimap_visible = False
+            self.update_counters() # 카운터도 업데이트 필요
             return
                 
         try:
-            # 현재 이미지 정보 저장
             current_index = self.current_image_index
-            image_path = self.image_files[current_index]
-            
-            # 파일 정보는 즉시 업데이트
-            self.update_file_info_display(str(image_path))
+            image_path = self.image_files[current_index] # Path 객체
+            image_path_str = str(image_path) # --- 여기에 image_path_str 정의 추가 ---
+
+            logging.info(f"display_current_image 호출: index={current_index}, path='{image_path.name}'") # 로그에는 Path 객체의 name 사용
+
+            self.update_file_info_display(image_path_str) # 파일 정보는 문자열 경로로 전달
             self.setWindowTitle(f"PhotoSort - {image_path.name}")
             
-            # 이미 메모리에 있으면 즉시 적용 시도 추가
-            cached_pixmap = self.image_loader.cache.get(str(image_path))
-            if cached_pixmap and not cached_pixmap.isNull():
-                print(f"캐시된 이미지 즉시 적용: {image_path.name}")
-                
-                # 이전 이미지 방향을 저장
-                self.previous_image_orientation = self.current_image_orientation
-                
-                # 새 이미지의 방향 설정
-                if cached_pixmap.width() >= cached_pixmap.height():
-                    self.current_image_orientation = "landscape"
-                else:
-                    self.current_image_orientation = "portrait"
-                    
-                self.original_pixmap = cached_pixmap
-                
-                # 중요: 이미지를 명시적으로 갱신하기 위해 apply_zoom_to_image 호출
-                self.apply_zoom_to_image()
-                self.update_counters()
-                
-                # 미니맵 업데이트
-                if self.minimap_visible and self.minimap_toggle.isChecked():
-                    self.toggle_minimap(True)
-                    
-                # 이미 로드되었으므로 비동기 로딩 건너뛰기
-                return
-                
-            # 지연된 로딩 인디케이터 설정 (기존 로직 유지)
+            if image_path_str in self.image_loader.cache:
+                cached_pixmap = self.image_loader.cache[image_path_str]
+                if cached_pixmap and not cached_pixmap.isNull():
+                    logging.info(f"display_current_image: 캐시된 이미지 즉시 적용 - '{image_path.name}'")
+                    self.previous_image_orientation = self.current_image_orientation
+                    new_orientation = "landscape" if cached_pixmap.width() >= cached_pixmap.height() else "portrait"
+                    self.current_image_orientation = new_orientation
+                    self.original_pixmap = cached_pixmap
+                    self.apply_zoom_to_image()
+                    if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
+                    self.update_counters()
+                    # 파일 정보는 이미 위에서 update_file_info_display로 업데이트 했으므로 여기서 또 할 필요 없음
+                    return
+
+            logging.info(f"display_current_image: 캐시에 없음. 비동기 로딩 시작 및 로딩 인디케이터 타이머 설정 - '{image_path.name}'")
             if not hasattr(self, 'loading_indicator_timer'):
                 self.loading_indicator_timer = QTimer(self)
                 self.loading_indicator_timer.setSingleShot(True)
                 self.loading_indicator_timer.timeout.connect(self.show_loading_indicator)
-            else:
-                self.loading_indicator_timer.stop()
-                    
-            # 500ms 후에도 로딩이 완료되지 않으면 로딩 인디케이터 표시
+            
+            self.loading_indicator_timer.stop() 
             self.loading_indicator_timer.start(500)
             
-            # 비동기 이미지 로딩 시작
-            self.load_image_async(str(image_path), current_index)
+            self.load_image_async(image_path_str, current_index) # 비동기 로딩에는 문자열 경로 전달
             
         except Exception as e:
+            logging.error(f"display_current_image에서 오류 발생: {e}") # 상세 오류 로깅
+            import traceback
+            traceback.print_exc()
             self.image_label.setText(f"{LanguageManager.translate('이미지 표시 중 오류 발생')}: {str(e)}")
             self.original_pixmap = None
             self.update_counters()
@@ -8126,46 +8154,67 @@ class PhotoSortApp(QMainWindow):
         self.preload_adjacent_images(requested_index)
 
     def _load_image_task(self, image_path, requested_index):
-        """백그라운드 스레드에서 실행되는 이미지 로딩 작업"""
+        """백그라운드 스레드에서 실행되는 이미지 로딩 작업. RAW 디코딩은 RawDecoderPool에 위임."""
         try:
-            # 작업 시작 전 ResourceManager의 실행 플래그 확인
-            # ResourceManager.instance()를 통해 싱글톤 인스턴스에 접근
-            resource_manager = ResourceManager.instance() # 가독성을 위해 변수 할당
+            resource_manager = ResourceManager.instance()
             if not resource_manager._running:
                 logging.info(f"PhotoSortApp._load_image_task: ResourceManager가 종료 중이므로 작업 중단 ({Path(image_path).name})")
-                # ImageLoader의 시그널을 PhotoSortApp에서 직접 발생시켜야 함
-                # 또는 ImageLoader를 통해 발생시키도록 구조화 (현재 ImageLoader의 시그널을 사용)
-                if hasattr(self, 'image_loader'): # image_loader가 있는지 확인
-                    # QMetaObject.invokeMethod를 사용하여 메인 스레드에서 시그널 발생 (선택적, 더 안전)
+                # ... (기존 종료 시그널 처리) ...
+                if hasattr(self, 'image_loader'):
                     QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
                                              Q_ARG(str, "ResourceManager_shutdown"),
                                              Q_ARG(str, image_path),
                                              Q_ARG(int, requested_index))
                 return False
 
-            # 실제 이미지 로딩 (이 내부에서도 _running 플래그 확인이 이상적이지만, 라이브러리 호출은 어려움)
-            pixmap = self.image_loader.load_image_with_orientation(image_path) 
+            file_path_obj = Path(image_path)
+            is_raw = file_path_obj.suffix.lower() in self.raw_extensions
+            
+            # ImageLoader의 현재 RAW 처리 전략 확인
+            # (PhotoSortApp이 ImageLoader의 전략을 관리하므로, PhotoSortApp의 상태를 참조하거나
+            #  ImageLoader에 질의하는 것이 더 적절할 수 있습니다.
+            #  여기서는 ImageLoader의 내부 상태를 직접 참조하는 것으로 가정합니다.)
+            raw_processing_method = self.image_loader._raw_load_strategy
 
-            # 작업 완료 전 다시 한번 플래그 확인
-            if not resource_manager._running:
-                logging.info(f"PhotoSortApp._load_image_task: 작업 완료 직전 ResourceManager 종료 감지 ({Path(image_path).name})")
+            if is_raw and raw_processing_method == "decode":
+                logging.info(f"_load_image_task: RAW 파일 '{file_path_obj.name}'의 'decode' 요청. RawDecoderPool에 제출합니다.")
+                # RawDecoderPool에 디코딩 작업 제출
+                # 콜백으로 _on_raw_decoded_for_display를 사용, requested_index도 전달해야 함.
+                # submit_raw_decoding의 콜백은 result 딕셔너리 하나만 받으므로, 람다나 functools.partial 사용.
+                from functools import partial
+                callback_with_index = partial(self._on_raw_decoded_for_display, requested_index=requested_index)
+                
+                # submit_raw_decoding은 작업 ID를 반환. 현재는 사용하지 않음.
+                task_id = resource_manager.submit_raw_decoding(image_path, callback_with_index)
+                if task_id is None: # 제출 실패 (예: 풀 종료 중)
+                    raise RuntimeError("Failed to submit RAW decoding task.")
+                # 디코딩 작업은 비동기이므로, 이 함수는 여기서 결과를 기다리지 않고 반환합니다.
+                # 콜백이 나중에 호출되어 실제 이미지 처리를 완료합니다.
+                return True # 작업 제출 성공
+            else:
+                # JPG 또는 RAW (preview 모드)는 기존 ImageLoader.load_image_with_orientation 직접 호출
+                logging.info(f"_load_image_task: '{file_path_obj.name}' 직접 로드 시도 (JPG 또는 RAW-preview).")
+                pixmap = self.image_loader.load_image_with_orientation(image_path)
+
+                if not resource_manager._running: # 로드 후 다시 확인
+                    # ... (기존 종료 시그널 처리) ...
+                    if hasattr(self, 'image_loader'):
+                        QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
+                                                 Q_ARG(str, "ResourceManager_shutdown_post"),
+                                                 Q_ARG(str, image_path),
+                                                 Q_ARG(int, requested_index))
+                    return False
+                
                 if hasattr(self, 'image_loader'):
-                    QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
-                                             Q_ARG(str, "ResourceManager_shutdown_post"),
+                    QMetaObject.invokeMethod(self.image_loader, "loadCompleted", Qt.QueuedConnection,
+                                             Q_ARG(QPixmap, pixmap),
                                              Q_ARG(str, image_path),
                                              Q_ARG(int, requested_index))
-                return False
-            
-            # 로딩 성공 시그널 발생
-            if hasattr(self, 'image_loader'):
-                QMetaObject.invokeMethod(self.image_loader, "loadCompleted", Qt.QueuedConnection,
-                                         Q_ARG(QPixmap, pixmap),
-                                         Q_ARG(str, image_path),
-                                         Q_ARG(int, requested_index))
-            return True
+                return True
+
         except Exception as e:
-            # 실행 중일 때만 오류 로깅 및 시그널 발생
-            if ResourceManager.instance()._running: # 여기서도 ResourceManager 인스턴스 직접 사용
+            # ... (기존 오류 처리) ...
+            if ResourceManager.instance()._running:
                 logging.error(f"_load_image_task 오류 ({Path(image_path).name if image_path else 'N/A'}): {e}")
                 import traceback
                 traceback.print_exc()
@@ -8178,54 +8227,174 @@ class PhotoSortApp(QMainWindow):
                 logging.info(f"_load_image_task 중 오류 발생했으나 ResourceManager 이미 종료됨 ({Path(image_path).name if image_path else 'N/A'}): {e}")
             return False
 
-    def _on_image_loaded_for_display(self, pixmap, image_path, requested_index):
-        if self.current_image_index != requested_index:
+
+    def _on_image_loaded_for_display(self, pixmap, image_path_str_loaded, requested_index):
+        if self.current_image_index != requested_index: # ... (무시 로직) ...
             return
+        # ... (로딩 인디케이터 중지, pixmap null 체크) ...
         if hasattr(self, 'loading_indicator_timer'): self.loading_indicator_timer.stop()
-            
         if pixmap.isNull():
             self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}")
-            self.original_pixmap = None
-            self.update_counters()
-            return
-            
-        # --- 이미지 방향 변경에 따른 중앙 정렬 처리 ---
-        new_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
-        
-        # self.center_on_click은 image_mouse_double_click_event에서 설정되고,
-        # apply_zoom_to_image에서 사용 후 False로 초기화됨.
-        # 따라서, 사진을 "넘겨서" 이 함수가 호출될 때는 self.center_on_click은 False일 것임.
-        # 그러므로 이 시점에서는 center_on_click을 고려할 필요가 거의 없음.
-        # 하지만 만약 더블클릭 액션이 비동기 로드를 유발하고 이 함수가 호출된다면 고려해야 함.
-        # 현재 더블클릭은 on_zoom_changed -> apply_zoom_to_image를 직접 타므로 괜찮을 듯.
+            self.original_pixmap = None; self.update_counters(); return
 
-        # 사진을 "넘겨서" 로드된 경우에만 방향 비교 및 center_image 설정
-        # (force_refresh는 모드 변경 등 다른 이유로도 True가 될 수 있으므로,
-        #  사진이 실제로 "변경"되었는지 여부를 판단하는 것이 더 정확할 수 있음.
-        #  예: self.previous_image_path != image_path 와 같은 방식)
-        # 여기서는 self.previous_image_orientation을 활용
+        new_image_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
         
-        set_center_due_to_orientation = False
-        if self.previous_image_orientation is not None and self.previous_image_orientation != new_orientation:
-            # Fit이 아닌 100% 또는 200% 줌 상태에서 사진을 넘겼고 방향이 바뀌었다면 중앙 정렬
-            if self.zoom_mode in ["100%", "200%"]:
-                set_center_due_to_orientation = True
-                logging.debug(f"_on_image_loaded_for_display: 방향 변경으로 중앙 정렬 플래그 설정 ({self.previous_image_orientation} -> {new_orientation})")
+        prev_orientation = getattr(self, 'previous_image_orientation_for_carry_over', None)
+        prev_zoom = getattr(self, 'previous_zoom_mode_for_carry_over', "Fit")
+        prev_rel_center = getattr(self, 'previous_active_rel_center_for_carry_over', QPointF(0.5, 0.5))
+
+        is_photo_actually_changed = (hasattr(self, 'previous_image_path_for_focus_carry_over') and # 이 변수는 여전히 사진 변경 자체를 판단하는 데 사용
+                                     self.previous_image_path_for_focus_carry_over is not None and
+                                     self.previous_image_path_for_focus_carry_over != image_path_str_loaded)
         
-        self.previous_image_orientation = self.current_image_orientation # 이전 방향 저장
-        self.current_image_orientation = new_orientation                 # 새 방향 설정
+        if is_photo_actually_changed:
+            if prev_zoom in ["100%", "200%"] and prev_orientation == new_image_orientation:
+                # 방향 동일 & 이전 줌: 이전 "활성" 포커스 이어받기
+                self.zoom_mode = prev_zoom
+                self.current_active_rel_center = prev_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                self.zoom_change_trigger = "photo_change_carry_over_focus"
+                # 새 사진의 "방향 타입" 포커스를 이전 활성 포커스로 덮어쓰기
+                self._save_orientation_viewport_focus(new_image_orientation, self.current_active_rel_center, self.current_active_zoom_level)
+            else: # Fit에서 왔거나, 방향이 다르거나, 이전 줌 정보 부적절
+                self.zoom_mode = "Fit" # 새 사진은 Fit으로 시작
+                self.current_active_rel_center = QPointF(0.5, 0.5)
+                self.current_active_zoom_level = "Fit"
+                self.zoom_change_trigger = "photo_change_to_fit"
+        # else: 사진 변경 아님 (zoom_change_trigger는 다른 곳에서 설정되어 apply_zoom_to_image로 전달됨)
+
+        # 라디오 버튼 UI 동기화 및 나머지 로직 (original_pixmap 설정, apply_zoom_to_image 호출 등)
+        # ... (이전 답변의 _on_image_loaded_for_display 나머지 부분과 유사하게 진행) ...
+        if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
+        elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
+        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+        
+        # self.previous_image_orientation = self.current_image_orientation # 이제 _prepare_for_photo_change에서 관리
+        self.current_image_orientation = new_image_orientation # 새 이미지의 방향으로 업데이트
         self.original_pixmap = pixmap
+        
+        self.apply_zoom_to_image() # 여기서 current_active_... 값들이 사용됨
+        
+        # 임시 변수 초기화
+        if hasattr(self, 'previous_image_path_for_focus_carry_over'): self.previous_image_path_for_focus_carry_over = None 
+        if hasattr(self, 'previous_image_orientation_for_carry_over'): self.previous_image_orientation_for_carry_over = None
+        if hasattr(self, 'previous_zoom_mode_for_carry_over'): self.previous_zoom_mode_for_carry_over = None
+        if hasattr(self, 'previous_active_rel_center_for_carry_over'): self.previous_active_rel_center_for_carry_over = None
 
-        if set_center_due_to_orientation:
-            self.center_image = True # apply_zoom_to_image에서 사용됨
-            # self.center_on_click은 False여야 함 (사진 넘기기 상황이므로)
-            self.center_on_click = False
-        # else: self.center_image는 변경하지 않음 (이전 상태 유지 또는 False)
-        
-        self.apply_zoom_to_image() # 줌 모드 및 중앙 정렬 플래그에 따라 이미지 표시
-        
         if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
         self.update_counters()
+
+    def _on_raw_decoded_for_display(self, result: dict, requested_index: int):
+        file_path = result.get('file_path')
+        success = result.get('success', False)
+        logging.info(f"_on_raw_decoded_for_display 시작: 파일='{Path(file_path).name if file_path else 'N/A'}', 요청 인덱스={requested_index}, 성공={success}") # 상세 로그
+
+        # 현재 표시해야 할 이미지와 디코딩된 이미지가 일치하는지 확인
+        # 이 조건은 매우 중요합니다. 사용자가 빠르게 이미지를 넘기면, 이전 이미지의 디코딩 결과가
+        # 현재 이미지 표시에 영향을 주지 않도록 하기 위함입니다.
+        # 하지만 "아무리 기다려도 안 보인다"는 것은 이 조건 외의 문제일 가능성이 큽니다.
+        current_path_to_display = None
+        if self.grid_mode == "Off":
+            if 0 <= self.current_image_index < len(self.image_files):
+                current_path_to_display = str(self.image_files[self.current_image_index])
+        # Grid 모드일 때도 현재 선택된 셀의 이미지 경로를 가져와 비교할 수 있습니다 (생략).
+        # 여기서는 Grid Off 모드를 기준으로 단순화하여 현재 current_image_index만 고려합니다.
+
+        # requested_index는 submit_raw_decoding 시점의 current_image_index 입니다.
+        # 디코딩 완료 시점의 self.current_image_index와 비교하는 것이 더 정확할 수 있습니다.
+        # 하지만 file_path를 직접 비교하는 것이 더 확실합니다.
+        # 현재 표시되어야 할 이미지의 경로와, 디코딩 완료된 파일의 경로를 비교
+        
+        path_match = False
+        if file_path and current_path_to_display and Path(file_path).resolve() == Path(current_path_to_display).resolve():
+            path_match = True
+        
+        # 로그 추가: 어떤 인덱스/경로로 비교하는지 확인
+        logging.debug(f"  _on_raw_decoded_for_display: 비교 - current_path_to_display='{current_path_to_display}', decoded_file_path='{file_path}', path_match={path_match}")
+        logging.debug(f"  _on_raw_decoded_for_display: 비교 - self.current_image_index={self.current_image_index}, requested_index(from submit)={requested_index}")
+
+
+        # if self.current_image_index != requested_index: # 이전 조건
+        if not path_match and self.current_image_index != requested_index: # 경로 불일치 및 인덱스 불일치 모두 고려
+            logging.info(f"  _on_raw_decoded_for_display: RAW 디코딩 결과 무시 (다른 이미지 표시 중 / 인덱스 불일치). 파일='{Path(file_path).name if file_path else 'N/A'}'")
+            return
+
+        if hasattr(self, 'loading_indicator_timer'):
+            self.loading_indicator_timer.stop()
+            logging.debug("  _on_raw_decoded_for_display: 로딩 인디케이터 타이머 중지됨.")
+
+        if success:
+            try:
+                # ... (기존 QPixmap 생성 로직) ...
+                data_bytes = result.get('data')
+                shape = result.get('shape')
+                if not data_bytes or not shape:
+                    raise ValueError("디코딩 결과 데이터 또는 형태 정보 누락")
+                height, width, _ = shape
+                qimage = QImage(data_bytes, width, height, width * 3, QImage.Format_RGB888)
+                pixmap = QPixmap.fromImage(qimage)
+                if pixmap.isNull():
+                    raise ValueError("디코딩된 데이터로 QPixmap 생성 실패")
+                # ... (이하 UI 업데이트 로직) ...
+                logging.info(f"  _on_raw_decoded_for_display: QPixmap 생성 성공, UI 업데이트 시도. 파일='{Path(file_path).name}'")
+
+                if hasattr(self, 'image_loader'):
+                    self.image_loader._add_to_cache(file_path, pixmap)
+
+                self.previous_image_orientation = self.current_image_orientation
+                self.current_image_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
+                self.original_pixmap = pixmap # 여기서 original_pixmap 설정!
+                
+                # apply_zoom_to_image는 original_pixmap을 사용하므로, 그 전에 설정되어야 합니다.
+                self.apply_zoom_to_image() 
+                
+                if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
+                self.update_counters()
+                logging.info(f"  _on_raw_decoded_for_display: UI 업데이트 완료. 파일='{Path(file_path).name}'")
+
+            except Exception as e:
+                logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 성공 후 QPixmap 처리 오류 ({Path(file_path).name if file_path else 'N/A'}): {e}")
+                # ... (기존 오류 시 UI 처리) ...
+                self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: 디코딩 데이터 처리 오류")
+                self.original_pixmap = None
+                self.update_counters()
+                if file_path and hasattr(self, 'image_loader'):
+                    self.image_loader.decodingFailedForFile.emit(file_path)
+        else: # 디코딩 실패 (result['success'] == False)
+            error_msg = result.get('error', 'Unknown error')
+            logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 실패 ({Path(file_path).name if file_path else 'N/A'}): {error_msg}")
+            # ... (기존 오류 시 UI 처리) ...
+            self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_msg}")
+            self.original_pixmap = None
+            self.update_counters()
+            if file_path and hasattr(self, 'image_loader'):
+                self.image_loader.decodingFailedForFile.emit(file_path)
+        
+        logging.info(f"_on_raw_decoded_for_display 종료: 파일='{Path(file_path).name if file_path else 'N/A'}'")
+
+    def process_pending_raw_results(self):
+        """ResourceManager를 통해 RawDecoderPool의 완료된 결과들을 처리합니다."""
+        if hasattr(self, 'resource_manager') and self.resource_manager:
+            # 한 번에 최대 5개의 결과를 처리하도록 시도 (조정 가능)
+            processed_count = self.resource_manager.process_raw_results(max_results=5)
+            if processed_count > 0:
+                logging.debug(f"process_pending_raw_results: {processed_count}개의 RAW 디코딩 결과 처리됨.")
+        # else: # ResourceManager가 없는 예외적인 경우
+            # logging.warning("process_pending_raw_results: ResourceManager 인스턴스가 없습니다.")
+
+
+    def _on_image_load_failed(self, image_path, error_message, requested_index):
+        """이미지 로드 실패 시 UI 스레드에서 실행"""
+        # 요청 시점의 인덱스와 현재 인덱스 비교 (이미지 변경 여부 확인)
+        if self.current_image_index != requested_index:
+            print(f"이미지가 변경되어 오류 결과 무시: 요청={requested_index}, 현재={self.current_image_index}")
+            return
+            
+        self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_message}")
+        self.original_pixmap = None
+        self.update_counters()
+
+
 
 
     def preload_adjacent_images(self, current_index):
@@ -8704,7 +8873,7 @@ class PhotoSortApp(QMainWindow):
                 self.update_counter_layout()
                 self.toggle_minimap(self.minimap_toggle.isChecked())
                 if self.grid_mode == "Off":
-                    self.start_background_image_preloading()
+                    self.start_background_thumbnail_preloading()
             else:
                 logging.warning("PhotoSortApp.load_state: 이미지 목록 로드 실패 또는 대상 폴더에 파일 없음. UI 초기화.")
                 self.image_files = []
@@ -9204,6 +9373,8 @@ class PhotoSortApp(QMainWindow):
         self.activateWindow()
         self.setFocus()
 
+
+
     def eventFilter(self, obj, event):
         """애플리케이션 레벨 이벤트 필터 - 키 이벤트 처리"""
         if event.type() == QEvent.KeyPress:
@@ -9250,125 +9421,214 @@ class PhotoSortApp(QMainWindow):
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
             if key == Qt.Key_Space:
-                # ... (스페이스바 로직 - 기존과 동일) ...
-                if self.grid_mode == "Off":
-                    if self.zoom_mode == "Fit":
-                        if self.original_pixmap: old_zoom_mode_for_log = self.zoom_mode; self.center_image = True; self.center_on_click = False; self.zoom_mode = "100%"; self.zoom_100_radio.setChecked(True); self.apply_zoom_to_image(); self.toggle_minimap(self.minimap_toggle.isChecked()); logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> {self.zoom_mode}")
-                    elif self.zoom_mode == "100%" or self.zoom_mode == "200%":
-                        old_zoom_mode_for_log = self.zoom_mode; logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> Fit 요청. 현재 current_image_index: {self.current_image_index}"); self.force_refresh = True; self.last_fit_size = (0, 0); self.fit_pixmap_cache.clear(); self.fit_radio.setChecked(True); self.on_zoom_changed(self.fit_radio); logging.debug(f"Spacebar: Zoom {old_zoom_mode_for_log} -> {self.zoom_mode} 완료")
-                    return True
-                else: # Grid On
-                    current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
-                    if 0 <= current_selected_grid_index < len(self.image_files): self.current_image_index = current_selected_grid_index; self.force_refresh = True;
-                    if self.zoom_mode == "Fit": self.last_fit_size = (0, 0); self.fit_pixmap_cache.clear()
-                    self.previous_grid_mode = self.grid_mode; self.grid_mode = "Off"; self.grid_off_radio.setChecked(True); self.space_pressed = True; self.update_grid_view(); self.update_zoom_radio_buttons_state(); self.update_counter_layout()
-                    return True
+                if self.grid_mode == "Off": # Grid Off 모드에서만 작동
+                    current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
+                    current_orientation = self.current_image_orientation
 
+                    if self.zoom_mode == "Fit":
+                        # Fit -> 100% (Space 키)
+                        if self.original_pixmap:
+                            logging.debug("Space 키: Fit -> 100% 요청")
+                            # 이전 상태가 Fit이었으므로 "활성" 포커스 저장할 필요 없음 (이미 Fit 기본값)
+                            
+                            self.zoom_mode = "100%" # 새 줌 모드 설정
+                            # 새 활성 포커스: 현재 이미지 방향 타입에 저장된 고유 포커스 사용, 없으면 중앙
+                            self.current_active_rel_center, self.current_active_zoom_level = \
+                                self._get_orientation_viewport_focus(current_orientation, "100%")
+                            
+                            self.zoom_change_trigger = "space_key_to_zoom" 
+                            
+                            self.zoom_100_radio.setChecked(True)
+                            self.apply_zoom_to_image() # 내부에서 고유 포커스도 업데이트 (주로 zoom_level)
+                    
+                    elif self.zoom_mode in ["100%", "200%"]:
+                        # 100%/200% -> Fit (Space 키)
+                        logging.debug(f"Space 키: {self.zoom_mode} -> Fit 요청")
+                        # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
+                        if current_orientation and current_image_path_str: # 방향과 경로가 있어야 저장 가능
+                            self._save_orientation_viewport_focus(
+                                current_orientation,
+                                self.current_active_rel_center,
+                                self.current_active_zoom_level # self.zoom_mode와 같음
+                            )
+                        
+                        self.zoom_mode = "Fit"
+                        self.current_active_rel_center = QPointF(0.5, 0.5)
+                        self.current_active_zoom_level = "Fit"
+                        
+                        # self.zoom_change_trigger = "space_key_to_fit" # 또는 그냥 None
+                        
+                        self.fit_radio.setChecked(True)
+                        self.apply_zoom_to_image()
+                    return True # 스페이스바 이벤트 소비
+                
+                else: # Grid On 모드에서 Space 키
+                    # ... (Grid On 모드 Space 키 로직 - 이전 답변과 동일하게 유지) ...
+                    current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
+                    if 0 <= current_selected_grid_index < len(self.image_files):
+                        self.current_image_index = current_selected_grid_index
+                        self.force_refresh = True # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
+                    
+                    # Grid Off로 전환하기 전에 현재 Grid에서 선택된 이미지의 방향을 알아내서
+                    # self.current_image_orientation에 설정해두면 좋음.
+                    # (display_current_image가 호출될 때 어차피 설정되긴 함)
+                    
+                    self.previous_grid_mode = self.grid_mode # 이전 그리드 모드 저장 (ESC 복귀용)
+                    self.grid_mode = "Off"
+                    self.grid_off_radio.setChecked(True)
+                    self.space_pressed = True # on_grid_changed에서 이전 모드 초기화 방지용
+                    
+                    # Grid Off로 전환 시, 뷰는 Fit으로 시작하거나,
+                    # 아니면 해당 이미지의 저장된 100% 포커스를 불러올지 정책 결정 필요.
+                    # 여기서는 on_grid_changed -> update_grid_view -> display_current_image 호출 시
+                    # Fit으로 시작하고, display_current_image 내부의 _on_image_loaded_for_display에서
+                    # photo_change_to_fit 트리거를 타게 됨 (저장된 포커스 사용 안 함).
+                    # 만약 Space로 Grid -> Off 시 100% 줌 + 저장된 포커스를 원한다면 추가 로직 필요.
+                    # 현재는 Grid에서 Off로 갈 때 항상 Fit으로 시작.
+                    
+                    self.update_grid_view() # Grid Off로 전환 및 display_current_image 호출 유도
+                    self.update_zoom_radio_buttons_state()
+                    self.update_counter_layout()
+                    return True
             # --- 2. 뷰포트 이동 키 처리 (Grid Off & Zoom 100%/200% 시) ---
+             # --- 뷰포트 이동 키 KeyPress 처리 ---
             is_viewport_move_condition = (self.grid_mode == "Off" and
                                           self.zoom_mode in ["100%", "200%"] and
                                           self.original_pixmap)
             
-            viewport_key_pressed_for_timer = None # 타이머에 전달할 표준화된 키 (Left, Right, Up, Down)
-            is_viewport_move_key_combination = False # 현재 키 조합이 뷰포트 이동용인지
+            key_to_add_for_viewport = None
 
             if is_viewport_move_condition:
-                if key in [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down]: # Arrow Keys
-                    viewport_key_pressed_for_timer = key
-                    is_viewport_move_key_combination = True
-                elif modifiers & Qt.ShiftModifier: # Shift + WASD
-                    if key == Qt.Key_A: viewport_key_pressed_for_timer = Qt.Key_Left; is_viewport_move_key_combination = True
-                    elif key == Qt.Key_D: viewport_key_pressed_for_timer = Qt.Key_Right; is_viewport_move_key_combination = True
-                    elif key == Qt.Key_W: viewport_key_pressed_for_timer = Qt.Key_Up; is_viewport_move_key_combination = True
-                    elif key == Qt.Key_S: viewport_key_pressed_for_timer = Qt.Key_Down; is_viewport_move_key_combination = True
+                if modifiers & Qt.ShiftModifier: # Shift 키와 함께 눌린 경우
+                    if key == Qt.Key_A: key_to_add_for_viewport = Qt.Key_Left
+                    elif key == Qt.Key_D: key_to_add_for_viewport = Qt.Key_Right
+                    elif key == Qt.Key_W: key_to_add_for_viewport = Qt.Key_Up
+                    elif key == Qt.Key_S: key_to_add_for_viewport = Qt.Key_Down
+                elif not (modifiers & Qt.ShiftModifier): # Shift 키 없이 눌린 경우 (일반 방향키)
+                    if key == Qt.Key_Left: key_to_add_for_viewport = Qt.Key_Left
+                    elif key == Qt.Key_Right: key_to_add_for_viewport = Qt.Key_Right
+                    elif key == Qt.Key_Up: key_to_add_for_viewport = Qt.Key_Up
+                    elif key == Qt.Key_Down: key_to_add_for_viewport = Qt.Key_Down
             
-            if is_viewport_move_key_combination: # 뷰포트 이동 키가 눌렸다면
-                if not is_auto_repeat: # 첫 눌림 시에만
-                    self.pressed_keys_for_viewport.add(viewport_key_pressed_for_timer)
+            if key_to_add_for_viewport:
+                if not is_auto_repeat: # 처음 눌렸을 때만
+                    if key_to_add_for_viewport not in self.pressed_keys_for_viewport:
+                        self.pressed_keys_for_viewport.add(key_to_add_for_viewport)
+                        logging.debug(f"KeyPress: Added {QKeySequence(key_to_add_for_viewport).toString()} for viewport. Pressed: {self.pressed_keys_for_viewport}")
+                    
                     if not self.viewport_move_timer.isActive():
                         self.viewport_move_timer.start()
-                return True # 뷰포트 이동 관련 키는 여기서 소비
+                        logging.debug("KeyPress: Viewport move timer started.")
+                return True # 뷰포트 이동 관련 키 이벤트 소비
 
             # --- 3. Grid 모드 네비게이션 또는 Grid Off 사진 넘기기 ---
             # (뷰포트 이동 조건이 아니거나, 뷰포트 이동 키 조합이 아닐 때 이리로 넘어옴)
 
-            if self.grid_mode != "Off": # Grid On 모드
+            # --- 사진 넘기기 (WASD, 또는 Fit 모드 방향키) 및 폴더 이동(숫자키) 처리 ---
+            # (이 부분은 뷰포트 이동 조건이 아닐 때 또는 뷰포트 이동키가 아닐 때 실행됨)
+            if self.grid_mode == "Off":
+                if not (modifiers & Qt.ShiftModifier): # Shift 없이 눌린 WASD는 사진 넘기기
+                    if key == Qt.Key_A: self.show_previous_image(); return True
+                    elif key == Qt.Key_D: self.show_next_image(); return True
+                    # W, S는 사진 넘기기 기능 없음
+
+                if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier): # Fit 모드 + Shift 없는 방향키
+                    if key == Qt.Key_Left: self.show_previous_image(); return True
+                    elif key == Qt.Key_Right: self.show_next_image(); return True
+            
+            elif self.grid_mode != "Off": # Grid On 모드
                 rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
                 if modifiers & Qt.ShiftModifier: # Shift + (A/D/Left/Right) -> 페이지 넘기기
-                    if key == Qt.Key_A or key == Qt.Key_Left:
-                        self.navigate_to_adjacent_page(-1); return True
-                    elif key == Qt.Key_D or key == Qt.Key_Right:
-                        self.navigate_to_adjacent_page(1); return True
-                    # Shift + W/S/Up/Down은 페이지 넘기기 기능 없음
+                    if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_to_adjacent_page(-1); return True
+                    elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_to_adjacent_page(1); return True
                 else: # Shift 없음: WASD 또는 Arrow Keys -> 셀 이동
                     if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_grid(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
                     elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
-            
-            elif self.grid_mode == "Off": # Grid Off 모드
-                # WASD는 항상 사진 넘기기
-                if key == Qt.Key_A: self.show_previous_image(); return True
-                elif key == Qt.Key_D: self.show_next_image(); return True
-                # W, S는 Grid Off에서 사진 넘기기 기능 없음
 
-                # Arrow Keys는 Zoom Fit 일 때만 사진 넘기기
-                # (Zoom 100%/200% 시에는 위에서 뷰포트 이동으로 처리됨)
-                if self.zoom_mode == "Fit":
-                    if key == Qt.Key_Left: self.show_previous_image(); return True
-                    elif key == Qt.Key_Right: self.show_next_image(); return True
-            
-            # --- 4. 숫자키 1, 2, 3 (폴더로 이동) ---
-            #    (어떤 모드에서든 작동)
             if Qt.Key_1 <= key <= Qt.Key_3:
                 folder_index = key - Qt.Key_1
-                if self.grid_mode != "Off":
-                    self.move_grid_image(folder_index)
-                else:
-                    self.move_current_image_to_folder(folder_index)
+                if self.grid_mode != "Off": self.move_grid_image(folder_index)
+                else: self.move_current_image_to_folder(folder_index)
                 return True
 
-            return False # 위 모든 조건에 해당하지 않으면 이벤트 전파
+            return False # 그 외 처리 안 된 KeyPress
 
-        elif event.type() == QEvent.KeyRelease: # 키를 뗄 때의 처리
+        elif event.type() == QEvent.KeyRelease:
             key = event.key()
-            is_auto_repeat = event.isAutoRepeat() # KeyRelease에는 auto-repeat이 거의 없음
+            # modifiers_on_release = event.modifiers() # 키 뗄 때 Shift 상태는 여기서 중요하지 않음
+            is_auto_repeat = event.isAutoRepeat()
 
-            released_viewport_key_equivalent = None
-            if key == Qt.Key_Left: released_viewport_key_equivalent = Qt.Key_Left
-            elif key == Qt.Key_Right: released_viewport_key_equivalent = Qt.Key_Right
-            elif key == Qt.Key_Up: released_viewport_key_equivalent = Qt.Key_Up
-            elif key == Qt.Key_Down: released_viewport_key_equivalent = Qt.Key_Down
-            elif key == Qt.Key_A: released_viewport_key_equivalent = Qt.Key_Left
-            elif key == Qt.Key_D: released_viewport_key_equivalent = Qt.Key_Right
-            elif key == Qt.Key_W: released_viewport_key_equivalent = Qt.Key_Up
-            elif key == Qt.Key_S: released_viewport_key_equivalent = Qt.Key_Down
-            
-            # Shift 키를 뗄 때, 현재 WASD로 인해 pressed_keys_for_viewport에 들어간 항목이 있다면
-            # 해당 항목들을 제거하고 타이머를 멈춰야 함.
+            if is_auto_repeat: return super().eventFilter(obj, event)
+
+            logging.debug(f"KeyRelease: Key={QKeySequence(key).toString()}, PressedBefore={self.pressed_keys_for_viewport}")
+
+            key_to_remove_from_viewport = None
+
             if key == Qt.Key_Shift:
-                # 현재 Shift가 떨어졌으므로, WASD에 의해 pressed_keys_for_viewport에 남아있는
-                # Left, Right, Up, Down 키들을 제거한다.
-                keys_mapped_from_wasd = {Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down}
-                # 현재 pressed_keys가 WASD로부터 온 것인지 확인하는 더 좋은 방법은,
-                # pressed_keys_for_viewport에 (key, is_from_shift_wasd) 튜플을 저장하는 것.
-                # 여기서는 단순하게 Shift가 떨어지면 모든 방향키 효과를 제거 시도.
-                self.pressed_keys_for_viewport.clear() # 더 간단하게 모두 비움
-                if not self.pressed_keys_for_viewport:
+                # Shift 키가 떨어지면, "모든" 뷰포트 이동을 중지하고 포커스를 저장합니다.
+                # 이것은 Shift+WASD 중 WASD가 아직 눌려있더라도 이동을 멈추게 합니다.
+                if self.pressed_keys_for_viewport:
+                    logging.debug(f"  Shift released, clearing all pressed_keys: {self.pressed_keys_for_viewport}")
+                    self.pressed_keys_for_viewport.clear() # 모든 방향키 상태 제거
+                # 타이머 중지 및 포커스 저장은 아래 공통 로직에서 처리
+            elif key == Qt.Key_Left: key_to_remove_from_viewport = Qt.Key_Left
+            elif key == Qt.Key_Right: key_to_remove_from_viewport = Qt.Key_Right
+            elif key == Qt.Key_Up: key_to_remove_from_viewport = Qt.Key_Up
+            elif key == Qt.Key_Down: key_to_remove_from_viewport = Qt.Key_Down
+            elif key == Qt.Key_A: key_to_remove_from_viewport = Qt.Key_Left  # Shift+A 의 결과
+            elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right # Shift+D 의 결과
+            elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up    # Shift+W 의 결과
+            elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down  # Shift+S 의 결과
+
+            action_taken = False
+            if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
+                self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
+                logging.debug(f"  Removed {QKeySequence(key_to_remove_from_viewport).toString()} from pressed_keys. Remaining: {self.pressed_keys_for_viewport}")
+                action_taken = True
+            
+            if key == Qt.Key_Shift and not self.pressed_keys_for_viewport: # Shift만 떨어졌고 다른 이동키가 없으면
+                if self.viewport_move_timer.isActive():
                     self.viewport_move_timer.stop()
-                return True # Shift 릴리즈 이벤트 소비
+                    logging.debug("  Shift released (and no other viewport keys), timer stopped.")
+                    # 포커스 저장 (뷰포트 이동이 실제로 발생했다면)
+                    if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
+                       self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
+                        # ... (포커스 저장 로직 - 이전 답변과 동일) ...
+                        current_image_path_str = str(self.image_files[self.current_image_index])
+                        final_rel_center = self._get_current_view_relative_center()
+                        final_zoom_level = self.zoom_mode
+                        self.current_active_rel_center = final_rel_center
+                        self.current_active_zoom_level = final_zoom_level
+                        self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
+                        logging.debug(f"  Shift released, saved focus for {Path(current_image_path_str).name}")
 
-            if released_viewport_key_equivalent and released_viewport_key_equivalent in self.pressed_keys_for_viewport:
-                # 자동 반복이 아닌 실제 키 떼어짐 이벤트만 처리
-                if not is_auto_repeat:
-                    self.pressed_keys_for_viewport.remove(released_viewport_key_equivalent)
-                    if not self.pressed_keys_for_viewport: # 눌린 키가 더 이상 없으면 타이머 중지
-                        self.viewport_move_timer.stop()
-                    return True
+                return True # Shift 릴리즈는 항상 소비 (뷰포트 이동과 관련 없더라도)
 
-            return False # 처리되지 않은 KeyRelease 이벤트는 전파
+
+            if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
+                # 다른 키가 떨어져서 pressed_keys가 비었거나, Shift 릴리즈로 비워진 경우
+                self.viewport_move_timer.stop()
+                logging.debug("  All viewport keys are now released, timer stopped.")
+                if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
+                   self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
+                    # ... (포커스 저장 로직 - 이전 답변과 동일) ...
+                    current_image_path_str = str(self.image_files[self.current_image_index])
+                    final_rel_center = self._get_current_view_relative_center()
+                    final_zoom_level = self.zoom_mode
+                    self.current_active_rel_center = final_rel_center
+                    self.current_active_zoom_level = final_zoom_level
+                    self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
+                    logging.debug(f"  All viewport keys released, saved focus for {Path(current_image_path_str).name}")
+
+            if action_taken or key == Qt.Key_Shift : # 뷰포트 관련 키거나 Shift면 이벤트 소비
+                 return True
+            
+            return False # 그 외 처리되지 않은 KeyRelease
 
         return super().eventFilter(obj, event)
+
 
     def on_file_list_dialog_closed(self, result):
         """FileListDialog가 닫혔을 때 호출되는 슬롯"""
@@ -9498,6 +9758,12 @@ class PhotoSortApp(QMainWindow):
         self.image_loader.clear_cache() # 이미지 로더 캐시 비우기
         self.fit_pixmap_cache.clear()   # Fit 모드 캐시 비우기
 
+        # --- 뷰포트 포커스 정보 초기화 ---
+        self.viewport_focus_by_orientation.clear()
+        self.current_active_rel_center = QPointF(0.5, 0.5) # 활성 포커스도 초기화
+        self.current_active_zoom_level = "Fit"
+        logging.info("JPG 폴더 초기화: 뷰포트 포커스 정보 초기화됨.")
+
         # === 현재 Zoom 모드를 Fit으로 변경 ===
         if self.zoom_mode != "Fit":
             self.zoom_mode = "Fit"
@@ -9604,6 +9870,12 @@ class PhotoSortApp(QMainWindow):
             self.current_image_index = -1
             self.original_pixmap = None
             self.fit_pixmap_cache.clear()
+
+            # --- 추가: 뷰포트 포커스 정보 초기화 ---
+            self.viewport_focus_by_orientation.clear()
+            self.current_active_rel_center = QPointF(0.5, 0.5)
+            self.current_active_zoom_level = "Fit"
+            logging.info("RAW 전용 모드 초기화: 뷰포트 포커스 정보 초기화됨.")
 
             # === 현재 Zoom 모드를 Fit으로 변경 ===
             if self.zoom_mode != "Fit":
@@ -9911,16 +10183,6 @@ class PhotoSortApp(QMainWindow):
             import traceback
             traceback.print_exc() # 상세 오류 출력
 
-    def _on_image_load_failed(self, image_path, error_message, requested_index):
-        """이미지 로드 실패 시 UI 스레드에서 실행"""
-        # 요청 시점의 인덱스와 현재 인덱스 비교 (이미지 변경 여부 확인)
-        if self.current_image_index != requested_index:
-            print(f"이미지가 변경되어 오류 결과 무시: 요청={requested_index}, 현재={self.current_image_index}")
-            return
-            
-        self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_message}")
-        self.original_pixmap = None
-        self.update_counters()
 
 
 class FileListDialog(QDialog):
@@ -10333,19 +10595,7 @@ class SessionManagementDialog(QDialog):
         self.load_button.setEnabled(False) # 초기에는 비활성화
 
         self.delete_button = QPushButton(LanguageManager.translate("선택 세션 삭제"))
-        # 삭제 버튼은 좀 더 위험하므로 다른 스타일 적용 가능 (예: 빨간색 계열 호버)
-        # 여기서는 일단 동일 스타일 사용
-        delete_button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
-                border: none; padding: {UIScaleManager.get("button_padding")}px; border-radius: 3px;
-                min-height: {UIScaleManager.get("button_min_height")}px;
-            }}
-            QPushButton:hover {{ background-color: #D32F2F; color: white; }} /* 빨간색 계열 호버 */
-            QPushButton:pressed {{ background-color: #B71C1C; }}
-            QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; opacity: 0.7;}}
-        """
-        self.delete_button.setStyleSheet(delete_button_style)
+        self.delete_button.setStyleSheet(self.parent_app.load_button.styleSheet())
         self.delete_button.clicked.connect(self.delete_selected_session)
         self.delete_button.setEnabled(False) # 초기에는 비활성화
 
