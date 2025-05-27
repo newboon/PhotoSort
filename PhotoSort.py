@@ -9326,7 +9326,7 @@ class PhotoSortApp(QMainWindow):
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
             # --- 첫 실행 시 기본값 설정 ---
             self.camera_raw_settings = {} 
-            LanguageManager.set_language("ko") 
+            LanguageManager.set_language("en") 
             ThemeManager.set_theme("default")  
             DateFormatManager.set_date_format("yyyy-mm-dd")
             # RAW 전략은 ImageLoader 생성 후 설정
@@ -9374,7 +9374,7 @@ class PhotoSortApp(QMainWindow):
             logging.debug(f"PhotoSortApp.load_state: 로드된 데이터: {loaded_data}")
 
             # 1. 기본 설정 복원 (언어, 날짜 형식, 테마, RAW 전략, 패널 위치, 파일명 표시 여부 등)
-            language = loaded_data.get("language", "ko")
+            language = loaded_data.get("language", "en")
             LanguageManager.set_language(language)
 
             date_format = loaded_data.get("date_format", "yyyy-mm-dd")
