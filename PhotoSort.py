@@ -94,22 +94,23 @@ class UIScaleManager:
 
     # 기본 UI 크기 설정
     NORMAL_SETTINGS = {
-        "control_panel_margins": (10, 0, 10, 0), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하 순서 확인 필요)
-        "control_layout_spacing": 8,          # 컨트롤 레이아웃 위젯 간 기본 간격
-        "button_min_height": 30,               # 일반 버튼 최소 높이
-        "button_padding": 8,                   # 일반 버튼 내부 패딩
-        "delete_button_width": 45,             # 삭제(X) 버튼 너비
+        "control_panel_margins": (10, 0, 10, 0), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_layout_spacing": 8,             # 컨트롤 레이아웃 위젯 간 기본 간격
+        "button_min_height": 30,                 # 일반 버튼 최소 높이
+        "button_padding": 8,                     # 일반 버튼 내부 패딩
+        "delete_button_width": 45,               # 삭제(X) 버튼 너비
         "JPG_RAW_spacing": 15,
-        "section_spacing": 20,                 # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 15,               # 라디오 버튼 등 그룹 내 간격
-        "title_spacing": 10,                   # Zoom, Grid 등 섹션 제목 아래 간격
-        "settings_button_size": 35,            # 설정(톱니바퀴) 버튼 크기
-        "filename_label_padding": 40,          # 파일명 레이블 상하 패딩
-        "info_label_padding": 5,               # 파일 정보 레이블 좌측 패딩
-        "font_size": 10,                       # 기본 폰트 크기
-        "filename_font_size": 11,              # 파일명 폰트 크기
-        "folder_container_spacing": 6,         # 버튼 - 레이블 - X버튼 간격
-        "folder_label_padding": 13,            # 폴더 경로 레이블 높이 계산용 패딩
+        "section_spacing": 20,                   # 구분선(HorizontalLine) 주변 간격
+        "group_box_spacing": 15,                 # 라디오 버튼 등 그룹 내 간격
+        "title_spacing": 10,                     # Zoom, Grid 등 섹션 제목 아래 간격
+        "settings_button_size": 35,              # 설정(톱니바퀴) 버튼 크기
+        "filename_label_padding": 40,            # 파일명 레이블 상하 패딩
+        "info_label_padding": 5,                 # 파일 정보 레이블 좌측 패딩
+        "font_size": 10,                         # 기본 폰트 크기
+        "zoom_grid_font_size": 11,               # Zoom, Grid 등 섹션 제목 폰트 크기
+        "filename_font_size": 11,                # 파일명 폰트 크기
+        "folder_container_spacing": 6,           # 버튼 - 레이블 - X버튼 간격
+        "folder_label_padding": 13,              # 폴더 경로 레이블 높이 계산용 패딩
         "category_folder_vertical_spacing": 7,
         "combobox_padding": 4,
         # 설정 창 관련 키 추가
@@ -129,23 +130,24 @@ class UIScaleManager:
 
     # 컴팩트 모드 UI 크기 설정
     COMPACT_SETTINGS = {
-        "control_panel_margins": (10, 0, 10, 0),
-        "control_layout_spacing": 6,
-        "button_min_height": 30,
-        "button_padding": 3,
-        "delete_button_width": 42,
-        "JPG_RAW_spacing": 10,
-        "section_spacing": 12,
-        "group_box_spacing": 15,
-        "title_spacing": 7,
-        "settings_button_size": 30,
-        "filename_label_padding": 25,
-        "info_label_padding": 5,
-        "font_size": 9,
-        "filename_font_size": 10,
-        "folder_container_spacing": 5,
-        "folder_label_padding": 10,
-        "category_folder_vertical_spacing": 5,
+        "control_panel_margins": (10, 0, 10, 0), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_layout_spacing": 6,             # 컨트롤 레이아웃 위젯 간 기본 간격
+        "button_min_height": 20,                 # 일반 버튼 최소 높이
+        "button_padding": 8,                     # 일반 버튼 내부 패딩
+        "delete_button_width": 42,               # 삭제(X) 버튼 너비
+        "JPG_RAW_spacing": 10, 
+        "section_spacing": 12,                   # 구분선(HorizontalLine) 주변 간격
+        "group_box_spacing": 15,                 # 라디오 버튼 등 그룹 내 간격
+        "title_spacing": 7,                      # Zoom, Grid 등 섹션 제목 아래 간격
+        "settings_button_size": 30,              # 설정(톱니바퀴) 버튼 크기
+        "filename_label_padding": 25,            # 파일명 레이블 상하 패딩
+        "info_label_padding": 5,                 # 파일 정보 레이블 좌측 패딩
+        "font_size": 9,                          # 기본 폰트 크기
+        "zoom_grid_font_size": 10,               # Zoom, Grid 등 섹션 제목 폰트 크기
+        "filename_font_size": 10,                # 파일명 폰트 크기
+        "folder_container_spacing": 5,           # 버튼 - 레이블 - X버튼 간격
+        "folder_label_padding": 10,              # 폴더 경로 레이블 높이 계산용 패딩
+        "category_folder_vertical_spacing": 5, 
         "combobox_padding": 3,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
@@ -206,6 +208,24 @@ class UIScaleManager:
         """현재 모드에 맞는 마진 튜플 반환"""
         # 마진 값은 튜플이므로 직접 반환
         return cls._current_settings.get("control_panel_margins")
+    
+    @classmethod
+    def is_16_10_or_less(cls):
+        """
+        화면의 가로/세로 비율이 16:10(1.6)과 같거나 그보다 작은지 판별.
+        약간의 오차 허용 (1.6 이하 또는 1.6±0.05 이내면 True)
+        """
+        screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return False
+        geometry = screen.geometry()
+        width = geometry.width()
+        height = geometry.height()
+        if height == 0:
+            return False
+        aspect_ratio = width / height
+        # 16:10(1.6)과 같거나 그보다 작으면 True, 1.6±0.05 이내도 허용
+        return aspect_ratio <= 1.6 or abs(aspect_ratio - 1.6) < 0.05
 
 class ThemeManager:
 
@@ -223,9 +243,9 @@ class ThemeManager:
         "border": "#555555",        # 테두리 색상
     }
     _UI_COLORS_SONY = {
-        "accent": "#E2570D",
-        "accent_hover": "#E2570D",
-        "accent_pressed": "#C83E00",
+        "accent": "#FF6600",
+        "accent_hover": "#FF6600",
+        "accent_pressed": "#CC5200",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -236,9 +256,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_NIKON = {
-        "accent": "#E0CB00",
-        "accent_hover": "#E0CB00",
-        "accent_pressed": "#C6B200",
+        "accent": "#FFE100",
+        "accent_hover": "#FFE100",
+        "accent_pressed": "#CCB800",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -249,9 +269,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_CANON = {
-        "accent": "#D71215",
-        "accent_hover": "#D71215",
-        "accent_pressed": "#BE0000",
+        "accent": "#CC0000",
+        "accent_hover": "#CC0000",
+        "accent_pressed": "#A30000",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -262,9 +282,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_FUJIFILM = {
-        "accent": "#2AA58F",
-        "accent_hover": "#2AA58F",
-        "accent_pressed": "#108C76",
+        "accent": "#01916D",
+        "accent_hover": "#01916D",
+        "accent_pressed": "#016954",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -277,7 +297,7 @@ class ThemeManager:
     _UI_COLORS_PANASONIC = {
         "accent": "#0041C0",
         "accent_hover": "#0041C0",
-        "accent_pressed": "#0027A6",
+        "accent_pressed": "#002D87",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -288,9 +308,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_LEICA = {
-        "accent": "#DD171A",
-        "accent_hover": "#DD171A",
-        "accent_pressed": "#C40000",
+        "accent": "#E20612",
+        "accent_hover": "#E20612",
+        "accent_pressed": "#B00000",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -300,6 +320,58 @@ class ThemeManager:
         "bg_disabled": "#222222",
         "border": "#555555",
     }
+    _UI_COLORS_OLYMPUS = {
+        "accent": "#08107B",
+        "accent_hover": "#08107B",
+        "accent_pressed": "#050A5B",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_SAMSUNG = {
+        "accent": "#1428A0",
+        "accent_hover": "#1428A0",
+        "accent_pressed": "#101F7A",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_PENTAX = {
+        "accent": "#01CA47",
+        "accent_hover": "#01CA47",
+        "accent_pressed": "#019437",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_RICOH = {
+        "accent": "#D61B3E",
+        "accent_hover": "#D61B3E",
+        "accent_pressed": "#B00030",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }   
 
     # 모든 테마 저장 (이제 클래스 내부 변수 참조)
     THEMES = {
@@ -309,7 +381,11 @@ class ThemeManager:
         "canon": _UI_COLORS_CANON,
         "fujifilm": _UI_COLORS_FUJIFILM,
         "panasonic": _UI_COLORS_PANASONIC,
-        "leica": _UI_COLORS_LEICA
+        "ricoh": _UI_COLORS_RICOH,
+        "leica": _UI_COLORS_LEICA,
+        "olympus": _UI_COLORS_OLYMPUS,
+        "samsung": _UI_COLORS_SAMSUNG,
+        "pentax": _UI_COLORS_PENTAX,
     }
     
     _current_theme = "default"  # 현재 테마
@@ -665,16 +741,29 @@ class FolderPathLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.setText(text)
 
-    def setText(self, text: str, max_length=35, prefix_length=15, suffix_length=17):
+    def setText(self, text: str, max_length=None, prefix_length=None, suffix_length=None):
         """
         라벨 텍스트 설정 및 긴 경로 생략 처리
-        max_length: 이 길이를 초과하면 경로를 생략함
-        prefix_length: 생략 시 앞에서 표시할 글자 수
-        suffix_length: 생략 시 뒤에서 표시할 글자 수
         """
-        self.full_path = text  # 원본 경로 저장
-        self.setToolTip(text)  # 툴팁으로 전체 경로 표시
-        
+        self.full_path = text
+        self.setToolTip(text)
+
+        # 파라미터로 전달된 값을 우선 사용, None이면 해상도에 따라 기본값 적용
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geometry = screen.geometry()
+            width = geometry.width()
+            height = geometry.height()
+            aspect_ratio = width / height if height else 0
+            if abs(aspect_ratio - 1.6) < 0.05:
+                if max_length is None: max_length = 30
+                if prefix_length is None: prefix_length = 12
+                if suffix_length is None: suffix_length = 15
+            else:
+                if max_length is None: max_length = 60
+                if prefix_length is None: prefix_length = 20
+                if suffix_length is None: suffix_length = 35
+
         # 경로가 너무 길면 중간을 '...'로 표시
         if len(text) > max_length:
             display_text = text[:prefix_length] + "..." + text[-suffix_length:]
@@ -2535,6 +2624,22 @@ class SessionManagementDialog(QDialog):
             if reply == QMessageBox.Yes:
                 self.parent_app.delete_session(session_name_to_delete)
                 # self.populate_session_list() # delete_session 내부에서 호출될 것임
+
+def format_camera_name(make, model):
+    make_str = (make or "").strip()
+    model_str = (model or "").strip()
+    # 1. OLYMPUS IMAGING CORP. → OLYMPUS로 치환
+    if make_str.upper() == "OLYMPUS IMAGING CORP.":
+        make_str = "OLYMPUS"
+    # 2. RICOH가 make에 있으면 make 생략
+    if "RICOH" in make_str.upper():
+        make_str = ""
+    if make_str.upper().find("NIKON") != -1 and model_str.upper().startswith("NIKON"):
+        return model_str
+    if make_str.upper().find("CANON") != -1 and model_str.upper().startswith("CANON"):
+        return model_str
+    return f"{make_str} {model_str}".strip()
+
 
 class PhotoSortApp(QMainWindow):
     STATE_FILE = "photosort_data.json" # 상태 저장 파일 이름 정의
@@ -4550,9 +4655,9 @@ class PhotoSortApp(QMainWindow):
                 background-color: {ThemeManager.get_color('bg_secondary')};
                 color: {ThemeManager.get_color('text')};
                 border: none;
-                padding: 8px;
+                padding: {UIScaleManager.get("button_padding")}px;
                 border-radius: 1px;
-                min-height: 30px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
             }}
             QPushButton:hover {{
                 background-color: {ThemeManager.get_color('accent_hover')};
@@ -4575,7 +4680,7 @@ class PhotoSortApp(QMainWindow):
                 border: none;
                 padding: 4px;
                 border-radius: 1px;
-                min-height: 30px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
             }}
             QPushButton:hover {{
                 background-color: {ThemeManager.get_color('accent_hover')};
@@ -5123,7 +5228,12 @@ class PhotoSortApp(QMainWindow):
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
         <p style="margin-bottom: {bottom_margin}px;">Copyright © 2025 ffamilist</p>
-        <p>{LanguageManager.translate("피드백 및 업데이트 확인:")} <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: #E2570D; text-decoration: none;">[EN]</a>&nbsp;&nbsp;<a href="https://blog.naver.com/ffamilist/223844618813" style="color: #E2570D; text-decoration: none;">[KR]</a></p>
+        <p>
+            {LanguageManager.translate("피드백 및 업데이트 확인:")}
+            <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: #E2570D; text-decoration: none;">[EN]</a>&nbsp;&nbsp;
+            <a href="https://blog.naver.com/ffamilist/223844618813" style="color: #E2570D; text-decoration: none;">[KR]</a>&nbsp;&nbsp;
+            <a href="https://github.com/newboon/PhotoSort/releases" style="color: #E2570D; text-decoration: none;">[GitHub]</a>
+        </p>
         """
         return info_text
 
@@ -6037,7 +6147,7 @@ class PhotoSortApp(QMainWindow):
             # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
             final_camera_model_display = ""
             if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
-                final_camera_model_display = f"{rawpy_exif_data['exif_make']} {rawpy_exif_data['exif_model']}"
+                final_camera_model_display = format_camera_name(rawpy_exif_data["exif_make"], rawpy_exif_data["exif_model"])
             elif rawpy_exif_data.get("exif_model"):
                 final_camera_model_display = rawpy_exif_data["exif_model"]
             elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
@@ -6499,9 +6609,9 @@ class PhotoSortApp(QMainWindow):
         folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
 
         # FolderPathLabel 높이 계산 (한 번만 계산)
-        # FolderPathLabel에 설정될 폰트 기준 (여기서는 기본값 Arial 10 사용 가정)
+        # FolderPathLabel에 설정될 폰트 기준
         # 만약 FolderPathLabel의 폰트가 다르다면 해당 폰트로 QFontMetrics 생성해야 함
-        temp_label_font = QFont("Arial", 10) # FolderPathLabel의 폰트와 동일해야 함
+        temp_label_font = QFont("Arial", UIScaleManager.get("font_size")) # FolderPathLabel의 폰트와 동일해야 함
         fm_label = QFontMetrics(temp_label_font)
         label_line_height = fm_label.height()
         label_fixed_height = (label_line_height * 2) + folder_label_padding
@@ -6557,6 +6667,17 @@ class PhotoSortApp(QMainWindow):
 
             # ========== UIScaleManager 적용 ==========
             folder_path_label = FolderPathLabel(LanguageManager.translate("폴더 경로"), fixed_height_padding=folder_label_padding)
+            # 16:10 이하 해상도에서는 더 긴 값을 사용
+            if UIScaleManager.is_16_10_or_less():
+                folder_path_label.setText(
+                    LanguageManager.translate("폴더 경로"),
+                    max_length=20, prefix_length=2, suffix_length=12
+                )
+            else:
+                folder_path_label.setText(
+                    LanguageManager.translate("폴더 경로"),
+                    max_length=60, prefix_length=20, suffix_length=25
+                )
             folder_path_label.setWordWrap(True)
             folder_path_label.setEnabled(False)
             folder_path_label.doubleClicked.connect(lambda full_path_emitted, idx=i: self.open_category_folder(idx, full_path_emitted))
@@ -6622,7 +6743,17 @@ class PhotoSortApp(QMainWindow):
         
         if folder_path:
             self.target_folders[index] = folder_path
-            self.folder_path_labels[index].setText(folder_path, max_length=28, prefix_length=15, suffix_length=12) # 분류폴더 경로 레이블 글자수 설정
+            # 16:10 이하 해상도에서는 더 긴 값을 사용
+            if UIScaleManager.is_16_10_or_less():
+                self.folder_path_labels[index].setText(
+                    folder_path,
+                    max_length=20, prefix_length=2, suffix_length=12
+                )
+            else:
+                self.folder_path_labels[index].setText(
+                    folder_path,
+                    max_length=60, prefix_length=20, suffix_length=25
+                )
             # 폴더 설정 후 UI 업데이트
             self.update_folder_buttons()
             self.save_state() # <<< 저장
@@ -6866,7 +6997,7 @@ class PhotoSortApp(QMainWindow):
         # --- 폰트 수정 시작 (새 QFont 객체 생성) ---
         font = QFont(self.font()) # <<< 현재 위젯(PhotoSortApp)의 폰트를 가져와서 복사
         # font.setBold(True) # 이 새 폰트 객체에만 볼드 적용
-        font.setPointSize(UIScaleManager.get("font_size")) # 이 새 폰트 객체에만 크기 적용
+        font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 이 새 폰트 객체에만 크기 적용
         zoom_label.setFont(font) # 수정된 새 폰트를 레이블에 적용
         # --- 폰트 수정 끝 ---
         self.control_layout.addWidget(zoom_label)
@@ -7435,7 +7566,7 @@ class PhotoSortApp(QMainWindow):
         # --- 폰트 설정 시작 (Zoom과 동일하게) ---
         font = QFont(self.font()) # 기본 폰트 속성 복사
         # font.setBold(True) # 볼드 적용
-        font.setPointSize(UIScaleManager.get("font_size")) # 크기 적용
+        font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 크기 적용
         grid_title.setFont(font) # 새 폰트 적용
         # --- 폰트 설정 끝 ---
         self.control_layout.addWidget(grid_title)
@@ -8516,11 +8647,11 @@ class PhotoSortApp(QMainWindow):
                 self.info_resolution_label.setText(resolution_text)
             else:
                 self.info_resolution_label.setText("▪ -")
-            
+
             # 카메라 정보 설정
             make = exif_data["exif_make"]
             model = exif_data["exif_model"]
-            camera_info = f"▪ {make} {model}".strip()
+            camera_info = f"▪ {format_camera_name(make, model)}"
             self.info_camera_label.setText(camera_info if len(camera_info) > 2 else "▪ -")
             
             # 날짜 정보 설정
@@ -9457,9 +9588,17 @@ class PhotoSortApp(QMainWindow):
             
             for i, folder_path_str in enumerate(self.target_folders):
                 if folder_path_str and Path(folder_path_str).is_dir():
-                    self.folder_path_labels[i].setText(folder_path_str)
+                    if UIScaleManager.is_16_10_or_less():
+                        self.folder_path_labels[i].setText(
+                            folder_path_str,
+                            max_length=20, prefix_length=2, suffix_length=12
+                        )
+                    else:
+                        self.folder_path_labels[i].setText(
+                            folder_path_str,
+                            max_length=60, prefix_length=20, suffix_length=25
+                        )
                 else:
-                    self.target_folders[i] = "" # 유효하지 않으면 상태 변수도 비움
                     self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
             # ===> 경로 레이블 반영 끝 <===
 
