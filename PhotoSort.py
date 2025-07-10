@@ -2676,6 +2676,8 @@ class PhotoSortApp(QMainWindow):
         self.last_processed_camera_model = None
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
 
+        self.image_processing = False  # 이미지 처리 중 여부
+
         # --- 세션 저장을 위한 딕셔너리 ---
         # 형식: {"세션이름": {상태정보 딕셔너리}}
         self.saved_sessions = {} # 이전 self.saved_workspaces 에서 이름 변경
@@ -10420,10 +10422,20 @@ class PhotoSortApp(QMainWindow):
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
 
             if Qt.Key_1 <= key <= Qt.Key_3:
+                # 숫자 키 (1, 2, 3)로 폴더 이동
+                if self.image_processing:
+                    logging.debug("처리 중 상태이므로 키 입력 무시됨")
+                    return True  # 무시
                 folder_index = key - Qt.Key_1
-                if self.grid_mode != "Off": self.move_grid_image(folder_index)
-                else: self.move_current_image_to_folder(folder_index)
-                return True
+                if self.grid_mode != "Off": 
+                    self.image_processing = True # Grid 모드에서 폴더 이동 시 이미지 처리 플래그 설정
+                    self.move_grid_image(folder_index)
+                    self.image_processing = False # 폴더 이동 후 이미지 처리 플래그 해제
+                else: 
+                    self.image_processing = True # Grid Off 모드에서 폴더 이동 시 이미지 처리 플래그 설정
+                    self.move_current_image_to_folder(folder_index)
+                    self.image_processing = False # 폴더 이동 후 이미지 처리 플래그 해제
+                return True 
 
             return False # 그 외 처리 안 된 KeyPress
 
