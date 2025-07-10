@@ -6950,6 +6950,7 @@ class PhotoSortApp(QMainWindow):
             self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {str(e)}")
             # 만약 파일 이동 중 예외 발생 시, 히스토리 추가는 되지 않음
 
+    # 파일 이동 안정성 강화(재시도 로직). 파일 이동(shutil.move) 시 PermissionError (주로 Windows에서 다른 프로세스가 파일을 사용 중일 때 발생)가 발생하면, 즉시 실패하는 대신 짧은 시간 대기 후 최대 20번까지 재시도합니다.
     def move_file(self, source_path, target_folder):
         """파일을 대상 폴더로 이동하고, 이동된 최종 경로를 반환"""
         if not source_path or not target_folder:
@@ -6964,6 +6965,39 @@ class PhotoSortApp(QMainWindow):
             except Exception as e:
                 logging.error(f"대상 폴더 생성 실패: {target_dir}, 오류: {e}")
                 return None # <<< 폴더 생성 실패 시 None 반환
+
+        # 대상 경로 생성
+        target_path = target_dir / source_path.name
+
+        # 이미 같은 이름의 파일이 있는지 확인
+        if target_path.exists():
+            # 파일명 중복 처리
+            counter = 1
+            while target_path.exists():
+                # 새 파일명 형식: 원본파일명_1.확장자
+                new_name = f"{source_path.stem}_{counter}{source_path.suffix}"
+                target_path = target_dir / new_name
+                counter += 1
+            logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
+
+        # 파일 이동
+        delay = 0.1 # <<< 재시도 대기 시간
+        for attempt in range(20): # 최대 20번 재시도 (초 단위 2초 대기)
+        # 재시도 로직 추가
+            try: # <<< 파일 이동 시 오류 처리 추가
+                shutil.move(str(source_path), str(target_path))
+                logging.info(f"파일 이동: {source_path} -> {target_path}")
+                return target_path # <<< 이동 성공 시 최종 target_path 반환
+            except PermissionError as e:
+                if hasattr(e, 'winerror') and e.winerror == 32:
+                    print(f"[{attempt+1}] 파일 점유 중 (WinError 32), 재시도 대기: {source_path}")
+                    time.sleep(delay)
+                else:
+                    print(f"[{attempt+1}] PermissionError: {e}")
+                    return None # <<< 권한 오류 발생 시 None 반환
+            except Exception as e:
+                logging.error(f"파일 이동 실패: {source_path} -> {target_path}, 오류: {e}")
+                return None # <<< 이동 실패 시 None 반환
 
         # 대상 경로 생성
         target_path = target_dir / source_path.name
