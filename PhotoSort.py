@@ -27,6 +27,7 @@ import piexif
 import psutil
 import rawpy
 from PIL import Image, ImageQt
+import pillow_heif
 
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
@@ -1106,7 +1107,11 @@ class ExifWorker(QObject):
                 return
                 
             file_path_obj = Path(image_path)
+            suffix = file_path_obj.suffix.lower()
             is_raw = file_path_obj.suffix.lower() in self.raw_extensions
+            is_heic = file_path_obj.suffix.lower() in {'.heic', '.heif'} 
+
+            skip_piexif_formats = {'.heic', '.heif', '.png', '.webp', '.bmp'} # piexif 시도를 건너뛸 포맷 목록
             
             # 결과를 저장할 딕셔너리 초기화
             result = {
@@ -1137,7 +1142,7 @@ class ExifWorker(QObject):
 
             # PHASE 1: Piexif로 EXIF 정보 추출 시도
             piexif_success = False
-            if self._running:
+            if self._running and suffix not in skip_piexif_formats: # <<< HEIC 파일이면 piexif 시도 건너뛰기
                 try:
                     # JPG 이미지 크기 (RAW는 위에서 추출)
                     if not is_raw and not result["exif_resolution"]:
@@ -1195,7 +1200,9 @@ class ExifWorker(QObject):
                 
             needs_exiftool = False
             if self.exiftool_available:
-                if is_raw and result["exif_orientation"] is None:
+                if is_heic: # <<< HEIC 파일은 항상 ExifTool 필요
+                    needs_exiftool = True
+                elif is_raw and result["exif_orientation"] is None:
                     needs_exiftool = True
                 elif not result["exif_resolution"]:
                     needs_exiftool = True
@@ -1749,6 +1756,12 @@ class ResourceManager:
 
 class ImageLoader(QObject):
     """이미지 로딩 및 캐싱을 관리하는 클래스"""
+
+    def __init__(self, parent=None, raw_extensions=None):
+        super().__init__(parent)
+
+        self.raw_extensions = raw_extensions or set()
+
     imageLoaded = Signal(int, QPixmap, str)  # 인덱스, 픽스맵, 이미지 경로
     loadCompleted = Signal(QPixmap, str, int)  # pixmap, image_path, requested_index
     loadFailed = Signal(str, str, int)  # error_message, image_path, requested_index
@@ -2654,6 +2667,14 @@ class PhotoSortApp(QMainWindow):
         self.current_folder = ""
         self.raw_folder = ""
         self.image_files = []
+        self.supported_image_extensions = {
+            '.jpg', '.jpeg',  # 기존
+            '.heic', '.heif', # HEIC
+            '.png',           # PNG 추가
+            '.webp',          # WebP 추가
+            '.bmp',           # BMP 추가
+            '.tif', '.tiff'   # TIFF 추가
+        }
         self.raw_files = {}  # 키: 기본 파일명, 값: RAW 파일 경로
         self.is_raw_only_mode = False # RAW 단독 로드 모드인지 나타내는 플래그
         self.raw_extensions = {'.arw', '.crw', '.dng', '.cr2', '.cr3', '.nef', 
@@ -2899,7 +2920,7 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addStretch(1)
 
         # --- JPG 폴더 섹션 ---
-        self.load_button = QPushButton(LanguageManager.translate("JPG 불러오기")) # 버튼 먼저 추가
+        self.load_button = QPushButton(LanguageManager.translate("이미지 불러오기")) # 버튼 먼저 추가
         self.load_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('bg_secondary')};
@@ -3237,8 +3258,53 @@ class PhotoSortApp(QMainWindow):
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
 
+    def on_extension_checkbox_changed(self, state):
+        # 확장자 그룹 정의 (setup_settings_ui와 동일하게)
+        extension_groups = {
+            "JPG": ['.jpg', '.jpeg'],
+            "HEIC": ['.heic', '.heif'],
+            "PNG": ['.png'],
+            "WebP": ['.webp'],
+            "BMP": ['.bmp'],
+            "TIFF": ['.tif', '.tiff']
+        }
 
-    # PhotoSortApp에 새 메서드 추가
+        # 1. 현재 체크된 모든 확장자를 수집
+        new_supported_extensions = set()
+        checked_count = 0
+        for name, checkbox in self.ext_checkboxes.items():
+            if checkbox.isChecked():
+                checked_count += 1
+                new_supported_extensions.update(extension_groups[name])
+
+        # 2. 모든 체크박스가 해제되었는지 확인 (핵심 수정 부분)
+        if checked_count == 0:
+            # 마지막 체크박스가 해제되려는 순간, 신호를 보낸 체크박스의 연결을 잠시 끊음
+            sender_checkbox = self.sender()
+            if sender_checkbox:
+                sender_checkbox.blockSignals(True)  # 시그널 전파 중지
+                sender_checkbox.setChecked(False)   # UI상으로는 체크 해제된 것처럼 보이게 함 (선택적)
+                sender_checkbox.blockSignals(False) # 시그널 다시 연결
+
+            # JPG 체크박스를 찾아서 강제로 체크 상태로 만듦
+            jpg_checkbox = self.ext_checkboxes.get("JPG")
+            if jpg_checkbox:
+                jpg_checkbox.blockSignals(True)   # 무한 재귀 방지를 위해 시그널 중지
+                jpg_checkbox.setChecked(True)     # JPG를 강제로 체크
+                jpg_checkbox.blockSignals(False)  # 시그널 다시 연결
+
+            # JPG 확장자만 다시 new_supported_extensions에 추가
+            new_supported_extensions.update(extension_groups["JPG"])
+            logging.warning("모든 확장자 선택 해제 시도됨. JPG를 기본값으로 자동 선택합니다.")
+
+        # 3. 변경된 확장자 목록을 self.supported_image_extensions에 반영
+        self.supported_image_extensions = new_supported_extensions
+        logging.info(f"지원 확장자 변경됨: {sorted(list(self.supported_image_extensions))}")
+
+        # (선택 사항) 변경 사항을 즉시 저장하고 싶다면 아래 주석 해제
+        # self.save_state()
+
+    
     def _trigger_state_save_for_index(self):
         """current_image_index를 포함한 전체 상태를 저장합니다 (주로 타이머에 의해 호출)."""
         logging.debug(f"Index save timer triggered. Saving state (current_image_index: {self.current_image_index}).")
@@ -4246,7 +4312,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font())
         font.setPointSize(UIScaleManager.get("font_size"))
         language_title.setFont(font)
-        language_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        language_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         language_title.setObjectName("language_title_label")
         
         # 라디오 버튼 컨테이너
@@ -4329,7 +4395,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font()) # 현재 적용된 폰트 가져오기
         font.setPointSize(UIScaleManager.get("font_size")) # 명시적으로 설정
         panel_pos_title.setFont(font)
-        panel_pos_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
+        panel_pos_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
         panel_pos_title.setObjectName("panel_pos_title_label")
 
         # 라디오 버튼 컨테이너
@@ -4408,7 +4474,7 @@ class PhotoSortApp(QMainWindow):
         date_format_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         date_format_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         date_format_title.setFont(font)
-        date_format_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        date_format_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         date_format_title.setObjectName("date_format_title_label")
         
         self.date_format_combo = QComboBox()
@@ -4439,7 +4505,7 @@ class PhotoSortApp(QMainWindow):
         theme_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         theme_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         theme_title.setFont(font)
-        theme_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        theme_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         theme_title.setObjectName("theme_title_label")
         
         self.theme_combo = QComboBox()
@@ -4462,6 +4528,66 @@ class PhotoSortApp(QMainWindow):
         # ========== 테마 설정 끝 ==========
 
         if not is_first_run_popup: # 초기 설정 창에는 나오지 않을 설정들
+        # ========== 이미지 형식 설정 ==========
+            ext_container = QWidget()
+            ext_layout = QVBoxLayout(ext_container)
+            ext_layout.setContentsMargins(0, 5, 0, 5)
+
+            ext_title = QLabel(LanguageManager.translate("불러올 이미지 형식")) # 새 번역 키
+            ext_title.setObjectName("ext_title_label")  # objectName 지정
+            ext_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            ext_title.setMinimumWidth(250) 
+
+            # 체크박스 6개를 가로로 나란히 배치 (QHBoxLayout 사용)
+            self.ext_checkboxes = {} # 체크박스 위젯들을 저장할 딕셔너리
+
+            # 확장자 그룹 정의 (UI 표시용)
+            extension_groups = {
+                "JPG": ['.jpg', '.jpeg'],
+                "PNG": ['.png'],
+                "WebP": ['.webp'],
+                "HEIC": ['.heic', '.heif'],
+                "BMP": ['.bmp'],
+                "TIFF": ['.tif', '.tiff']
+            }
+            
+            # 체크박스 스타일
+            checkbox_style = f"""
+                QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 2px; }}
+                QCheckBox::indicator {{ width: 11px; height: 11px; }}
+                QCheckBox::indicator:checked {{ background-color: #848484; border: 2px solid #848484; border-radius: 1px; }}
+                QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 1px; }}
+                QCheckBox::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+            """
+
+            # 한 줄에 ext_title + 체크박스 6개 가로 배치
+            ext_row_widget = QWidget()
+            ext_row_layout = QHBoxLayout(ext_row_widget)
+            ext_row_layout.setContentsMargins(0, 0, 0, 0)
+            ext_row_layout.setSpacing(10)
+            ext_row_layout.addWidget(ext_title)
+
+            # 체크박스 6개를 가로로 추가
+            checkbox_row_widget = QWidget()
+            checkbox_row_layout = QHBoxLayout(checkbox_row_widget)
+            checkbox_row_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_row_layout.setSpacing(20)  # 체크박스 사이 간격
+            
+            for name, exts in extension_groups.items():
+                checkbox = QCheckBox(name)
+                checkbox.setStyleSheet(checkbox_style)
+                is_checked = any(ext in self.supported_image_extensions for ext in exts)
+                checkbox.setChecked(is_checked)
+                checkbox.stateChanged.connect(self.on_extension_checkbox_changed)
+                self.ext_checkboxes[name] = checkbox
+                checkbox_row_layout.addWidget(checkbox)
+            checkbox_row_layout.addStretch()
+
+            ext_row_layout.addWidget(checkbox_row_widget)
+            ext_layout.addWidget(ext_row_widget)
+            settings_layout.addWidget(ext_container)
+            # ========== 이미지 형식 설정 끝 ==========
+            
             # === 뷰포트 이동 속도 설정 ===
             viewport_speed_container = QWidget()
             viewport_speed_layout = QHBoxLayout(viewport_speed_container)
@@ -4472,7 +4598,7 @@ class PhotoSortApp(QMainWindow):
             viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
             viewport_speed_label.setFont(font)
-            viewport_speed_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤
+            viewport_speed_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤
             viewport_speed_label.setObjectName("viewport_speed_label")
 
             self.viewport_speed_combo = QComboBox()
@@ -4512,7 +4638,7 @@ class PhotoSortApp(QMainWindow):
             font = QFont(self.font())
             font.setPointSize(UIScaleManager.get("font_size"))
             raw_reset_label.setFont(font)
-            raw_reset_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤 (선택 사항)
+            raw_reset_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤 (선택 사항)
             raw_reset_label.setObjectName("raw_reset_label")
 
             self.reset_camera_settings_button = QPushButton(LanguageManager.translate("초기화")) # 새 번역 키
@@ -4908,6 +5034,7 @@ class PhotoSortApp(QMainWindow):
         info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        info_label.setObjectName("photosort_info_label")
 
         # 링크 활성화 설정 추가
         info_label.setOpenExternalLinks(True)
@@ -5222,9 +5349,10 @@ class PhotoSortApp(QMainWindow):
         version_margin = UIScaleManager.get("info_version_margin", 40)
         paragraph_margin = UIScaleManager.get("info_paragraph_margin", 30) 
         bottom_margin = UIScaleManager.get("info_bottom_margin", 30)
+        accent_color = ThemeManager.get_color('accent')
 
         info_text = f"""
-        <h2>PhotoSort</h2>
+        <h2 style="color: {accent_color};">PhotoSort</h2>
         <p style="margin-bottom: {version_margin}px;">Version: 25.05.27</p>
         <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
@@ -5232,9 +5360,9 @@ class PhotoSortApp(QMainWindow):
         <p style="margin-bottom: {bottom_margin}px;">Copyright © 2025 ffamilist</p>
         <p>
             {LanguageManager.translate("피드백 및 업데이트 확인:")}
-            <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: #E2570D; text-decoration: none;">[EN]</a>&nbsp;&nbsp;
-            <a href="https://blog.naver.com/ffamilist/223844618813" style="color: #E2570D; text-decoration: none;">[KR]</a>&nbsp;&nbsp;
-            <a href="https://github.com/newboon/PhotoSort/releases" style="color: #E2570D; text-decoration: none;">[GitHub]</a>
+            <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: {accent_color}; text-decoration: none;">[EN]</a>&nbsp;&nbsp;
+            <a href="https://blog.naver.com/ffamilist/223844618813" style="color: {accent_color}; text-decoration: none;">[KR]</a>&nbsp;&nbsp;
+            <a href="https://github.com/newboon/PhotoSort/releases" style="color: {accent_color}; text-decoration: none;">[GitHub]</a>
         </p>
         """
         return info_text
@@ -5318,6 +5446,13 @@ class PhotoSortApp(QMainWindow):
         <li><strong>License</strong>: HPND License (Historical Permission Notice and Disclaimer)</li>
         <li><strong>Website</strong>: <a href="https://pypi.org/project/pillow/">https://pypi.org/project/pillow/</a></li>
         <li>Pillow is the friendly PIL fork. PIL is the Python Imaging Library that adds image processing capabilities to your Python interpreter.</li>
+        </ul>
+
+        <h2>pillow-heif</h2>
+        <ul>
+        <li><strong>License</strong>: Apache-2.0 (Python wrapper), LGPL-3.0 (libheif core)</li>
+        <li><strong>Website</strong>: <a href="https://github.com/bigcat88/pillow_heif">https://github.com/bigcat88/pillow_heif</a></li>
+        <li>A Pillow-plugin for HEIF/HEIC support, powered by libheif.</li>
         </ul>
 
         <h2>piexif</h2>
@@ -5593,23 +5728,23 @@ class PhotoSortApp(QMainWindow):
         target_path = Path(folder_path)
 
         # 대소문자 구분 없이 JPG 파일 검색
-        all_jpg_files = []
+        all_image_files = []
         for file_path in target_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in ['.jpg', '.jpeg']:
-                all_jpg_files.append(file_path)
+            if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                all_image_files.append(file_path)
 
         # 파일명을 소문자로 변환하여 set으로 중복 제거 후 원본 경로 유지
         seen_files = set()
-        for file_path in all_jpg_files:
+        for file_path in all_image_files:
             lower_name = file_path.name.lower()
             if lower_name not in seen_files:
                 seen_files.add(lower_name)
                 temp_image_files.append(file_path)
 
-        # --- JPG 파일 유무 검사 추가 ---
+        # --- 이미지 파일 유무 검사 추가 ---
         if not temp_image_files:
-            logging.warning(f"선택한 폴더에 JPG 파일이 없습니다: {folder_path}")
-            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 JPG 파일이 없습니다."))
+            logging.warning(f"선택한 폴더에 지원하는 이미지 파일이 없습니다: {folder_path}")
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 지원하는 이미지 파일이 없습니다."))
             # UI 초기화
             self.image_files = [] # 내부 목록도 비움
             self.current_image_index = -1
@@ -9470,6 +9605,7 @@ class PhotoSortApp(QMainWindow):
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
             "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
+            "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
         }
 
@@ -9556,11 +9692,16 @@ class PhotoSortApp(QMainWindow):
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
             self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
             
-            self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도 추가, 기본값 5
+            self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
 
             self.saved_sessions = loaded_data.get("saved_sessions", {}) # <<< 추가, 없으면 빈 딕셔너리
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
+
+            # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
+            default_extensions = {'.jpg', '.jpeg', '.heic', '.heif', '.png', '.webp', '.bmp', '.tif', '.tiff'}
+            loaded_extensions = loaded_data.get("supported_image_extensions", list(default_extensions))
+            self.supported_image_extensions = set(loaded_extensions)
 
             # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
             if hasattr(self, 'language_group'):
@@ -10855,7 +10996,7 @@ class PhotoSortApp(QMainWindow):
     def update_ui_texts(self):
         """UI의 모든 텍스트를 현재 언어로 업데이트"""
         # 버튼 텍스트 업데이트
-        self.load_button.setText(LanguageManager.translate("JPG 불러오기"))
+        self.load_button.setText(LanguageManager.translate("이미지 불러오기"))
         # 직접 설정하던 부분 제거: self.match_raw_button.setText(LanguageManager.translate("JPG - RAW 연결"))
         self.update_match_raw_button_state()  # 대신 상태에 맞는 버튼 텍스트를 설정하는 메서드 호출
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
@@ -10891,7 +11032,12 @@ class PhotoSortApp(QMainWindow):
 
             # 팝업 내부 위젯 텍스트 업데이트 (재귀 함수 호출)
             self.update_settings_labels_texts(self.settings_popup)
-            
+
+            # === "불러올 이미지 형식" 라벨 텍스트 업데이트 추가 ===
+            ext_label_widget = self.settings_popup.findChild(QLabel, "ext_title_label")
+            if ext_label_widget:
+                ext_label_widget.setText(LanguageManager.translate("불러올 이미지 형식"))
+            # ===============================================
 
             # '확인' 버튼 텍스트 업데이트 (첫 실행 팝업에만 존재)
             if hasattr(self.settings_popup, 'confirm_button'):
@@ -10906,16 +11052,11 @@ class PhotoSortApp(QMainWindow):
                     qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
 
             # ========== 정보 텍스트 업데이트 코드 추가 ==========
-            # 정보 텍스트 레이블 찾기 - PhotoSort로 시작하는 텍스트를 가진 QLabel을 찾기
-            for info_label in self.settings_popup.findChildren(QLabel):
-                if info_label.text().strip().startswith("<h2>PhotoSort</h2>"):
-                    # 정보 텍스트 재생성 - 새로운 create_translated_info_text() 함수 사용
-                    updated_info_text = self.create_translated_info_text()
-                    info_label.setText(updated_info_text)
-                    print("정보 텍스트 업데이트 완료")
-                    break
+            info_label = self.settings_popup.findChild(QLabel, "photosort_info_label")
+            if info_label:
+                info_label.setText(self.create_translated_info_text())
             # ========== 정보 텍스트 업데이트 코드 끝 ==========
-
+            
             # 카메라 RAW 설정 초기화 라벨 업데이트
             raw_reset_label_widget = self.settings_popup.findChild(QLabel, "raw_reset_label")
             if raw_reset_label_widget: # 위젯이 존재할 때만 텍스트 설정
@@ -11099,6 +11240,14 @@ def main():
     # PyInstaller로 패키징된 실행 파일을 위한 멀티프로세싱 지원 추가
     freeze_support()  # 이 호출이 멀티프로세싱 무한 재귀 문제를 해결합니다
 
+    # <<<--- HEIC 플러그인 등록 코드를 여기로 이동 ---<<<
+    try:
+        pillow_heif.register_heif_opener()
+        logging.info("HEIF/HEIC 지원이 활성화되었습니다. (main에서 등록)")
+    except Exception as e:
+        logging.error(f"HEIF/HEIC 플러그인 등록 실패: {e}")
+    # <<<--------------------------------------------<<<
+
     # 로그 레벨 설정: 개발 환경에서는 DEBUG, 배포 환경에서는 INFO로 설정
     # 실제 환경에 따라 조정 가능
     is_dev_mode = getattr(sys, 'frozen', False) is False  # 스크립트 모드면 개발 환경
@@ -11114,7 +11263,7 @@ def main():
 
     # 번역 데이터 초기화
     translations = {
-        "JPG 불러오기": "Load JPG",
+        "이미지 불러오기": "Load Images",
         "RAW 불러오기": "Load RAW",
         "폴더 경로": "Folder Path",
         "JPG - RAW 연결": "Link JPG - RAW",
@@ -11248,6 +11397,9 @@ def main():
         "'{session_name}' 세션을 정말 삭제하시겠습니까?": "Are you sure you want to delete the session '{session_name}'?",
         "불러오기 완료": "Load Complete", # 이미 있을 수 있음
         "'{session_name}' 세션을 불러왔습니다.": "Session '{session_name}' has been loaded.",
+        "불러올 이미지 형식": "Loadable Image Formats",
+        "최소 하나 이상의 확장자는 선택되어야 합니다.": "At least one extension must be selected.",
+        "선택한 폴더에 지원하는 이미지 파일이 없습니다.": "No supported image files found in the selected folder.",
     }
     
     LanguageManager.initialize_translations(translations)
