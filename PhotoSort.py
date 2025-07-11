@@ -2739,7 +2739,7 @@ class PhotoSortApp(QMainWindow):
         self.memory_monitor_timer.start()
 
 
-        # current_image_index 주기적 저장을 위한
+        # current_image_index 주기적 자동동저장을 위한
         self.state_save_timer = QTimer(self)
         self.state_save_timer.setSingleShot(True) # 한 번만 실행되도록 설정
         self.state_save_timer.setInterval(5000)  # 5초 (5000ms)
@@ -2863,6 +2863,19 @@ class PhotoSortApp(QMainWindow):
         image_palette = self.image_panel.palette()
         image_palette.setColor(QPalette.Window, QColor(0, 0, 0))
         self.image_panel.setPalette(image_palette)
+
+        # === 캔버스 영역 드래그 앤 드랍 활성화 ===
+        # 이미지 패널에 드래그 앤 드랍 활성화
+        self.image_panel.setAcceptDrops(True)
+        
+        # 드래그 앤 드랍 이벤트 핸들러 연결
+        self.image_panel.dragEnterEvent = self.canvas_dragEnterEvent
+        self.image_panel.dragMoveEvent = self.canvas_dragMoveEvent
+        self.image_panel.dragLeaveEvent = self.canvas_dragLeaveEvent
+        self.image_panel.dropEvent = self.canvas_dropEvent
+        
+        logging.info("캔버스 영역 드래그 앤 드랍 기능 활성화됨")
+        # === 캔버스 드래그 앤 드랍 설정 끝 ===
         
         # 이미지 레이아웃 설정 - 초기에는 단일 이미지 레이아웃
         self.image_layout = QVBoxLayout(self.image_panel) # 기본 이미지 표시용 레이아웃
@@ -3259,6 +3272,939 @@ class PhotoSortApp(QMainWindow):
         self.exif_cache = {}  # 파일 경로 -> EXIF 데이터 딕셔너리
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
+
+        # 드래그 앤 드랍 관련 변수
+        self.drag_target_label = None  # 현재 드래그 타겟 레이블
+        self.original_label_styles = {}  # 원래 레이블 스타일 저장
+        
+        logging.info("드래그 앤 드랍 기능 활성화됨")
+        # === 드래그 앤 드랍 설정 끝 ===
+
+
+# ============= 드래그 앤 드랍 관련 함수 시작 ============== #
+    def dragEnterEvent(self, event):
+        """드래그 진입 시 호출"""
+        try:
+            # 폴더만 허용
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:  # 하나의 항목만 허용
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        logging.debug(f"드래그 진입: 폴더 감지됨 - {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("드래그 진입: 폴더가 아니거나 여러 항목 감지됨")
+        except Exception as e:
+            logging.error(f"dragEnterEvent 오류: {e}")
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """드래그 이동 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 현재 마우스 위치에서 타겟 레이블 찾기
+                        pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
+                        target_label, target_type = self._find_target_label_at_position(pos)
+                        
+                        # 폴더 유효성 검사
+                        is_valid = self._validate_folder_for_target(file_path, target_type)
+                        
+                        # 이전 타겟과 다르면 스타일 복원
+                        if self.drag_target_label and self.drag_target_label != target_label:
+                            self._restore_original_style(self.drag_target_label)
+                            self.drag_target_label = None
+                        
+                        # 새 타겟에 스타일 적용
+                        if target_label and target_label != self.drag_target_label:
+                            self._save_original_style(target_label)
+                            if is_valid:
+                                self._set_drag_accept_style(target_label)
+                            else:
+                                self._set_drag_reject_style(target_label)
+                            self.drag_target_label = target_label
+                        
+                        event.acceptProposedAction()
+                        return
+            
+            # 조건에 맞지 않으면 스타일 복원 후 거부
+            if self.drag_target_label:
+                self._restore_original_style(self.drag_target_label)
+                self.drag_target_label = None
+            event.ignore()
+        except Exception as e:
+            logging.error(f"dragMoveEvent 오류: {e}")
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """드래그 벗어날 때 호출"""
+        try:
+            # 모든 스타일 복원
+            if self.drag_target_label:
+                self._restore_original_style(self.drag_target_label)
+                self.drag_target_label = None
+            logging.debug("드래그 벗어남: 스타일 복원됨")
+        except Exception as e:
+            logging.error(f"dragLeaveEvent 오류: {e}")
+
+    def dropEvent(self, event):
+        """드랍 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 현재 마우스 위치에서 타겟 레이블 찾기
+                        pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
+                        target_label, target_type = self._find_target_label_at_position(pos)
+                        
+                        # 스타일 복원
+                        if self.drag_target_label:
+                            self._restore_original_style(self.drag_target_label)
+                            self.drag_target_label = None
+                        
+                        # 타겟에 따른 처리
+                        success = self._handle_folder_drop(file_path, target_type)
+                        
+                        if success:
+                            event.acceptProposedAction()
+                            logging.info(f"폴더 드랍 성공: {file_path} -> {target_type}")
+                        else:
+                            event.ignore()
+                            logging.warning(f"폴더 드랍 실패: {file_path} -> {target_type}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("dropEvent: 유효하지 않은 드랍")
+        except Exception as e:
+            logging.error(f"dropEvent 오류: {e}")
+            event.ignore()
+
+    def _find_target_label_at_position(self, pos):
+        """좌표에서 타겟 레이블과 타입을 찾기"""
+        try:
+            # 컨트롤 패널 내의 위젯에서 좌표 확인
+            widget_at_pos = self.childAt(pos)
+            if not widget_at_pos:
+                return None, None
+            
+            # 부모 위젯들을 따라가며 타겟 레이블 찾기
+            current_widget = widget_at_pos
+            for _ in range(10):  # 최대 10단계까지 부모 탐색
+                if current_widget is None:
+                    break
+                
+                # JPG 폴더 레이블 확인
+                if hasattr(self, 'folder_path_label') and current_widget == self.folder_path_label:
+                    return self.folder_path_label, "image_folder"
+                
+                # RAW 폴더 레이블 확인
+                if hasattr(self, 'raw_folder_path_label') and current_widget == self.raw_folder_path_label:
+                    return self.raw_folder_path_label, "raw_folder"
+                
+                # 분류 폴더 레이블들 확인
+                if hasattr(self, 'folder_path_labels'):
+                    for i, label in enumerate(self.folder_path_labels):
+                        if current_widget == label:
+                            return label, f"category_folder_{i}"
+                
+                # 부모로 이동
+                current_widget = current_widget.parent()
+            
+            return None, None
+        except Exception as e:
+            logging.error(f"_find_target_label_at_position 오류: {e}")
+            return None, None
+
+    def _validate_folder_for_target(self, folder_path, target_type):
+        """타겟별 폴더 유효성 검사"""
+        try:
+            if not folder_path or not target_type:
+                return False
+            
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return False
+            
+            if target_type == "image_folder":
+                # 이미지 폴더: 지원하는 이미지 파일이 있는지 확인
+                return self._has_supported_image_files(folder_path_obj)
+            
+            elif target_type == "raw_folder":
+                # RAW 폴더: RAW 파일이 있는지 확인
+                return self._has_raw_files(folder_path_obj)
+            
+            elif target_type.startswith("category_folder_"):
+                # 분류 폴더: 모든 디렉토리 허용
+                return True
+            
+            return False
+        except Exception as e:
+            logging.error(f"_validate_folder_for_target 오류: {e}")
+            return False
+
+    def _has_supported_image_files(self, folder_path):
+        """폴더에 지원하는 이미지 파일이 있는지 확인"""
+        try:
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                    return True
+            return False
+        except Exception as e:
+            logging.debug(f"이미지 파일 확인 오류: {e}")
+            return False
+
+    def _has_raw_files(self, folder_path):
+        """폴더에 RAW 파일이 있는지 확인"""
+        try:
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in self.raw_extensions:
+                    return True
+            return False
+        except Exception as e:
+            logging.debug(f"RAW 파일 확인 오류: {e}")
+            return False
+
+    def _save_original_style(self, widget):
+        """원래 스타일 저장"""
+        try:
+            if widget:
+                self.original_label_styles[widget] = widget.styleSheet()
+        except Exception as e:
+            logging.error(f"_save_original_style 오류: {e}")
+
+    def _set_drag_accept_style(self, widget):
+        """드래그 수락 스타일 적용"""
+        try:
+            if widget:
+                widget.setStyleSheet(f"""
+                    QLabel {{
+                        color: #AAAAAA;
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_primary')};
+                        border: 2px solid {ThemeManager.get_color('accent')};
+                        border-radius: 1px;
+                    }}
+                """)
+        except Exception as e:
+            logging.error(f"_set_drag_accept_style 오류: {e}")
+
+    def _set_drag_reject_style(self, widget):
+        """드래그 거부 스타일 적용"""
+        try:
+            if widget:
+                widget.setStyleSheet(f"""
+                    QLabel {{
+                        color: #AAAAAA;
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_primary')};
+                        border: 2px solid #FF4444;
+                        border-radius: 1px;
+                    }}
+                """)
+        except Exception as e:
+            logging.error(f"_set_drag_reject_style 오류: {e}")
+
+    def _restore_original_style(self, widget):
+        """원래 스타일 복원"""
+        try:
+            if widget and widget in self.original_label_styles:
+                original_style = self.original_label_styles[widget]
+                widget.setStyleSheet(original_style)
+                del self.original_label_styles[widget]
+        except Exception as e:
+            logging.error(f"_restore_original_style 오류: {e}")
+
+    def _handle_folder_drop(self, folder_path, target_type):
+        """타겟별 폴더 드랍 처리"""
+        try:
+            if not folder_path or not target_type:
+                return False
+            
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return False
+            
+            if target_type == "image_folder":
+                # 이미지 폴더 처리
+                return self._handle_image_folder_drop(folder_path)
+            
+            elif target_type == "raw_folder":
+                # RAW 폴더 처리
+                return self._handle_raw_folder_drop(folder_path)
+            
+            elif target_type.startswith("category_folder_"):
+                # 분류 폴더 처리
+                folder_index = int(target_type.split("_")[-1])
+                return self._handle_category_folder_drop(folder_path, folder_index)
+            
+            return False
+        except Exception as e:
+            logging.error(f"_handle_folder_drop 오류: {e}")
+            return False
+
+    def _handle_image_folder_drop(self, folder_path):
+        """이미지 폴더 드랍 처리"""
+        try:
+            # 기존 load_images_from_folder 함수 재사용
+            success = self.load_images_from_folder(folder_path)
+            if success:
+                # load_jpg_folder와 동일한 UI 업데이트 로직 추가
+                self.current_folder = folder_path
+                self.folder_path_label.setText(folder_path)
+                self.update_jpg_folder_ui_state()  # UI 상태 업데이트
+                self.save_state()  # 상태 저장
+                
+                # 세션 관리 팝업이 열려있으면 업데이트
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()
+                
+                logging.info(f"드래그 앤 드랍으로 이미지 폴더 로드 성공: {folder_path}")
+                return True
+            else:
+                # 실패 시에도 load_images_from_folder 내부에서 UI 초기화가 이미 처리됨
+                # 추가로 current_folder도 초기화
+                self.current_folder = ""
+                self.update_jpg_folder_ui_state()
+                
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()
+                
+                logging.warning(f"드래그 앤 드랍으로 이미지 폴더 로드 실패: {folder_path}")
+                return False
+        except Exception as e:
+            logging.error(f"_handle_image_folder_drop 오류: {e}")
+            return False
+
+    def _load_raw_only_from_path(self, folder_path):
+        """RAW 전용 폴더를 지정된 경로에서 로드 (드래그 앤 드랍용)"""
+        try:
+            if not folder_path:
+                return False
+                
+            target_path = Path(folder_path)
+            temp_raw_file_list = []
+
+            # RAW 파일 검색
+            for ext in self.raw_extensions:
+                temp_raw_file_list.extend(target_path.glob(f'*{ext}'))
+                temp_raw_file_list.extend(target_path.glob(f'*{ext.upper()}')) # 대문자 확장자도 고려
+
+            # 중복 제거 및 정렬
+            unique_raw_files = sorted(list(set(temp_raw_file_list)))
+
+            if not unique_raw_files:
+                self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 RAW 파일이 없습니다."))
+                # UI 초기화 (기존 JPG 로드 실패와 유사하게)
+                self.image_files = []
+                self.current_image_index = -1
+                self.image_label.clear()
+                self.image_label.setStyleSheet("background-color: black;")
+                self.setWindowTitle("PhotoSort")
+                self.update_counters()
+                self.update_file_info_display(None)
+                # RAW 관련 UI 업데이트
+                self.raw_folder = ""
+                self.is_raw_only_mode = False # 실패 시 모드 해제
+                self.update_raw_folder_ui_state() # raw_folder_path_label 포함
+                self.update_match_raw_button_state() # 버튼 텍스트 원복
+                # JPG 버튼 활성화
+                self.load_button.setEnabled(True)
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()                
+                return False
+            
+            # --- 1. 첫 번째 RAW 파일 분석 ---
+            first_raw_file_path_obj = unique_raw_files[0]
+            first_raw_file_path_str = str(first_raw_file_path_obj)
+            logging.info(f"첫 번째 RAW 파일 분석 시작: {first_raw_file_path_obj.name}")
+
+            is_raw_compatible = False
+            camera_model_name = LanguageManager.translate("알 수 없는 카메라") # 기본값
+            original_resolution_str = "-"
+            preview_resolution_str = "-"
+            
+            # exiftool을 사용해야 할 수도 있으므로 미리 경로 확보
+            exiftool_path = self.get_exiftool_path() # 기존 get_exiftool_path() 사용
+            exiftool_available = Path(exiftool_path).exists() and Path(exiftool_path).is_file()
+
+            # 1.1. {RAW 호환 여부} 및 {원본 해상도 (rawpy 시도)}, {카메라 모델명 (rawpy 시도)}
+            rawpy_exif_data = {} # rawpy에서 얻은 부분적 EXIF 저장용
+            try:
+                with rawpy.imread(first_raw_file_path_str) as raw:
+                    is_raw_compatible = True
+                    original_width = raw.sizes.width # postprocess 후 크기 (raw_width는 센서 크기)
+                    original_height = raw.sizes.height
+                    if original_width > 0 and original_height > 0 :
+                        original_resolution_str = f"{original_width}x{original_height}"
+                    
+                    if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer and \
+                    hasattr(raw, 'model') and raw.model:
+                        camera_model_name = f"{raw.camera_manufacturer.strip()} {raw.model.strip()}"
+                    elif hasattr(raw, 'model') and raw.model: # 모델명만 있는 경우
+                        camera_model_name = raw.model.strip()
+                    
+                    # 임시로 rawpy에서 일부 EXIF 정보 추출 (카메라 모델 등)
+                    rawpy_exif_data["exif_make"] = raw.camera_manufacturer.strip() if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer else ""
+                    rawpy_exif_data["exif_model"] = raw.model.strip() if hasattr(raw, 'model') and raw.model else ""
+
+            except Exception as e_rawpy:
+                is_raw_compatible = False # rawpy로 기본 정보 읽기 실패 시 호환 안됨으로 간주
+                logging.warning(f"rawpy로 첫 파일({first_raw_file_path_obj.name}) 분석 중 오류 (호환 안됨 가능성): {e_rawpy}")
+
+            # 1.2. {카메라 모델명 (ExifTool 시도 - rawpy 실패 시 또는 보강)} 및 {원본 해상도 (ExifTool 시도 - rawpy 실패 시)}
+            if (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라") or \
+            not original_resolution_str or original_resolution_str == "-") and exiftool_available:
+                logging.info(f"Exiftool로 추가 정보 추출 시도: {first_raw_file_path_obj.name}")
+                try:
+                    cmd = [exiftool_path, "-json", "-Model", "-ImageWidth", "-ImageHeight", "-Make", first_raw_file_path_str]
+                    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
+                    if process.returncode == 0 and process.stdout:
+                        exif_data_list = json.loads(process.stdout)
+                        if exif_data_list and isinstance(exif_data_list, list):
+                            exif_data = exif_data_list[0]
+                            model = exif_data.get("Model")
+                            make = exif_data.get("Make")
+                            
+                            if make and model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = f"{make.strip()} {model.strip()}"
+                            elif model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = model.strip()
+                            
+                            # rawpy_exif_data 보강
+                            if not rawpy_exif_data.get("exif_make") and make: rawpy_exif_data["exif_make"] = make.strip()
+                            if not rawpy_exif_data.get("exif_model") and model: rawpy_exif_data["exif_model"] = model.strip()
+
+                            if (not original_resolution_str or original_resolution_str == "-"): # is_raw_compatible이 False인 경우 등
+                                width = exif_data.get("ImageWidth")
+                                height = exif_data.get("ImageHeight")
+                                if width and height and int(width) > 0 and int(height) > 0:
+                                    original_resolution_str = f"{width}x{height}"
+                except Exception as e_exiftool:
+                    logging.error(f"Exiftool로 정보 추출 중 오류: {e_exiftool}")
+            
+            # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
+            final_camera_model_display = ""
+            if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = format_camera_name(rawpy_exif_data["exif_make"], rawpy_exif_data["exif_model"])
+            elif rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = rawpy_exif_data["exif_model"]
+            elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
+                final_camera_model_display = camera_model_name
+            else:
+                final_camera_model_display = LanguageManager.translate("알 수 없는 카메라")
+
+            # 1.3. {미리보기 해상도} 추출
+            # ImageLoader의 _load_raw_preview_with_orientation을 임시로 호출하여 미리보기 정보 얻기
+            # (ImageLoader 인스턴스가 필요)
+            preview_pixmap, preview_width, preview_height = self.image_loader._load_raw_preview_with_orientation(first_raw_file_path_str)
+            if preview_pixmap and not preview_pixmap.isNull() and preview_width and preview_height:
+                preview_resolution_str = f"{preview_width}x{preview_height}"
+            else: # 미리보기 추출 실패 또는 정보 없음
+                preview_resolution_str = LanguageManager.translate("정보 없음") # 또는 "-"
+
+            logging.info(f"파일 분석 완료: 호환={is_raw_compatible}, 모델='{final_camera_model_display}', 원본={original_resolution_str}, 미리보기={preview_resolution_str}")
+
+            self.last_processed_camera_model = None # 새 폴더 로드 시 이전 카메라 모델 정보 초기화
+            
+            # --- 2. 저장된 설정 확인 및 메시지 박스 표시 결정 ---
+            chosen_method = None # 사용자가 최종 선택한 처리 방식 ("preview" or "decode")
+            dont_ask_again_for_this_model = False
+
+            # final_camera_model_display가 유효할 때만 camera_raw_settings 확인
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                saved_setting_for_this_action = self.get_camera_raw_setting(final_camera_model_display)
+                if saved_setting_for_this_action: # 해당 모델에 대한 설정이 존재하면
+                    # 저장된 "dont_ask" 값을 dont_ask_again_for_this_model의 초기값으로 사용
+                    dont_ask_again_for_this_model = saved_setting_for_this_action.get("dont_ask", False)
+
+                    if dont_ask_again_for_this_model: # "다시 묻지 않음"이 True이면
+                        chosen_method = saved_setting_for_this_action.get("method")
+                        logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
+                    else: # "다시 묻지 않음"이 False이거나 dont_ask 키가 없으면 메시지 박스 표시
+                        chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                            is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                        )
+                        # 사용자가 대화상자를 닫지 않았을 때만 dont_ask_again_for_this_model 값을 업데이트
+                        if chosen_method is not None:
+                            dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+                else: # 해당 모델에 대한 설정이 아예 없으면 메시지 박스 표시
+                    chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                        is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                    )
+                    if chosen_method is not None:
+                        dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+            else: # 카메라 모델을 알 수 없는 경우 -> 항상 메시지 박스 표시
+                logging.info(f"카메라 모델을 알 수 없어, 메시지 박스 표시 (호환성 기반)")
+                chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                    is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                )
+                if chosen_method is not None:
+                    dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+
+            if chosen_method is None:
+                logging.info("RAW 처리 방식 선택되지 않음 (대화상자 닫힘 등). 로드 취소.")
+                return False
+            
+            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}")
+
+            # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
+            # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                # chosen_method가 None이 아닐 때만 저장 로직 실행
+                self.set_camera_raw_setting(final_camera_model_display, chosen_method, dont_ask_again_for_this_model)
+            
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                self.last_processed_camera_model = final_camera_model_display
+            else:
+                self.last_processed_camera_model = None
+            
+            # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
+            self.image_loader.set_raw_load_strategy(chosen_method)
+            logging.info(f"ImageLoader 처리 방식 설정 (새 로드): {chosen_method}")
+
+            # --- RAW 로드 성공 시 ---
+            logging.info(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
+            self.image_files = unique_raw_files
+            
+            self.raw_folder = folder_path
+            self.is_raw_only_mode = True
+
+            self.current_folder = ""
+            self.raw_files = {} # RAW 전용 모드에서는 이 딕셔너리는 다른 용도로 사용되지 않음
+            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+            self.update_jpg_folder_ui_state()
+
+            self.raw_folder_path_label.setText(folder_path)
+            self.update_raw_folder_ui_state()
+            self.update_match_raw_button_state()
+            self.load_button.setEnabled(False)
+
+            self.grid_page_start_index = 0
+            self.current_grid_index = 0
+            self.image_loader.clear_cache() # 이전 캐시 비우기 (다른 전략이었을 수 있으므로)
+
+            self.zoom_mode = "Fit"
+            self.fit_radio.setChecked(True)
+            self.grid_mode = "Off"
+            self.grid_off_radio.setChecked(True)
+            self.update_zoom_radio_buttons_state()
+            self.save_state()
+
+            self.current_image_index = 0
+            # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
+            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})")
+            self.display_current_image() 
+
+            if self.grid_mode == "Off":
+                self.start_background_thumbnail_preloading()
+
+            if self.session_management_popup and self.session_management_popup.isVisible():
+                self.session_management_popup.update_all_button_states()
+
+            return True
+            
+        except Exception as e:
+            logging.error(f"_load_raw_only_from_path 오류: {e}")
+            return False
+
+    def _handle_raw_folder_drop(self, folder_path):
+        """RAW 폴더 드랍 처리"""
+        try:
+            # 이미지 파일이 로드되지 않았다면 RAW 전용 모드로 동작
+            if not self.image_files:
+                # RAW 전용 모드: 새로운 함수 사용
+                success = self._load_raw_only_from_path(folder_path)
+                if success:
+                    logging.info(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 성공: {folder_path}")
+                    return True
+                else:
+                    logging.warning(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 실패: {folder_path}")
+                    return False
+            else:
+                # JPG-RAW 매칭 모드: 이미 로드된 이미지들과 RAW 파일 매칭
+                self.raw_folder = folder_path
+                self.raw_folder_path_label.setText(folder_path)
+                
+                # 현재 로드된 이미지들과 RAW 파일 매칭 시도
+                self.match_raw_files(folder_path)
+                logging.info(f"드래그 앤 드랍으로 RAW 폴더 설정 및 매칭 완료: {folder_path}")
+                
+                # UI 상태 업데이트
+                self.update_raw_folder_ui_state()
+                self.update_match_raw_button_state()
+                self.save_state()
+                return True
+        except Exception as e:
+            logging.error(f"_handle_raw_folder_drop 오류: {e}")
+            return False
+
+    def _handle_category_folder_drop(self, folder_path, folder_index):
+        """분류 폴더 드랍 처리"""
+        try:
+            if 0 <= folder_index < len(self.target_folders):
+                # 기존 select_category_folder 로직 재사용
+                self.target_folders[folder_index] = folder_path
+                
+                # 레이블 텍스트 업데이트
+                if UIScaleManager.is_16_10_or_less():
+                    self.folder_path_labels[folder_index].setText(
+                        folder_path,
+                        max_length=20, prefix_length=2, suffix_length=12
+                    )
+                else:
+                    self.folder_path_labels[folder_index].setText(
+                        folder_path,
+                        max_length=60, prefix_length=20, suffix_length=25
+                    )
+                
+                # UI 업데이트
+                self.update_folder_buttons()
+                self.save_state()
+                
+                logging.info(f"드래그 앤 드랍으로 분류 폴더 {folder_index+1} 설정 완료: {folder_path}")
+                return True
+            else:
+                logging.error(f"잘못된 분류 폴더 인덱스: {folder_index}")
+                return False
+        except Exception as e:
+            logging.error(f"_handle_category_folder_drop 오류: {e}")
+            return False
+        
+    def canvas_dragEnterEvent(self, event):
+        """캔버스 영역 드래그 진입 시 호출"""
+        try:
+            # 폴더만 허용
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:  # 하나의 항목만 허용
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        logging.debug(f"캔버스 드래그 진입: 폴더 감지됨 - {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("캔버스 드래그 진입: 폴더가 아니거나 여러 항목 감지됨")
+        except Exception as e:
+            logging.error(f"canvas_dragEnterEvent 오류: {e}")
+            event.ignore()
+
+    def canvas_dragMoveEvent(self, event):
+        """캔버스 영역 드래그 이동 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        return
+            
+            event.ignore()
+        except Exception as e:
+            logging.error(f"canvas_dragMoveEvent 오류: {e}")
+            event.ignore()
+
+    def canvas_dragLeaveEvent(self, event):
+        """캔버스 영역 드래그 벗어날 때 호출"""
+        try:
+            logging.debug("캔버스 드래그 벗어남")
+        except Exception as e:
+            logging.error(f"canvas_dragLeaveEvent 오류: {e}")
+
+    def canvas_dropEvent(self, event):
+        """캔버스 영역 드랍 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 캔버스 폴더 드랍 처리
+                        success = self._handle_canvas_folder_drop(file_path)
+                        
+                        if success:
+                            event.acceptProposedAction()
+                            logging.info(f"캔버스 폴더 드랍 성공: {file_path}")
+                        else:
+                            event.ignore()
+                            logging.warning(f"캔버스 폴더 드랍 실패: {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("canvas_dropEvent: 유효하지 않은 드랍")
+        except Exception as e:
+            logging.error(f"canvas_dropEvent 오류: {e}")
+            event.ignore()
+
+    def _analyze_folder_contents(self, folder_path):
+        """폴더 내용 분석 (RAW 파일, 일반 이미지 파일, 매칭 여부)"""
+        try:
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return None
+            
+            # 파일 분류
+            raw_files = []
+            image_files = []
+            
+            for file_path in folder_path_obj.iterdir():
+                if not file_path.is_file():
+                    continue
+                
+                ext = file_path.suffix.lower()
+                if ext in self.raw_extensions:
+                    raw_files.append(file_path)
+                elif ext in self.supported_image_extensions:
+                    image_files.append(file_path)
+            
+            # 매칭 파일 확인 (이름이 같은 파일)
+            raw_stems = {f.stem for f in raw_files}
+            image_stems = {f.stem for f in image_files}
+            matching_files = raw_stems & image_stems
+            
+            return {
+                'raw_files': raw_files,
+                'image_files': image_files,
+                'has_raw': len(raw_files) > 0,
+                'has_images': len(image_files) > 0,
+                'has_matching': len(matching_files) > 0,
+                'matching_count': len(matching_files)
+            }
+        except Exception as e:
+            logging.error(f"_analyze_folder_contents 오류: {e}")
+            return None
+
+    def _show_folder_choice_dialog(self, has_matching=False):
+        """폴더 선택지 팝업 대화상자"""
+        try:
+            dialog = QDialog(self)
+            dialog.setWindowTitle(LanguageManager.translate("폴더 불러오기"))
+            
+            # 다크 테마 적용
+            if sys.platform == "win32":
+                try:
+                    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                    dwmapi = ctypes.WinDLL("dwmapi")
+                    dwmapi.DwmSetWindowAttribute.argtypes = [
+                        ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
+                    ]
+                    hwnd = int(dialog.winId())
+                    value = ctypes.c_int(1)
+                    dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                                ctypes.byref(value), ctypes.sizeof(value))
+                except Exception:
+                    pass
+            
+            palette = QPalette()
+            palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+            dialog.setPalette(palette)
+            dialog.setAutoFillBackground(True)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setSpacing(15)
+            layout.setContentsMargins(20, 20, 20, 20)
+            
+            # 메시지 레이블
+            message_label = QLabel(LanguageManager.translate("폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?"))
+            message_label.setWordWrap(True)
+            message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            layout.addWidget(message_label)
+            
+            # 라디오 버튼 그룹
+            radio_group = QButtonGroup(dialog)
+            radio_style = f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 5px 0px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: {ThemeManager.get_color('accent')};
+                    border: 2px solid {ThemeManager.get_color('accent')};
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked:hover {{
+                    border: 2px solid {ThemeManager.get_color('text_disabled')};
+                }}
+            """
+            
+            if has_matching:
+                # 3선택지: 매칭, 일반 이미지, RAW
+                option1 = QRadioButton(LanguageManager.translate("이름이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기"))
+                option2 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
+                option3 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
+                
+                option1.setStyleSheet(radio_style)
+                option2.setStyleSheet(radio_style)
+                option3.setStyleSheet(radio_style)
+                
+                radio_group.addButton(option1, 0)  # 매칭
+                radio_group.addButton(option2, 1)  # 일반 이미지
+                radio_group.addButton(option3, 2)  # RAW
+                
+                option1.setChecked(True)  # 기본 선택: 매칭
+                
+                layout.addWidget(option1)
+                layout.addWidget(option2)
+                layout.addWidget(option3)
+            else:
+                # 2선택지: 일반 이미지, RAW
+                option1 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
+                option2 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
+                
+                option1.setStyleSheet(radio_style)
+                option2.setStyleSheet(radio_style)
+                
+                radio_group.addButton(option1, 0)  # 일반 이미지
+                radio_group.addButton(option2, 1)  # RAW
+                
+                option1.setChecked(True)  # 기본 선택: 일반 이미지
+                
+                layout.addWidget(option1)
+                layout.addWidget(option2)
+            
+            # 확인 버튼
+            confirm_button = QPushButton(LanguageManager.translate("확인"))
+            confirm_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    color: {ThemeManager.get_color('text')};
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    min-width: 80px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.get_color('bg_hover')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.get_color('bg_pressed')};
+                }}
+            """)
+            confirm_button.clicked.connect(dialog.accept)
+            
+            # 버튼 컨테이너 (가운데 정렬)
+            button_container = QWidget()
+            button_layout = QHBoxLayout(button_container)
+            button_layout.setContentsMargins(0, 0, 0, 0)
+            button_layout.addStretch(1)
+            button_layout.addWidget(confirm_button)
+            button_layout.addStretch(1)
+            
+            layout.addWidget(button_container)
+            
+            if dialog.exec() == QDialog.Accepted:
+                return radio_group.checkedId()
+            else:
+                return None
+                
+        except Exception as e:
+            logging.error(f"_show_folder_choice_dialog 오류: {e}")
+            return None
+
+    def _handle_canvas_folder_drop(self, folder_path):
+        """캔버스 영역 폴더 드랍 메인 처리 로직"""
+        try:
+            # 폴더 내용 분석
+            analysis = self._analyze_folder_contents(folder_path)
+            if not analysis:
+                return False
+            
+            # 현재 상태 확인
+            current_has_images = bool(self.image_files and not self.is_raw_only_mode)
+            
+            if not self.image_files:
+                # === 아무런 파일도 로드되어 있지 않은 경우 ===
+                if analysis['has_raw'] and not analysis['has_images']:
+                    # 1. RAW 파일만 있는 경우
+                    return self._handle_raw_folder_drop(folder_path)
+                
+                elif analysis['has_images'] and not analysis['has_raw']:
+                    # 2. 일반 이미지 파일만 있는 경우
+                    return self._handle_image_folder_drop(folder_path)
+                
+                elif analysis['has_raw'] and analysis['has_images']:
+                    if not analysis['has_matching']:
+                        # 3. 둘 다 있지만 매칭되는 파일이 없는 경우
+                        choice = self._show_folder_choice_dialog(has_matching=False)
+                        if choice is None:
+                            return False
+                        elif choice == 0:  # 일반 이미지만
+                            return self._handle_image_folder_drop(folder_path)
+                        elif choice == 1:  # RAW만
+                            return self._handle_raw_folder_drop(folder_path)
+                    else:
+                        # 4. 둘 다 있고 매칭되는 파일이 있는 경우
+                        choice = self._show_folder_choice_dialog(has_matching=True)
+                        if choice is None:
+                            return False
+                        elif choice == 0:  # 매칭하여 불러오기
+                            # 일반 이미지 먼저 로드, 그 다음 RAW 매칭
+                            if self._handle_image_folder_drop(folder_path):
+                                return self._handle_raw_folder_drop(folder_path)
+                            return False
+                        elif choice == 1:  # 일반 이미지만
+                            return self._handle_image_folder_drop(folder_path)
+                        elif choice == 2:  # RAW만
+                            return self._handle_raw_folder_drop(folder_path)
+                else:
+                    # 지원하는 파일이 없는 경우
+                    self.show_themed_message_box(
+                        QMessageBox.Warning, 
+                        LanguageManager.translate("경고"), 
+                        LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다.")
+                    )
+                    return False
+            
+            elif current_has_images:
+                # === 일반 이미지가 이미 로드된 경우 ===
+                if analysis['has_raw']:
+                    # RAW 파일이 있으면 JPG-RAW 매칭 시도
+                    return self.match_raw_files(folder_path)
+                else:
+                    # RAW 파일이 없으면 안내 메시지
+                    self.show_themed_message_box(
+                        QMessageBox.Information,
+                        LanguageManager.translate("정보"),
+                        LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
+                    )
+                    return False
+            
+            else:
+                # === 그 외의 경우 (RAW 전용 모드 등) ===
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("정보"),
+                    LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
+                )
+                return False
+                
+        except Exception as e:
+            logging.error(f"_handle_canvas_folder_drop 오류: {e}")
+            return False
+# ============= 드래그 앤 드랍 관련 함수 끝 ============== #
 
     def on_extension_checkbox_changed(self, state):
         # 확장자 그룹 정의 (setup_settings_ui와 동일하게)
@@ -11481,6 +12427,13 @@ def main():
         "불러올 이미지 형식": "Loadable Image Formats",
         "최소 하나 이상의 확장자는 선택되어야 합니다.": "At least one extension must be selected.",
         "선택한 폴더에 지원하는 이미지 파일이 없습니다.": "No supported image files found in the selected folder.",
+        "폴더 불러오기": "Load Folder",
+        "폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?": "The folder contains both regular image files and RAW files. What would you like to load?",
+        "이름이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기": "Match and load image files and RAW files with the same names",
+        "일반 이미지 파일만 불러오기": "Load only regular image files",
+        "RAW 파일만 불러오기": "Load only RAW files",
+        "현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)": "Please finish current work and then load a new folder (Tip: X button next to folder path or Delete key)",
+        "선택한 폴더에 지원하는 파일이 없습니다.": "No supported files found in the selected folder.",
     }
     
     LanguageManager.initialize_translations(translations)
