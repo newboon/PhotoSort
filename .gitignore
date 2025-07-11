@@ -201,3 +201,6 @@ logs/
 # User Data / State files (선택적)
 photosort_data.json
 /.vs
+
+.mdc
+/.cursor

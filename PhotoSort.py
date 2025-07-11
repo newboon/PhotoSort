@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                               QMainWindow, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
-                              QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit)
+                              QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit, QSpinBox)
 
 
 # 로깅 시스템 설정
@@ -870,8 +870,8 @@ class ZoomScrollArea(QScrollArea):
 
     def wheelEvent(self, event: QWheelEvent):
         # 부모 위젯 (PhotoSortApp)의 zoom_mode 확인
-        if self.app_parent and hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "200%"]:
-            # 100% 또는 200% 줌 모드에서는 휠 이벤트를 무시
+        if self.app_parent and hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "Spin"]:
+            # 100% 또는 Spin 줌 모드에서는 휠 이벤트를 무시
             event.accept()
             return
         else:
@@ -2685,7 +2685,9 @@ class PhotoSortApp(QMainWindow):
         self.move_raw_files = True  # RAW 파일 이동 여부 (기본값: True)
         self.target_folders = ["", "", ""]  # 분류 대상 폴더 경로 (최대 3개)
         self.folder_count = 3  # 기본 폴더 개수
-        self.zoom_mode = "Fit"  # 기본 확대 모드: "Fit", "100%", "200%"
+        self.zoom_mode = "Fit"  # 기본 확대 모드: "Fit", "100%", "Spin"
+        self.last_active_zoom_mode = "100%" # 기본 확대 모드는 100%
+        self.zoom_spin_value = 2.0  # 기본 200% (2.0 배율)
         self.original_pixmap = None  # 원본 이미지 pixmap
         self.panning = False  # 패닝 모드 여부
         self.pan_start_pos = QPoint(0, 0)  # 패닝 시작 위치
@@ -3305,7 +3307,7 @@ class PhotoSortApp(QMainWindow):
         # self.save_state()
 
     
-    def _trigger_state_save_for_index(self):
+    def _trigger_state_save_for_index(self): # 자동저장
         """current_image_index를 포함한 전체 상태를 저장합니다 (주로 타이머에 의해 호출)."""
         logging.debug(f"Index save timer triggered. Saving state (current_image_index: {self.current_image_index}).")
         self.save_state()
@@ -3331,7 +3333,15 @@ class PhotoSortApp(QMainWindow):
 
         view_rect = self.scroll_area.viewport().rect()
         image_label_pos = self.image_label.pos()
-        current_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        
+        # <<<--- 줌 배율 계산 로직 수정 ---<<<
+        if self.zoom_mode == "100%":
+            current_zoom_factor = 1.0
+        elif self.zoom_mode == "Spin":
+            current_zoom_factor = self.zoom_spin_value
+        else: # 예외 상황 (이론상 발생 안 함)
+            current_zoom_factor = 1.0
+        
         zoomed_img_width = self.original_pixmap.width() * current_zoom_factor
         zoomed_img_height = self.original_pixmap.height() * current_zoom_factor
 
@@ -3352,18 +3362,29 @@ class PhotoSortApp(QMainWindow):
         """
         if orientation_type in self.viewport_focus_by_orientation:
             saved_focus = self.viewport_focus_by_orientation[orientation_type]
-            # 저장된 상대 중심은 사용하되, 줌 레벨은 현재 요청된 줌 레벨을 따름
-            logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 사용: rel_center={saved_focus['rel_center']} (원래 줌: {saved_focus['zoom_level']}), 요청 줌: {requested_zoom_level}")
-            return saved_focus["rel_center"], requested_zoom_level # 상대 중심과 "요청된" 줌 레벨
+            saved_zoom_level = saved_focus.get("zoom_level", "")
+            saved_rel_center = saved_focus.get("rel_center", QPointF(0.5, 0.5))
+            
+            # 200% → Spin 호환성 처리
+            if saved_zoom_level == "200%" and requested_zoom_level == "Spin":
+                # 기존 200% 데이터를 Spin으로 사용 (2.0 = 200%)
+                if not hasattr(self, 'zoom_spin_value') or self.zoom_spin_value != 2.0:
+                    self.zoom_spin_value = 2.0
+                    if hasattr(self, 'zoom_spin'):
+                        self.zoom_spin.setValue(200)
+                logging.debug(f"200% → Spin 호환성 처리: zoom_spin_value를 2.0으로 설정")
+            
+            logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 사용: rel_center={saved_rel_center} (원래 줌: {saved_zoom_level}), 요청 줌: {requested_zoom_level}")
+            return saved_rel_center, requested_zoom_level
         
         logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 없음. 중앙 및 요청 줌({requested_zoom_level}) 사용.")
-        return QPointF(0.5, 0.5), requested_zoom_level # 기본값: 중앙, 요청된 줌 레벨
+        return QPointF(0.5, 0.5), requested_zoom_level
 
 
     def _prepare_for_photo_change(self):
         """사진 변경 직전에 현재 활성 뷰포트와 이전 이미지 상태를 기록합니다."""
         # 현재 활성 뷰포트 정보를 "방향 타입" 고유 포커스로 저장
-        if self.grid_mode == "Off" and self.current_active_zoom_level in ["100%", "200%"] and \
+        if self.grid_mode == "Off" and self.current_active_zoom_level in ["100%", "Spin"] and \
            self.original_pixmap and hasattr(self, 'current_image_orientation') and self.current_image_orientation:
             self._save_orientation_viewport_focus(
                 self.current_image_orientation, # 현재 이미지의 방향 타입
@@ -3512,7 +3533,7 @@ class PhotoSortApp(QMainWindow):
         self.zoom_mode = session_data.get("zoom_mode", "Fit")
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+        elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
 
         # 3. 이미지 목록 로드 (저장된 폴더 경로 기반)
         images_loaded_successfully = False
@@ -3674,7 +3695,7 @@ class PhotoSortApp(QMainWindow):
 
     def smooth_viewport_move(self):
         """타이머에 의해 호출되어 뷰포트를 부드럽게 이동시킵니다."""
-        if not (self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and self.original_pixmap and self.pressed_keys_for_viewport):
+        if not (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap and self.pressed_keys_for_viewport):
             self.viewport_move_timer.stop() # 조건 안 맞으면 타이머 중지
             return
 
@@ -3706,8 +3727,13 @@ class PhotoSortApp(QMainWindow):
         new_x, new_y = current_pos.x() + dx, current_pos.y() + dy
 
         # 패닝 범위 제한 로직 (동일하게 적용)
-        img_width = self.original_pixmap.width() * (1.0 if self.zoom_mode == "100%" else 2.0)
-        img_height = self.original_pixmap.height() * (1.0 if self.zoom_mode == "100%" else 2.0)
+        if self.zoom_mode == "100%":
+            zoom_factor = 1.0
+        else: # Spin 모드
+            zoom_factor = self.zoom_spin_value
+            
+        img_width = self.original_pixmap.width() * zoom_factor
+        img_height = self.original_pixmap.height() * zoom_factor
         view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
         x_min_limit = min(0, view_width - img_width) if img_width > view_width else (view_width - img_width) // 2
         x_max_limit = 0 if img_width > view_width else x_min_limit
@@ -5849,7 +5875,7 @@ class PhotoSortApp(QMainWindow):
         # 1. Fit 모드 처리
         if self.zoom_mode == "Fit":
             # Fit으로 변경될 때, 이전 100/200 상태의 "활성" 포커스를 해당 "방향 타입"의 고유 포커스로 저장
-            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "200%"]:
+            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "Spin"]:
                 self._save_orientation_viewport_focus(
                     image_orientation_type, # 현재 이미지의 방향에
                     self.current_active_rel_center, # 현재 활성 중심을
@@ -5871,8 +5897,14 @@ class PhotoSortApp(QMainWindow):
             if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
             return
 
-        # 2. Zoom 100% 또는 200% 처리
-        new_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        # 2. Zoom 100% 또는 Spin 처리
+        if self.zoom_mode == "100%":
+            new_zoom_factor = 1.0
+        elif self.zoom_mode == "Spin":
+            new_zoom_factor = self.zoom_spin_value
+        else: # 예외 처리
+            return
+            
         new_zoomed_width = img_width_orig * new_zoom_factor
         new_zoomed_height = img_height_orig * new_zoom_factor
         
@@ -5932,9 +5964,13 @@ class PhotoSortApp(QMainWindow):
         if new_zoomed_height <= view_height: new_y = (view_height - new_zoomed_height) // 2
         else: new_y = min(0, max(view_height - new_zoomed_height, new_y))
 
-        if self.zoom_mode == "100%": self.image_label.setPixmap(self.original_pixmap)
-        else:
-            scaled_pixmap = self.original_pixmap.scaled(int(new_zoomed_width), int(new_zoomed_height), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        if self.zoom_mode == "100%":
+            self.image_label.setPixmap(self.original_pixmap)
+        else: # Spin 모드
+            scaled_pixmap = self.original_pixmap.scaled(
+                int(new_zoomed_width), int(new_zoomed_height), 
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
             self.image_label.setPixmap(scaled_pixmap)
         self.image_label.setGeometry(int(new_x), int(new_y), int(new_zoomed_width), int(new_zoomed_height))
         self.image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
@@ -6044,7 +6080,7 @@ class PhotoSortApp(QMainWindow):
     def image_mouse_press_event(self, event):
         """이미지 영역 마우스 클릭 이벤트 처리"""
         # 100% 또는 200% 모드에서만 패닝 활성화
-        if self.zoom_mode in ["100%", "200%"]:
+        if self.zoom_mode in ["100%", "Spin"]:
             if event.button() == Qt.LeftButton:
                 # 패닝 상태 활성화
                 self.panning = True
@@ -6119,10 +6155,9 @@ class PhotoSortApp(QMainWindow):
             self.panning = False
             self.setCursor(Qt.ArrowCursor)
             
-            # --- 수정 시작: _save_orientation_viewport_focus 호출 시 인자 전달 ---
-            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
+            # --- 수정: 올바른 인자 전달 ---
+            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and \
                self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                current_image_path_str = str(self.image_files[self.current_image_index])
                 current_rel_center = self._get_current_view_relative_center() # 현재 뷰 중심 계산
                 current_zoom_level = self.zoom_mode
                 
@@ -6130,8 +6165,8 @@ class PhotoSortApp(QMainWindow):
                 self.current_active_rel_center = current_rel_center
                 self.current_active_zoom_level = current_zoom_level
                 
-                # 이미지별 고유 포커스 저장
-                self._save_orientation_viewport_focus(current_image_path_str, current_rel_center, current_zoom_level)
+                # 방향별 포커스 저장 (파일 경로가 아닌 orientation 전달)
+                self._save_orientation_viewport_focus(self.current_image_orientation, current_rel_center, current_zoom_level)
             # --- 수정 끝 ---
             
             if self.minimap_visible and self.minimap_widget.isVisible():
@@ -7165,12 +7200,10 @@ class PhotoSortApp(QMainWindow):
         zoom_label = QLabel("Zoom")
         zoom_label.setAlignment(Qt.AlignCenter) # --- 가운데 정렬 추가 ---
         zoom_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        # --- 폰트 수정 시작 (새 QFont 객체 생성) ---
         font = QFont(self.font()) # <<< 현재 위젯(PhotoSortApp)의 폰트를 가져와서 복사
         # font.setBold(True) # 이 새 폰트 객체에만 볼드 적용
         font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 이 새 폰트 객체에만 크기 적용
         zoom_label.setFont(font) # 수정된 새 폰트를 레이블에 적용
-        # --- 폰트 수정 끝 ---
         self.control_layout.addWidget(zoom_label)
         self.control_layout.addSpacing(UIScaleManager.get("title_spacing"))
 
@@ -7183,14 +7216,46 @@ class PhotoSortApp(QMainWindow):
         # 라디오 버튼 생성
         self.fit_radio = QRadioButton("Fit")
         self.zoom_100_radio = QRadioButton("100%")
-        self.zoom_200_radio = QRadioButton("200%")
+        self.zoom_spin_btn = QRadioButton()
         
         # 버튼 그룹에 추가
         self.zoom_group = QButtonGroup(self)
         self.zoom_group.addButton(self.fit_radio, 0)
         self.zoom_group.addButton(self.zoom_100_radio, 1)
-        self.zoom_group.addButton(self.zoom_200_radio, 2)
-        
+        self.zoom_group.addButton(self.zoom_spin_btn, 2) # ID: 2 (기존 200 자리)
+
+        # 동적 줌 SpinBox 설정
+        self.zoom_spin = QSpinBox()
+        self.zoom_spin.setRange(10, 500)
+        self.zoom_spin.setValue(int(self.zoom_spin_value * 100)) # 2.0 -> 200
+        self.zoom_spin.setSuffix("%")
+        self.zoom_spin.setSingleStep(10)
+        self.zoom_spin.setFixedWidth(85)
+        self.zoom_spin.lineEdit().setReadOnly(True)
+        self.zoom_spin.setContextMenuPolicy(Qt.NoContextMenu)
+        self.zoom_spin.valueChanged.connect(self.on_zoom_spinbox_value_changed)
+        self.zoom_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: 1px;
+                padding: 2px;
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                width: 16px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+            }}
+            QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                image: none;
+                width: 0px;
+                height: 0px;
+            }}
+        """)
         # 기본값: Fit
         self.fit_radio.setChecked(True)
         
@@ -7220,7 +7285,7 @@ class PhotoSortApp(QMainWindow):
         """
         self.fit_radio.setStyleSheet(radio_style)
         self.zoom_100_radio.setStyleSheet(radio_style)
-        self.zoom_200_radio.setStyleSheet(radio_style)
+        self.zoom_spin_btn.setStyleSheet(radio_style)
         
         # 이벤트 연결
         self.zoom_group.buttonClicked.connect(self.on_zoom_changed)
@@ -7229,7 +7294,16 @@ class PhotoSortApp(QMainWindow):
         zoom_layout.addStretch()
         zoom_layout.addWidget(self.fit_radio)
         zoom_layout.addWidget(self.zoom_100_radio)
-        zoom_layout.addWidget(self.zoom_200_radio)
+        # <<<--- 중첩 레이아웃으로 Spin UI 묶기 ---<<<
+        spin_widget_container = QWidget()
+        spin_layout = QHBoxLayout(spin_widget_container)
+        spin_layout.setContentsMargins(0,0,0,0)
+        spin_layout.setSpacing(0) # 라디오 버튼과 스핀박스 사이 간격
+        spin_layout.addWidget(self.zoom_spin_btn)
+        spin_layout.addWidget(self.zoom_spin)
+
+        zoom_layout.addWidget(spin_widget_container) # 묶인 위젯을 한 번에 추가
+        # <<<----중첩 레이아웃으로 Spin UI 묶기 끝 ----<<<
         zoom_layout.addStretch()
         
         self.control_layout.addWidget(zoom_container)
@@ -7274,72 +7348,102 @@ class PhotoSortApp(QMainWindow):
 
 
     def on_zoom_changed(self, button):
-        old_zoom_mode = self.zoom_mode 
+        old_zoom_mode = self.zoom_mode
         new_zoom_mode = ""
-        if button == self.fit_radio: new_zoom_mode = "Fit"
-        elif button == self.zoom_100_radio: new_zoom_mode = "100%"
-        elif button == self.zoom_200_radio: new_zoom_mode = "200%"
-        else: return
+        if button == self.fit_radio:
+            new_zoom_mode = "Fit"
+        elif button == self.zoom_100_radio:
+            new_zoom_mode = "100%"
+        elif button == self.zoom_spin_btn:
+            new_zoom_mode = "Spin"
+        else:
+            return
 
-        if old_zoom_mode == new_zoom_mode: return # 변경 없으면 아무것도 안 함
+        if old_zoom_mode == new_zoom_mode:
+            return
 
-        current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
-        current_orientation = self.current_image_orientation # 이미 로드된 이미지의 방향
+        # [수정] Fit이 아닌 모드로 변경될 때, 그 모드를 last_active_zoom_mode로 저장
+        if new_zoom_mode != "Fit":
+            self.last_active_zoom_mode = new_zoom_mode
+            logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
 
-        # 1. 변경 "전" 상태가 100% 또는 200% 였다면, 현재 "활성" 포커스를 "방향 타입"의 고유 포커스로 저장
-        if old_zoom_mode in ["100%", "200%"] and current_orientation and current_image_path_str:
-            # self.current_active_rel_center 와 old_zoom_mode (self.current_active_zoom_level과 같아야 함) 사용
+        current_orientation = self.current_image_orientation
+        
+        # 디버깅: 현재 상태 로그
+        logging.debug(f"줌 모드 변경: {old_zoom_mode} -> {new_zoom_mode}, 방향: {current_orientation}")
+
+        # 현재 뷰포트 포커스 저장 (100%/Spin -> Fit 전환 시)
+        if old_zoom_mode in ["100%", "Spin"] and current_orientation:
+            # 중요: zoom_mode를 변경하기 전에 현재 뷰포트 위치를 계산해야 함
+            current_rel_center = self._get_current_view_relative_center()
+            logging.debug(f"뷰포트 위치 저장: {current_orientation} -> {current_rel_center} (줌: {old_zoom_mode})")
+            
+            # 현재 활성 포커스 업데이트
+            self.current_active_rel_center = current_rel_center
+            self.current_active_zoom_level = old_zoom_mode
+            
+            # 방향별 포커스 저장
             self._save_orientation_viewport_focus(
                 current_orientation,
-                self.current_active_rel_center, 
-                old_zoom_mode # 변경 전 줌 모드
+                current_rel_center,
+                old_zoom_mode
             )
-            
-        self.zoom_mode = new_zoom_mode # 새 줌 모드 설정
 
-        # 2. 새 줌 모드에 따른 "활성" 포커스 설정
+        # 줌 모드 변경
+        self.zoom_mode = new_zoom_mode
+
         if self.zoom_mode == "Fit":
             self.current_active_rel_center = QPointF(0.5, 0.5)
             self.current_active_zoom_level = "Fit"
-        else: # 100% 또는 200%
-            # 새 목표 줌 레벨에 대해 "방향 타입"에 저장된 고유 포커스 가져오기
-            # _get_orientation_viewport_focus는 (rel_center, zoom_level) 튜플 반환
-            # 여기서 zoom_level은 요청한 new_zoom_mode가 됨.
-            self.current_active_rel_center, self.current_active_zoom_level = \
-                self._get_orientation_viewport_focus(current_orientation, self.zoom_mode)
-            # 이 정보는 apply_zoom_to_image에서 사용 후, 다시 _save_orientation_viewport_focus를 통해
-            # 해당 방향 타입의 고유 정보로 (주로 zoom_level이 업데이트되어) 저장됨.
-            
-        self.zoom_change_trigger = "radio_button" 
+            logging.debug("Fit 모드로 전환: 중앙 포커스 설정")
+        else:
+            # 저장된 뷰포트 포커스 복구 (Fit -> 100%/Spin 전환 시)
+            if current_orientation:
+                saved_rel_center, saved_zoom_level = self._get_orientation_viewport_focus(current_orientation, self.zoom_mode)
+                self.current_active_rel_center = saved_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                logging.debug(f"뷰포트 포커스 복구: {current_orientation} -> 중심={saved_rel_center}, 줌={self.zoom_mode}")
+            else:
+                # orientation 정보가 없으면 중앙 사용
+                self.current_active_rel_center = QPointF(0.5, 0.5)
+                self.current_active_zoom_level = self.zoom_mode
+                logging.debug(f"orientation 정보 없음: 중앙 사용")
 
-        # Grid Off로 강제 전환 로직 (100%/200% 줌 시)
+        self.zoom_change_trigger = "radio_button"
+
+        # 그리드 모드 관련 처리
         if self.zoom_mode != "Fit" and self.grid_mode != "Off":
             if self.image_files and 0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files):
-                 self.current_image_index = self.grid_page_start_index + self.current_grid_index
-            else: 
-                 self.current_image_index = 0 if self.image_files else -1 # 이미지가 있다면 첫번째, 없다면 -1
+                self.current_image_index = self.grid_page_start_index + self.current_grid_index
+            else:
+                self.current_image_index = 0 if self.image_files else -1
             
-            self.grid_mode = "Off"; self.grid_off_radio.setChecked(True) # 라디오 버튼 UI 업데이트
-            self.update_grid_view() # Grid 뷰 끄고 단일 이미지 뷰로 전환
-            self.update_zoom_radio_buttons_state() # 줌 버튼 상태 업데이트
-            self.update_counter_layout() # 카운터 레이아웃 업데이트
+            self.grid_mode = "Off"
+            self.grid_off_radio.setChecked(True)
+            self.update_grid_view()
+            self.update_zoom_radio_buttons_state()
+            self.update_counter_layout()
             
-            # original_pixmap이 아직 로드 안 된 상태일 수 있음 (Grid -> Off 전환 시)
-            if self.original_pixmap is None and self.current_image_index != -1 :
+            if self.original_pixmap is None and self.current_image_index != -1:
                 logging.debug("on_zoom_changed: Grid에서 Off로 전환, original_pixmap 로드 위해 display_current_image 호출")
-                self.display_current_image() # 여기서 original_pixmap 로드 후 apply_zoom_to_image 호출됨
-                # display_current_image 내부의 _on_image_loaded_for_display에서 apply_zoom_to_image 호출 시
-                # self.zoom_mode 와 self.current_active_... 값들이 이미 올바르게 설정되어 있어야 함.
-                # 위에서 이미 설정했으므로 괜찮음.
-                return # display_current_image가 알아서 apply_zoom_to_image 호출하므로 여기서 종료
+                self.display_current_image()
+                return
         
-        # original_pixmap이 이미 있거나, display_current_image가 호출되지 않는 경우
+        # 이미지 적용
         if self.original_pixmap:
             logging.debug(f"on_zoom_changed: apply_zoom_to_image 호출 (줌: {self.zoom_mode}, 활성중심: {self.current_active_rel_center})")
             self.apply_zoom_to_image()
-        # else: original_pixmap이 없고 이미지도 없는 경우 등은 아무것도 안 함
 
         self.toggle_minimap(self.minimap_toggle.isChecked())
+
+    def on_zoom_spinbox_value_changed(self, value):
+        """줌 스핀박스 값 변경 시 호출"""
+        self.zoom_spin_value = value / 100.0  # 300 -> 3.0
+        if self.zoom_mode == "Spin":
+            # 현재 모드가 Spin일 때만 즉시 이미지에 반영
+            self.image_processing = True
+            self.apply_zoom_to_image()
+            self.image_processing = False
 
     def toggle_minimap(self, show=None):
         """미니맵 표시 여부 토글"""
@@ -7479,8 +7583,8 @@ class PhotoSortApp(QMainWindow):
             # 확대 비율
             if zoom_level == "100%":
                 zoom_percent = 1.0
-            elif zoom_level == "200%":
-                zoom_percent = 2.0
+            elif zoom_level == "Spin":
+                zoom_percent = self.zoom_spin_value
             else:
                 return
             
@@ -7935,7 +8039,7 @@ class PhotoSortApp(QMainWindow):
         if self.grid_mode != "Off":
             # 그리드 모드에서 100%, 200% 비활성화
             self.zoom_100_radio.setEnabled(False)
-            self.zoom_200_radio.setEnabled(False)
+            self.zoom_spin_btn.setEnabled(False)
             # 비활성화 스타일 적용
             disabled_radio_style = f"""
                 QRadioButton {{
@@ -7958,11 +8062,11 @@ class PhotoSortApp(QMainWindow):
                 }}
             """
             self.zoom_100_radio.setStyleSheet(disabled_radio_style)
-            self.zoom_200_radio.setStyleSheet(disabled_radio_style)
+            self.zoom_spin_btn.setStyleSheet(disabled_radio_style)
         else:
             # 그리드 모드가 아닐 때 모든 버튼 활성화
             self.zoom_100_radio.setEnabled(True)
-            self.zoom_200_radio.setEnabled(True)
+            self.zoom_spin_btn.setEnabled(True)
             # 활성화 스타일 복원
             radio_style = f"""
                 QRadioButton {{
@@ -7988,7 +8092,7 @@ class PhotoSortApp(QMainWindow):
                 }}
             """
             self.zoom_100_radio.setStyleSheet(radio_style)
-            self.zoom_200_radio.setStyleSheet(radio_style)
+            self.zoom_spin_btn.setStyleSheet(radio_style)
     
     def update_grid_view(self):
         """Grid 모드에 따라 이미지 뷰 업데이트"""
@@ -8510,53 +8614,78 @@ class PhotoSortApp(QMainWindow):
             current_orientation = self.current_image_orientation
 
             if self.zoom_mode == "Fit":
-                # Fit -> 100% (더블클릭)
                 self.double_click_pos = event.position().toPoint()
                 
                 scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-                view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
-                fit_img_width = scaled_fit_pixmap.width(); fit_img_height = scaled_fit_pixmap.height()
+                view_width = self.scroll_area.width()
+                view_height = self.scroll_area.height()
+                fit_img_width = scaled_fit_pixmap.width()
+                fit_img_height = scaled_fit_pixmap.height()
                 fit_img_rect_in_view = QRect(
                     (view_width - fit_img_width) // 2, (view_height - fit_img_height) // 2,
                     fit_img_width, fit_img_height
                 )
-                click_x_vp = self.double_click_pos.x(); click_y_vp = self.double_click_pos.y()
+                click_x_vp = self.double_click_pos.x()
+                click_y_vp = self.double_click_pos.y()
 
                 if fit_img_rect_in_view.contains(int(click_x_vp), int(click_y_vp)):
-                    logging.debug("더블클릭: Fit -> 100% 요청")
-                    self.zoom_change_trigger = "double_click" # apply_zoom_to_image에서 이 트리거 사용
+                    # [수정] 마지막 활성 줌 모드로 전환
+                    target_zoom_mode = self.last_active_zoom_mode
+                    logging.debug(f"더블클릭: Fit -> {target_zoom_mode} 요청")
                     
-                    # 이전 상태(Fit)의 포커스를 저장할 필요는 없음 (항상 0.5, 0.5, "Fit")
-                    self.zoom_mode = "100%" # 목표 줌 설정
-                    self.zoom_100_radio.setChecked(True)
+                    # 현재 방향 정보 확인
+                    current_orientation = self.current_image_orientation
+                    if current_orientation:
+                        # 저장된 뷰포트 포커스 복구
+                        saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
+                        self.current_active_rel_center = saved_rel_center
+                        self.current_active_zoom_level = target_zoom_mode
+                        logging.debug(f"더블클릭 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
+                    else:
+                        self.current_active_rel_center = QPointF(0.5, 0.5)
+                        self.current_active_zoom_level = target_zoom_mode
                     
-                    # current_active_...는 apply_zoom_to_image("double_click") 내부에서
-                    # 더블클릭 위치 기준으로 계산되고 설정된 후, 고유 포커스로 저장될 것임.
+                    self.zoom_change_trigger = "double_click"
+                    self.zoom_mode = target_zoom_mode
+                    
+                    if target_zoom_mode == "100%":
+                        self.zoom_100_radio.setChecked(True)
+                    elif target_zoom_mode == "Spin":
+                        self.zoom_spin_btn.setChecked(True)
+
                     self.apply_zoom_to_image() 
                     self.toggle_minimap(self.minimap_toggle.isChecked())
                 else:
                     logging.debug("더블클릭 위치가 이미지 바깥입니다 (Fit 모드).")
 
-            elif self.zoom_mode in ["100%", "200%"]:
-                # 100%/200% -> Fit (더블클릭)
+            elif self.zoom_mode in ["100%", "Spin"]:
                 logging.debug(f"더블클릭: {self.zoom_mode} -> Fit 요청")
-                # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
-                if current_orientation and current_image_path_str:
+                
+                # 현재 뷰포트 위치 저장
+                current_orientation = self.current_image_orientation
+                if current_orientation:
+                    current_rel_center = self._get_current_view_relative_center()
+                    logging.debug(f"더블클릭 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
+                    
+                    self.current_active_rel_center = current_rel_center
+                    self.current_active_zoom_level = self.zoom_mode
+                    
                     self._save_orientation_viewport_focus(
                         current_orientation,
-                        self.current_active_rel_center,
-                        self.current_active_zoom_level
+                        current_rel_center,
+                        self.zoom_mode
                     )
+                
+                # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
+                self.last_active_zoom_mode = self.zoom_mode
+                logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
                 
                 self.zoom_mode = "Fit"
                 self.current_active_rel_center = QPointF(0.5, 0.5)
                 self.current_active_zoom_level = "Fit"
                 
-                # self.zoom_change_trigger = "double_click_to_fit" # 또는 그냥 None
-                
                 self.fit_radio.setChecked(True)
                 self.apply_zoom_to_image()
-
 
 
     def reset_program_state(self):
@@ -8611,6 +8740,7 @@ class PhotoSortApp(QMainWindow):
             self.target_folders = ["", "", ""]
             self.folder_count = 3  # 항상 3개 폴더 사용
             self.zoom_mode = "Fit" # Zoom 모드 초기화
+            self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 값 초기화 (200%)
             self.grid_mode = "Off" # Grid 모드 초기화
             self.update_counter_layout() # 레이아웃 업데이트 호출
             self.grid_page_start_index = 0
@@ -8644,6 +8774,10 @@ class PhotoSortApp(QMainWindow):
 
             # Zoom 라디오 버튼
             self.fit_radio.setChecked(True)
+
+            # 동적 줌 SpinBox 초기화
+            if hasattr(self, 'zoom_spin'):
+                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))  # 200% 설정
 
             # Grid 라디오 버튼
             self.grid_off_radio.setChecked(True)
@@ -8964,7 +9098,7 @@ class PhotoSortApp(QMainWindow):
                     if is_photo_actually_changed:
                         prev_zoom_for_decision = getattr(self, 'previous_zoom_mode_for_carry_over', "Fit")
                         prev_rel_center_for_decision = getattr(self, 'previous_active_rel_center_for_carry_over', QPointF(0.5, 0.5))
-                        if prev_zoom_for_decision in ["100%", "200%"] and prev_orientation_for_decision == new_orientation:
+                        if prev_zoom_for_decision in ["100%", "Spin"] and prev_orientation_for_decision == new_orientation:
                             self.zoom_mode = prev_zoom_for_decision
                             self.current_active_rel_center = prev_rel_center_for_decision
                             self.current_active_zoom_level = self.zoom_mode
@@ -8978,7 +9112,7 @@ class PhotoSortApp(QMainWindow):
                     # 라디오 버튼 UI 동기화
                     if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
                     elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-                    elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+                    elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
 
                     self.current_image_orientation = new_orientation
                     self.original_pixmap = cached_pixmap
@@ -9185,7 +9319,7 @@ class PhotoSortApp(QMainWindow):
                                      self.previous_image_path_for_focus_carry_over != image_path_str_loaded)
         
         if is_photo_actually_changed:
-            if prev_zoom in ["100%", "200%"] and prev_orientation == new_image_orientation:
+            if prev_zoom in ["100%", "Spin"] and prev_orientation == new_image_orientation:
                 # 방향 동일 & 이전 줌: 이전 "활성" 포커스 이어받기
                 self.zoom_mode = prev_zoom
                 self.current_active_rel_center = prev_rel_center
@@ -9204,7 +9338,7 @@ class PhotoSortApp(QMainWindow):
         # ... (이전 답변의 _on_image_loaded_for_display 나머지 부분과 유사하게 진행) ...
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+        elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
         
         # self.previous_image_orientation = self.current_image_orientation # 이제 _prepare_for_photo_change에서 관리
         self.current_image_orientation = new_image_orientation # 새 이미지의 방향으로 업데이트
@@ -9589,6 +9723,7 @@ class PhotoSortApp(QMainWindow):
             "move_raw_files": self.move_raw_files,
             "target_folders": [str(f) if f else "" for f in self.target_folders],
             "zoom_mode": self.zoom_mode,
+            "zoom_spin_value": self.zoom_spin_value,
             "minimap_visible": self.minimap_toggle.isChecked(),
             "grid_mode": self.grid_mode,
             # "current_image_index": self.current_image_index, # 이전 방식
@@ -9645,6 +9780,7 @@ class PhotoSortApp(QMainWindow):
             self.move_raw_files = True
             self.target_folders = ["", "", ""]
             self.zoom_mode = "Fit"
+            self.zoom_spin_value = 2.0
             self.grid_mode = "Off"
             self.current_image_index = -1
             self.current_grid_index = 0
@@ -9735,9 +9871,15 @@ class PhotoSortApp(QMainWindow):
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
 
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
+            self.zoom_spin_value = loaded_data.get("zoom_spin_value", 2.0)
             if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
             elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-            elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+            elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
+
+            # SpinBox UI 업데이트 추가
+            if hasattr(self, 'zoom_spin'):
+                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
+                logging.info(f"PhotoSortApp.load_state: 동적 줌 SpinBox 값 복원: {int(self.zoom_spin_value * 100)}%")
             
             self.minimap_toggle.setChecked(loaded_data.get("minimap_visible", True))
 
@@ -9949,6 +10091,7 @@ class PhotoSortApp(QMainWindow):
         
         # 뷰 관련 상태
         self.zoom_mode = "Fit"
+        self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 기본값 추가
         self.grid_mode = "Off"
         self.current_image_index = -1
         self.current_grid_index = 0
@@ -9993,6 +10136,10 @@ class PhotoSortApp(QMainWindow):
         self.update_match_raw_button_state()
         self.grid_mode = "Off"; self.grid_off_radio.setChecked(True)
         self.zoom_mode = "Fit"; self.fit_radio.setChecked(True)
+        self.zoom_spin_value = 2.0
+        # SpinBox UI 업데이트 추가
+        if hasattr(self, 'zoom_spin'):
+            self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
         self.update_zoom_radio_buttons_state()
         self.display_current_image() # 빈 화면 표시
         self.update_counter_layout()
@@ -10384,280 +10531,214 @@ class PhotoSortApp(QMainWindow):
 
 
     def eventFilter(self, obj, event):
-        """애플리케이션 레벨 이벤트 필터 - 키 이벤트 처리"""
         if event.type() == QEvent.KeyPress:
             if self.is_input_dialog_active:
-                # QInputDialog가 키 이벤트를 완전히 처리하도록 기본 동작에 맡김
-                # PhotoSortApp의 커스텀 키 처리 로직을 모두 건너뜀
-                logging.debug(f"Input dialog active, deferring KeyPress event: {QKeySequence(event.key()).toString()}")
-                return super().eventFilter(obj, event) # QInputDialog가 처리하도록 이벤트 전달
+                return super().eventFilter(obj, event)
 
-            # --- 입력 다이얼로그가 활성화되지 않은 경우에만 PhotoSortApp의 단축키 처리 ---
             key = event.key()
             modifiers = event.modifiers()
-            is_auto_repeat = event.isAutoRepeat() # 자동 반복 여부
+            is_auto_repeat = event.isAutoRepeat()
 
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
 
-            # --- 1. 최우선 처리: Undo, Redo, Enter, F-Keys, Delete, ESC, Space ---
-            # (이 부분은 이전과 동일하므로 간략히 표시)
             if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
             elif modifiers == ctrl_modifier and key == Qt.Key_Y: self.redo_move(); return True
             elif (modifiers & ctrl_modifier) and (modifiers & Qt.ShiftModifier) and key == Qt.Key_Z: self.redo_move(); return True
+            
             if key == Qt.Key_Return or key == Qt.Key_Enter:
-                # ... (Enter 키 로직 - 기존과 동일) ...
-                if self.file_list_dialog is None or not self.file_list_dialog.isVisible(): # 중복 실행 방지
+                if self.file_list_dialog is None or not self.file_list_dialog.isVisible():
                     if self.image_files:
                         current_selected_index = -1
-                        if self.grid_mode == "Off": current_selected_index = self.current_image_index
+                        if self.grid_mode == "Off":
+                            current_selected_index = self.current_image_index
                         else:
                             potential_index = self.grid_page_start_index + self.current_grid_index
-                            if 0 <= potential_index < len(self.image_files): current_selected_index = potential_index
+                            if 0 <= potential_index < len(self.image_files):
+                                current_selected_index = potential_index
                         if current_selected_index != -1:
                             self.file_list_dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
                             self.file_list_dialog.finished.connect(self.on_file_list_dialog_closed)
                             self.file_list_dialog.show()
-                        else: logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
-                    else: logging.debug("Enter 키: 로드된 이미지가 없습니다.")
+                        else:
+                            logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
+                    else:
+                        logging.debug("Enter 키: 로드된 이미지가 없습니다.")
                 else:
-                    self.file_list_dialog.activateWindow(); self.file_list_dialog.raise_()
+                    self.file_list_dialog.activateWindow()
+                    self.file_list_dialog.raise_()
                 return True
+                
             if key == Qt.Key_F1: self.force_refresh=True; self.space_pressed = False; self.grid_off_radio.setChecked(True); self.on_grid_changed(self.grid_off_radio); return True
             elif key == Qt.Key_F2: self.force_refresh=True; self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio); return True
             elif key == Qt.Key_F3: self.force_refresh=True; self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio); return True
             elif key == Qt.Key_Delete: self.reset_program_state(); return True
+            
             if key == Qt.Key_Escape:
-                # ... (ESC 키 로직 - 기존과 동일) ...
                 if self.file_list_dialog and self.file_list_dialog.isVisible(): self.file_list_dialog.reject(); return True
-                if self.zoom_mode != "Fit": self.fit_radio.setChecked(True); self.on_zoom_changed(self.fit_radio); return True
+                if self.zoom_mode != "Fit":
+                    self.last_active_zoom_mode = self.zoom_mode # [추가] ESC로 Fit 전환 시에도 마지막 줌 모드 저장
+                    self.fit_radio.setChecked(True)
+                    self.on_zoom_changed(self.fit_radio)
+                    return True
                 elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
                     if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
-            if key == Qt.Key_Space:
-                if self.grid_mode == "Off": # Grid Off 모드에서만 작동
-                    current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
-                    current_orientation = self.current_image_orientation
-
-                    if self.zoom_mode == "Fit":
-                        # Fit -> 100% (Space 키)
-                        if self.original_pixmap:
-                            logging.debug("Space 키: Fit -> 100% 요청")
-                            # 이전 상태가 Fit이었으므로 "활성" 포커스 저장할 필요 없음 (이미 Fit 기본값)
-                            
-                            self.zoom_mode = "100%" # 새 줌 모드 설정
-                            # 새 활성 포커스: 현재 이미지 방향 타입에 저장된 고유 포커스 사용, 없으면 중앙
-                            self.current_active_rel_center, self.current_active_zoom_level = \
-                                self._get_orientation_viewport_focus(current_orientation, "100%")
-                            
-                            self.zoom_change_trigger = "space_key_to_zoom" 
-                            
-                            self.zoom_100_radio.setChecked(True)
-                            self.apply_zoom_to_image() # 내부에서 고유 포커스도 업데이트 (주로 zoom_level)
                     
-                    elif self.zoom_mode in ["100%", "200%"]:
-                        # 100%/200% -> Fit (Space 키)
+            if key == Qt.Key_Space:
+                if self.grid_mode == "Off":
+                    if self.zoom_mode == "Fit":
+                        if self.original_pixmap:
+                            # [수정] 마지막 활성 줌 모드로 전환
+                            target_zoom_mode = self.last_active_zoom_mode
+                            logging.debug(f"Space 키: Fit -> {target_zoom_mode} 요청")
+                            
+                            # 현재 방향 정보 확인
+                            current_orientation = self.current_image_orientation
+                            if current_orientation:
+                                # 저장된 뷰포트 포커스 복구
+                                saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
+                                self.current_active_rel_center = saved_rel_center
+                                self.current_active_zoom_level = target_zoom_mode
+                                logging.debug(f"Space 키 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
+                            else:
+                                self.current_active_rel_center = QPointF(0.5, 0.5)
+                                self.current_active_zoom_level = target_zoom_mode
+                            
+                            self.zoom_change_trigger = "space_key_to_zoom"
+                            self.zoom_mode = target_zoom_mode
+                            
+                            if target_zoom_mode == "100%":
+                                self.zoom_100_radio.setChecked(True)
+                            elif target_zoom_mode == "Spin":
+                                self.zoom_spin_btn.setChecked(True)
+                            
+                            self.apply_zoom_to_image()
+                    elif self.zoom_mode in ["100%", "Spin"]:
                         logging.debug(f"Space 키: {self.zoom_mode} -> Fit 요청")
-                        # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
-                        if current_orientation and current_image_path_str: # 방향과 경로가 있어야 저장 가능
+                        
+                        # 현재 뷰포트 위치 저장
+                        current_orientation = self.current_image_orientation
+                        if current_orientation:
+                            current_rel_center = self._get_current_view_relative_center()
+                            logging.debug(f"Space 키 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
+                            
+                            self.current_active_rel_center = current_rel_center
+                            self.current_active_zoom_level = self.zoom_mode
+                            
                             self._save_orientation_viewport_focus(
                                 current_orientation,
-                                self.current_active_rel_center,
-                                self.current_active_zoom_level # self.zoom_mode와 같음
+                                current_rel_center,
+                                self.zoom_mode
                             )
                         
+                        # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
+                        self.last_active_zoom_mode = self.zoom_mode
+                        logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
+                        
                         self.zoom_mode = "Fit"
-                        self.current_active_rel_center = QPointF(0.5, 0.5)
-                        self.current_active_zoom_level = "Fit"
-                        
-                        # self.zoom_change_trigger = "space_key_to_fit" # 또는 그냥 None
-                        
                         self.fit_radio.setChecked(True)
                         self.apply_zoom_to_image()
-                    return True # 스페이스바 이벤트 소비
-                
-                else: # Grid On 모드에서 Space 키
-                    # ... (Grid On 모드 Space 키 로직 - 이전 답변과 동일하게 유지) ...
-                    current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
-                    if 0 <= current_selected_grid_index < len(self.image_files):
-                        self.current_image_index = current_selected_grid_index
-                        self.force_refresh = True # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
-                    
-                    # Grid Off로 전환하기 전에 현재 Grid에서 선택된 이미지의 방향을 알아내서
-                    # self.current_image_orientation에 설정해두면 좋음.
-                    # (display_current_image가 호출될 때 어차피 설정되긴 함)
-                    
-                    self.previous_grid_mode = self.grid_mode # 이전 그리드 모드 저장 (ESC 복귀용)
-                    self.grid_mode = "Off"
-                    self.grid_off_radio.setChecked(True)
-                    self.space_pressed = True # on_grid_changed에서 이전 모드 초기화 방지용
-                    
-                    # Grid Off로 전환 시, 뷰는 Fit으로 시작하거나,
-                    # 아니면 해당 이미지의 저장된 100% 포커스를 불러올지 정책 결정 필요.
-                    # 여기서는 on_grid_changed -> update_grid_view -> display_current_image 호출 시
-                    # Fit으로 시작하고, display_current_image 내부의 _on_image_loaded_for_display에서
-                    # photo_change_to_fit 트리거를 타게 됨 (저장된 포커스 사용 안 함).
-                    # 만약 Space로 Grid -> Off 시 100% 줌 + 저장된 포커스를 원한다면 추가 로직 필요.
-                    # 현재는 Grid에서 Off로 갈 때 항상 Fit으로 시작.
-                    
-                    self.update_grid_view() # Grid Off로 전환 및 display_current_image 호출 유도
-                    self.update_zoom_radio_buttons_state()
-                    self.update_counter_layout()
                     return True
-            # --- 2. 뷰포트 이동 키 처리 (Grid Off & Zoom 100%/200% 시) ---
-             # --- 뷰포트 이동 키 KeyPress 처리 ---
+
             is_viewport_move_condition = (self.grid_mode == "Off" and
-                                          self.zoom_mode in ["100%", "200%"] and
-                                          self.original_pixmap)
+                                        self.zoom_mode in ["100%", "Spin"] and
+                                        self.original_pixmap)
             
             key_to_add_for_viewport = None
-
             if is_viewport_move_condition:
-                if modifiers & Qt.ShiftModifier: # Shift 키와 함께 눌린 경우
+                if modifiers & Qt.ShiftModifier:
                     if key == Qt.Key_A: key_to_add_for_viewport = Qt.Key_Left
                     elif key == Qt.Key_D: key_to_add_for_viewport = Qt.Key_Right
                     elif key == Qt.Key_W: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_S: key_to_add_for_viewport = Qt.Key_Down
-                elif not (modifiers & Qt.ShiftModifier): # Shift 키 없이 눌린 경우 (일반 방향키)
+                elif not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_Left: key_to_add_for_viewport = Qt.Key_Left
                     elif key == Qt.Key_Right: key_to_add_for_viewport = Qt.Key_Right
                     elif key == Qt.Key_Up: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_Down: key_to_add_for_viewport = Qt.Key_Down
             
             if key_to_add_for_viewport:
-                if not is_auto_repeat: # 처음 눌렸을 때만
+                if not is_auto_repeat:
                     if key_to_add_for_viewport not in self.pressed_keys_for_viewport:
                         self.pressed_keys_for_viewport.add(key_to_add_for_viewport)
-                        logging.debug(f"KeyPress: Added {QKeySequence(key_to_add_for_viewport).toString()} for viewport. Pressed: {self.pressed_keys_for_viewport}")
-                    
                     if not self.viewport_move_timer.isActive():
                         self.viewport_move_timer.start()
-                        logging.debug("KeyPress: Viewport move timer started.")
-                return True # 뷰포트 이동 관련 키 이벤트 소비
+                return True
 
-            # --- 3. Grid 모드 네비게이션 또는 Grid Off 사진 넘기기 ---
-            # (뷰포트 이동 조건이 아니거나, 뷰포트 이동 키 조합이 아닐 때 이리로 넘어옴)
-
-            # --- 사진 넘기기 (WASD, 또는 Fit 모드 방향키) 및 폴더 이동(숫자키) 처리 ---
-            # (이 부분은 뷰포트 이동 조건이 아닐 때 또는 뷰포트 이동키가 아닐 때 실행됨)
             if self.grid_mode == "Off":
-                if not (modifiers & Qt.ShiftModifier): # Shift 없이 눌린 WASD는 사진 넘기기
+                if not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_A: self.show_previous_image(); return True
                     elif key == Qt.Key_D: self.show_next_image(); return True
-                    # W, S는 사진 넘기기 기능 없음
-
-                if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier): # Fit 모드 + Shift 없는 방향키
+                if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_Left: self.show_previous_image(); return True
                     elif key == Qt.Key_Right: self.show_next_image(); return True
-            
-            elif self.grid_mode != "Off": # Grid On 모드
+            elif self.grid_mode != "Off":
                 rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-                if modifiers & Qt.ShiftModifier: # Shift + (A/D/Left/Right) -> 페이지 넘기기
+                if modifiers & Qt.ShiftModifier:
                     if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_to_adjacent_page(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_to_adjacent_page(1); return True
-                else: # Shift 없음: WASD 또는 Arrow Keys -> 셀 이동
+                else:
                     if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_grid(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
                     elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
 
             if Qt.Key_1 <= key <= Qt.Key_3:
-                # 숫자 키 (1, 2, 3)로 폴더 이동
                 if self.image_processing:
-                    logging.debug("처리 중 상태이므로 키 입력 무시됨")
-                    return True  # 무시
+                    return True
                 folder_index = key - Qt.Key_1
-                if self.grid_mode != "Off": 
-                    self.image_processing = True # Grid 모드에서 폴더 이동 시 이미지 처리 플래그 설정
+                self.image_processing = True
+                if self.grid_mode != "Off":
                     self.move_grid_image(folder_index)
-                    self.image_processing = False # 폴더 이동 후 이미지 처리 플래그 해제
-                else: 
-                    self.image_processing = True # Grid Off 모드에서 폴더 이동 시 이미지 처리 플래그 설정
+                else:
                     self.move_current_image_to_folder(folder_index)
-                    self.image_processing = False # 폴더 이동 후 이미지 처리 플래그 해제
-                return True 
+                self.image_processing = False
+                return True
 
-            return False # 그 외 처리 안 된 KeyPress
+            return False
 
         elif event.type() == QEvent.KeyRelease:
-            # --- 입력 다이얼로그가 활성화된 경우 ---
             if self.is_input_dialog_active:
-                # QInputDialog가 키 이벤트를 완전히 처리하도록 기본 동작에 맡김
-                logging.debug(f"Input dialog active, deferring KeyRelease event: {QKeySequence(event.key()).toString()}")
-                return super().eventFilter(obj, event) # QInputDialog가 처리하도록 이벤트 전달
-            # --- 입력 다이얼로그가 활성화되지 않은 경우에만 PhotoSortApp의 키 릴리즈 처리 ---
+                return super().eventFilter(obj, event)
 
             key = event.key()
-            # modifiers_on_release = event.modifiers() # 키 뗄 때 Shift 상태는 여기서 중요하지 않음
-            is_auto_repeat = event.isAutoRepeat()
-
-            if is_auto_repeat: return super().eventFilter(obj, event)
-
-            logging.debug(f"KeyRelease: Key={QKeySequence(key).toString()}, PressedBefore={self.pressed_keys_for_viewport}")
+            if event.isAutoRepeat():
+                return super().eventFilter(obj, event)
 
             key_to_remove_from_viewport = None
-
             if key == Qt.Key_Shift:
-                # Shift 키가 떨어지면, "모든" 뷰포트 이동을 중지하고 포커스를 저장합니다.
-                # 이것은 Shift+WASD 중 WASD가 아직 눌려있더라도 이동을 멈추게 합니다.
                 if self.pressed_keys_for_viewport:
-                    logging.debug(f"  Shift released, clearing all pressed_keys: {self.pressed_keys_for_viewport}")
-                    self.pressed_keys_for_viewport.clear() # 모든 방향키 상태 제거
-                # 타이머 중지 및 포커스 저장은 아래 공통 로직에서 처리
+                    self.pressed_keys_for_viewport.clear()
             elif key == Qt.Key_Left: key_to_remove_from_viewport = Qt.Key_Left
             elif key == Qt.Key_Right: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_Up: key_to_remove_from_viewport = Qt.Key_Up
             elif key == Qt.Key_Down: key_to_remove_from_viewport = Qt.Key_Down
-            elif key == Qt.Key_A: key_to_remove_from_viewport = Qt.Key_Left  # Shift+A 의 결과
-            elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right # Shift+D 의 결과
-            elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up    # Shift+W 의 결과
-            elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down  # Shift+S 의 결과
+            elif key == Qt.Key_A: key_to_remove_from_viewport = Qt.Key_Left
+            elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right
+            elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up
+            elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down
 
             action_taken = False
             if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
                 self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
-                logging.debug(f"  Removed {QKeySequence(key_to_remove_from_viewport).toString()} from pressed_keys. Remaining: {self.pressed_keys_for_viewport}")
                 action_taken = True
             
-            if key == Qt.Key_Shift and not self.pressed_keys_for_viewport: # Shift만 떨어졌고 다른 이동키가 없으면
-                if self.viewport_move_timer.isActive():
-                    self.viewport_move_timer.stop()
-                    logging.debug("  Shift released (and no other viewport keys), timer stopped.")
-                    # 포커스 저장 (뷰포트 이동이 실제로 발생했다면)
-                    if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
-                       self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                        # ... (포커스 저장 로직 - 이전 답변과 동일) ...
-                        current_image_path_str = str(self.image_files[self.current_image_index])
-                        final_rel_center = self._get_current_view_relative_center()
-                        final_zoom_level = self.zoom_mode
-                        self.current_active_rel_center = final_rel_center
-                        self.current_active_zoom_level = final_zoom_level
-                        self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
-                        logging.debug(f"  Shift released, saved focus for {Path(current_image_path_str).name}")
-
-                return True # Shift 릴리즈는 항상 소비 (뷰포트 이동과 관련 없더라도)
-
-
             if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
-                # 다른 키가 떨어져서 pressed_keys가 비었거나, Shift 릴리즈로 비워진 경우
                 self.viewport_move_timer.stop()
-                logging.debug("  All viewport keys are now released, timer stopped.")
-                if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
-                   self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                    # ... (포커스 저장 로직 - 이전 답변과 동일) ...
+                if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap:
                     current_image_path_str = str(self.image_files[self.current_image_index])
                     final_rel_center = self._get_current_view_relative_center()
                     final_zoom_level = self.zoom_mode
                     self.current_active_rel_center = final_rel_center
                     self.current_active_zoom_level = final_zoom_level
-                    self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
-                    logging.debug(f"  All viewport keys released, saved focus for {Path(current_image_path_str).name}")
+                    self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, final_zoom_level)
 
-            if action_taken or key == Qt.Key_Shift : # 뷰포트 관련 키거나 Shift면 이벤트 소비
-                 return True
+            if action_taken or key == Qt.Key_Shift:
+                return True
             
-            return False # 그 외 처리되지 않은 KeyRelease
+            return False
 
         return super().eventFilter(obj, event)
 
