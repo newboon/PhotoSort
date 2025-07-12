@@ -870,14 +870,47 @@ class ZoomScrollArea(QScrollArea):
         self.app_parent = parent
 
     def wheelEvent(self, event: QWheelEvent):
-        # 부모 위젯 (PhotoSortApp)의 zoom_mode 확인
-        if self.app_parent and hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "Spin"]:
-            # 100% 또는 Spin 줌 모드에서는 휠 이벤트를 무시
-            event.accept()
-            return
-        else:
-            # 그 외의 경우 (Fit 모드 등) 기본 스크롤 동작 수행
-            super().wheelEvent(event)
+        # 부모 위젯 (PhotoSortApp) 상태 및 마우스 휠 설정 확인
+        if self.app_parent and hasattr(self.app_parent, 'mouse_wheel_action'):
+            # 마우스 휠 동작이 "없음"으로 설정된 경우 기존 방식 사용
+            if getattr(self.app_parent, 'mouse_wheel_action', 'photo_navigation') == 'none':
+                # 기존 ZoomScrollArea 동작 (100%/Spin 모드에서 휠 이벤트 무시)
+                if hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "Spin"]:
+                    event.accept()
+                    return
+                else:
+                    super().wheelEvent(event)
+                    return
+            
+            # 마우스 휠 동작이 "사진 넘기기"로 설정된 경우
+            if hasattr(self.app_parent, 'grid_mode'):
+                wheel_delta = event.angleDelta().y()
+                if wheel_delta == 0:
+                    super().wheelEvent(event)
+                    return
+                
+                if self.app_parent.grid_mode == "Off":
+                    # === Grid Off 모드: 이전/다음 사진 ===
+                    if wheel_delta > 0:
+                        self.app_parent.show_previous_image()
+                    else:
+                        self.app_parent.show_next_image()
+                    
+                    event.accept()
+                    return
+                    
+                elif self.app_parent.grid_mode in ["2x2", "3x3"]:
+                    # === Grid 모드: 그리드 셀 간 이동 ===
+                    if wheel_delta > 0:
+                        self.app_parent.navigate_grid(-1)
+                    else:
+                        self.app_parent.navigate_grid(1)
+                    
+                    event.accept()
+                    return
+        
+        # 기타 경우에는 기본 스크롤 동작 수행
+        super().wheelEvent(event)
 
 class GridCellWidget(QWidget):
     def __init__(self, parent=None):
@@ -2697,6 +2730,7 @@ class PhotoSortApp(QMainWindow):
         self.control_panel_on_right = False # 기본값: 왼쪽 (False)
 
         self.viewport_move_speed = 5 # 뷰포트 이동 속도 (1~10), 기본값 5
+        self.mouse_wheel_action = "photo_navigation"  # 마우스 휠 동작: "photo_navigation" 또는 "none"
         self.last_processed_camera_model = None
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
 
@@ -5328,6 +5362,15 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"백그라운드 이미지 사전 로드 오류 ({Path(image_path).name}): {e}")
             return False
+        
+    def on_mouse_wheel_action_changed(self, button):
+        """마우스 휠 동작 설정 변경 시 호출"""
+        if button == self.mouse_wheel_photo_radio:
+            self.mouse_wheel_action = "photo_navigation"
+            logging.info("마우스 휠 동작: 사진 넘기기로 변경됨")
+        elif button == self.mouse_wheel_none_radio:
+            self.mouse_wheel_action = "none"
+            logging.info("마우스 휠 동작: 없음으로 변경됨")
 
     def setup_settings_ui(self, is_first_run_popup=False):
         """설정 UI 구성 (언어, 날짜 형식, 테마 설정)"""
@@ -5693,6 +5736,99 @@ class PhotoSortApp(QMainWindow):
             settings_layout.addWidget(viewport_speed_container)
             # === 뷰포트 이동 속도 설정 끝 ===
 
+            # === 마우스 휠 동작 설정 ===
+            mouse_wheel_container = QWidget()
+            mouse_wheel_layout = QHBoxLayout(mouse_wheel_container)
+            mouse_wheel_layout.setContentsMargins(0, 5, 0, 5)
+
+            mouse_wheel_label = QLabel(LanguageManager.translate("마우스 휠 동작"))
+            mouse_wheel_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            mouse_wheel_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            font = QFont(self.font())
+            font.setPointSize(UIScaleManager.get("font_size"))
+            mouse_wheel_label.setFont(font)
+            mouse_wheel_label.setMinimumWidth(250)
+            mouse_wheel_label.setObjectName("mouse_wheel_label")
+
+            # 라디오 버튼 컨테이너
+            mouse_wheel_radio_container = QWidget()
+            mouse_wheel_radio_layout = QHBoxLayout(mouse_wheel_radio_container)
+            mouse_wheel_radio_layout.setContentsMargins(0, 0, 0, 0)
+            mouse_wheel_radio_layout.setSpacing(20)
+
+            # 라디오 버튼 그룹
+            self.mouse_wheel_group = QButtonGroup()
+
+            # "사진 넘기기" 라디오 버튼
+            self.mouse_wheel_photo_radio = QRadioButton(LanguageManager.translate("사진 넘기기"))
+            self.mouse_wheel_photo_radio.setStyleSheet(f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 2px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: #848484;
+                    border: 2px solid #848484;
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+            """)
+
+            # "없음" 라디오 버튼
+            self.mouse_wheel_none_radio = QRadioButton(LanguageManager.translate("없음"))
+            self.mouse_wheel_none_radio.setStyleSheet(f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 2px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: #848484;
+                    border: 2px solid #848484;
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+            """)
+
+            # 버튼 그룹에 추가
+            self.mouse_wheel_group.addButton(self.mouse_wheel_photo_radio, 0)
+            self.mouse_wheel_group.addButton(self.mouse_wheel_none_radio, 1)
+
+            # 현재 설정에 따라 초기 선택
+            if getattr(self, 'mouse_wheel_action', 'photo_navigation') == 'photo_navigation':
+                self.mouse_wheel_photo_radio.setChecked(True)
+            else:
+                self.mouse_wheel_none_radio.setChecked(True)
+
+            # 시그널 연결
+            self.mouse_wheel_group.buttonClicked.connect(self.on_mouse_wheel_action_changed)
+
+            # 레이아웃에 추가
+            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_photo_radio)
+            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_none_radio)
+            mouse_wheel_radio_layout.addStretch(1)
+
+            mouse_wheel_layout.addWidget(mouse_wheel_label)
+            mouse_wheel_layout.addWidget(mouse_wheel_radio_container)
+            mouse_wheel_layout.addStretch(1)
+
+            settings_layout.addWidget(mouse_wheel_container)
+            # === 마우스 휠 동작 설정 끝 ===
 
             # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
             raw_settings_reset_container = QWidget()
@@ -7221,13 +7357,13 @@ class PhotoSortApp(QMainWindow):
             # 새로운 이미지 위치 계산 (시작 위치 기준 - 절대 위치 기반)
             new_pos = self.image_start_pos + delta
             
-            # 이미지 크기 가져오기
+            # 이미지 크기 가져오기 - 키보드 이동과 동일한 로직 적용
             if self.zoom_mode == "100%":
                 img_width = self.original_pixmap.width()
                 img_height = self.original_pixmap.height()
-            else:  # 200%
-                img_width = self.original_pixmap.width() * 2
-                img_height = self.original_pixmap.height() * 2
+            else:  # Spin 모드 - zoom_spin_value 사용으로 수정
+                img_width = self.original_pixmap.width() * self.zoom_spin_value
+                img_height = self.original_pixmap.height() * self.zoom_spin_value
             
             # 뷰포트 크기
             view_width = self.scroll_area.width()
@@ -11244,6 +11380,7 @@ class PhotoSortApp(QMainWindow):
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
             "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
+            "mouse_wheel_action": getattr(self, 'mouse_wheel_action', 'photo_navigation'),  # 마우스 휠 동작
             "folder_count": self.folder_count,
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
@@ -11337,6 +11474,9 @@ class PhotoSortApp(QMainWindow):
             self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
 
+            self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")  # 추가
+            logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
+
             self.saved_sessions = loaded_data.get("saved_sessions", {}) # <<< 추가, 없으면 빈 딕셔너리
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
 
@@ -11376,6 +11516,13 @@ class PhotoSortApp(QMainWindow):
                 idx = self.viewport_speed_combo.findData(self.viewport_move_speed)
                 if idx >= 0:
                     self.viewport_speed_combo.setCurrentIndex(idx)
+
+            # 마우스 휠 라디오 버튼 UI 업데이트 (설정창이 생성된 후)
+            if hasattr(self, 'mouse_wheel_photo_radio') and hasattr(self, 'mouse_wheel_none_radio'):
+                if self.mouse_wheel_action == 'photo_navigation':
+                    self.mouse_wheel_photo_radio.setChecked(True)
+                else:
+                    self.mouse_wheel_none_radio.setChecked(True)
             
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
@@ -12087,6 +12234,7 @@ class PhotoSortApp(QMainWindow):
                     
             if key == Qt.Key_Space:
                 if self.grid_mode == "Off":
+                    # 기존 Grid Off 모드에서의 줌 전환 로직
                     if self.zoom_mode == "Fit":
                         if self.original_pixmap:
                             # [수정] 마지막 활성 줌 모드로 전환
@@ -12139,6 +12287,25 @@ class PhotoSortApp(QMainWindow):
                         self.zoom_mode = "Fit"
                         self.fit_radio.setChecked(True)
                         self.apply_zoom_to_image()
+                    return True
+                
+                else:  # Grid On 모드에서 Space 키 - 누락된 부분 복원
+                    # Grid 모드에서 선택된 이미지로 전환하고 Grid Off 모드로 변경
+                    current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
+                    if 0 <= current_selected_grid_index < len(self.image_files):
+                        self.current_image_index = current_selected_grid_index
+                        self.force_refresh = True  # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
+                    
+                    # Grid Off로 전환하기 전에 현재 Grid 모드 저장 (ESC 복귀용)
+                    self.previous_grid_mode = self.grid_mode
+                    self.grid_mode = "Off"
+                    self.grid_off_radio.setChecked(True)
+                    self.space_pressed = True  # on_grid_changed에서 이전 모드 초기화 방지용
+                    
+                    # Grid Off로 전환 및 UI 업데이트
+                    self.update_grid_view()  # Grid Off로 전환 및 display_current_image 호출 유도
+                    self.update_zoom_radio_buttons_state()
+                    self.update_counter_layout()
                     return True
 
             is_viewport_move_condition = (self.grid_mode == "Off" and
@@ -12664,6 +12831,8 @@ class PhotoSortApp(QMainWindow):
                 widget.setText(LanguageManager.translate("불러올 이미지 형식"))
             elif widget_object_name == "raw_reset_label":
                 widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
+            elif widget_object_name == "mouse_wheel_label":
+                widget.setText(LanguageManager.translate("마우스 휠 동작"))
             elif widget_object_name == "viewport_speed_label":
                 widget.setText(LanguageManager.translate("뷰포트 이동 속도"))
             elif widget_object_name == "session_management_link_label":
@@ -12672,9 +12841,13 @@ class PhotoSortApp(QMainWindow):
                 widget.setText(self.create_translated_info_text())
 
         elif isinstance(widget, QRadioButton):
-            if widget.text() == "좌측" or widget.text() == "Left":
+            if widget.text() in ["사진 넘기기", "Photo Navigation"]:
+                widget.setText(LanguageManager.translate("사진 넘기기"))
+            elif widget.text() in ["없음", "None"]:
+                widget.setText(LanguageManager.translate("없음"))
+            elif widget.text() in ["좌측", "Left"]:
                 widget.setText(LanguageManager.translate("좌측"))
-            elif widget.text() == "우측" or widget.text() == "Right":
+            elif widget.text() in ["우측", "Right"]:
                 widget.setText(LanguageManager.translate("우측"))
         
         # 🎯 새로 추가: QPushButton 처리 (초기화 버튼)
@@ -12965,6 +13138,9 @@ def main():
         "현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)": "Please finish current work and then load a new folder (Tip: X button next to folder path or Delete key)",
         "선택한 폴더에 지원하는 파일이 없습니다.": "No supported files found in the selected folder.",
         "분류 폴더 개수": "Number of Sorting Folders",
+        "마우스 휠 동작": "Mouse Wheel Action",
+        "사진 넘기기": "Photo Navigation", 
+        "없음": "None",
     }
     
     LanguageManager.initialize_translations(translations)
