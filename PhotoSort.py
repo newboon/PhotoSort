@@ -96,14 +96,14 @@ class UIScaleManager:
 
     # 기본 UI 크기 설정
     NORMAL_SETTINGS = {
-        "control_panel_margins": (10, 20, 10, 20), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_panel_margins": (10, 15, 10, 15), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
         "control_layout_spacing": 8,               # 컨트롤 레이아웃 위젯 간 기본 간격
         "button_min_height": 30,                   # 일반 버튼 최소 높이
         "button_padding": 8,                       # 일반 버튼 내부 패딩
         "delete_button_width": 45,                 # 삭제(X) 버튼 너비
-        "JPG_RAW_spacing": 15,
+        "JPG_RAW_spacing": 8,
         "section_spacing": 20,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 15,                   # 라디오 버튼 등 그룹 내 간격
+        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
         "title_spacing": 10,                       # Zoom, Grid 등 섹션 제목 아래 간격
         "settings_button_size": 35,                # 설정(톱니바퀴) 버튼 크기
         "filename_label_padding": 40,              # 파일명 레이블 상하 패딩
@@ -113,13 +113,12 @@ class UIScaleManager:
         "filename_font_size": 11,                  # 파일명 폰트 크기
         "folder_container_spacing": 6,             # 버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 13,                # 폴더 경로 레이블 높이 계산용 패딩
-        "category_folder_vertical_spacing": 10,
+        "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
         "combobox_padding": 4,
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
-        "settings_popup_height": 1200,
+        "settings_popup_height": 1240,
         "settings_layout_vspace": 15,
-        "viewshortcuts_seperator": 0,
         "infotext_licensebutton": 30,
         "donation_between_tworows": 25,
         "bottom_space": 25,
@@ -132,14 +131,14 @@ class UIScaleManager:
 
     # 컴팩트 모드 UI 크기 설정
     COMPACT_SETTINGS = {
-        "control_panel_margins": (10, 15, 10, 15), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_panel_margins": (10, 12, 10, 12), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
         "control_layout_spacing": 6,               # 컨트롤 레이아웃 위젯 간 기본 간격
         "button_min_height": 20,                   # 일반 버튼 최소 높이
         "button_padding": 8,                       # 일반 버튼 내부 패딩
         "delete_button_width": 42,                 # 삭제(X) 버튼 너비
-        "JPG_RAW_spacing": 10, 
+        "JPG_RAW_spacing": 6, 
         "section_spacing": 12,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 15,                   # 라디오 버튼 등 그룹 내 간격
+        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
         "title_spacing": 7,                        # Zoom, Grid 등 섹션 제목 아래 간격
         "settings_button_size": 30,                # 설정(톱니바퀴) 버튼 크기
         "filename_label_padding": 25,              # 파일명 레이블 상하 패딩
@@ -149,16 +148,15 @@ class UIScaleManager:
         "filename_font_size": 10,                  # 파일명 폰트 크기
         "folder_container_spacing": 5,             # 버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 10,                # 폴더 경로 레이블 높이 계산용 패딩
-        "category_folder_vertical_spacing": 5, 
+        "category_folder_vertical_spacing": 7,     # 분류 폴더 UI 사이 간격
         "combobox_padding": 3,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
-        "settings_popup_height": 930,
-        "settings_layout_vspace": 10,
-        "viewshortcuts_seperator": 0,
+        "settings_popup_height": 940,
+        "settings_layout_vspace": 7,
         "infotext_licensebutton": 20,
         "donation_between_tworows": 17,
-        "bottom_space": 20,
+        "bottom_space": 15,
         # 정보 텍스트 여백 관련 키 추가 (컴팩트 모드에서는 여백 축소)
         "info_version_margin": 20,
         "info_paragraph_margin": 20,
@@ -175,7 +173,7 @@ class UIScaleManager:
             screen = QGuiApplication.primaryScreen()
             if not screen:
                 logging.warning("Warning: Primary screen not found. Using default UI scale.")
-                cls._current_settings = cls.NORMAL_SETTINGS
+                cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 return
 
             screen_geometry = screen.geometry()
@@ -183,15 +181,23 @@ class UIScaleManager:
             is_compact = vertical_resolution < 1201 
 
             if is_compact:
-                cls._current_settings = cls.COMPACT_SETTINGS
+                cls._current_settings = cls.COMPACT_SETTINGS.copy()
                 logging.info(f"세로 해상도: {vertical_resolution}px / Compact UI 모드 활성")
             else:
-                cls._current_settings = cls.NORMAL_SETTINGS
+                cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 logging.info(f"세로 해상도: {vertical_resolution}px / Normal UI 모드 활성")
+
+            # 화면 비율에 따른 group_box_spacing 조정
+            if cls.is_16_10_or_less():
+                cls._current_settings["group_box_spacing"] = 15
+                logging.info("화면 비율 16:10 이하: group_box_spacing = 15")
+            else:
+                cls._current_settings["group_box_spacing"] = 40
+                logging.info("화면 비율 16:10 초과: group_box_spacing = 40")
 
         except Exception as e:
             logging.error(f"Error initializing UIScaleManager: {e}. Using default UI scale.")
-            cls._current_settings = cls.NORMAL_SETTINGS
+            cls._current_settings = cls.NORMAL_SETTINGS.copy()
 
     @classmethod
     def is_compact_mode(cls):
@@ -1155,6 +1161,9 @@ class ExifWorker(QObject):
                 "exif_datetime": None,
                 "exif_focal_mm": None,
                 "exif_focal_35mm": None,
+                "exif_exposure_time": None,
+                "exif_fnumber": None,
+                "exif_iso": None,
                 "exif_orientation": None,
                 "image_path": image_path
             }
@@ -1217,6 +1226,22 @@ class ExifWorker(QObject):
                             result["exif_focal_mm"] = val[0] / val[1]
                     if result["exif_focal_35mm"] is None and piexif.ExifIFD.FocalLengthIn35mmFilm in exif_ifd:
                         result["exif_focal_35mm"] = exif_ifd.get(piexif.ExifIFD.FocalLengthIn35mmFilm)
+
+                    # 노출 시간
+                    if result["exif_exposure_time"] is None and piexif.ExifIFD.ExposureTime in exif_ifd:
+                        val = exif_ifd.get(piexif.ExifIFD.ExposureTime)
+                        if isinstance(val, tuple) and len(val) == 2 and val[1] != 0:
+                            result["exif_exposure_time"] = val[0] / val[1]
+                    
+                    # 조리개값
+                    if result["exif_fnumber"] is None and piexif.ExifIFD.FNumber in exif_ifd:
+                        val = exif_ifd.get(piexif.ExifIFD.FNumber)
+                        if isinstance(val, tuple) and len(val) == 2 and val[1] != 0:
+                            result["exif_fnumber"] = val[0] / val[1]
+                    
+                    # ISO
+                    if result["exif_iso"] is None and piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
+                        result["exif_iso"] = exif_ifd.get(piexif.ExifIFD.ISOSpeedRatings)
 
                     # 필수 정보 확인
                     required_info_count = sum([
@@ -1294,6 +1319,33 @@ class ExifWorker(QObject):
                                 result["exif_focal_35mm"] = float(str(focal_35_val).lower().replace(" mm", ""))
                             except (ValueError, TypeError):
                                 result["exif_focal_35mm"] = str(focal_35_val)
+
+                    # 노출 시간
+                    if result["exif_exposure_time"] is None:
+                        exposure_val = exif_data_tool.get("ExposureTime")
+                        if exposure_val:
+                            try:
+                                result["exif_exposure_time"] = float(exposure_val)
+                            except (ValueError, TypeError):
+                                result["exif_exposure_time"] = str(exposure_val)
+                    
+                    # 조리개값
+                    if result["exif_fnumber"] is None:
+                        fnumber_val = exif_data_tool.get("FNumber")
+                        if fnumber_val:
+                            try:
+                                result["exif_fnumber"] = float(fnumber_val)
+                            except (ValueError, TypeError):
+                                result["exif_fnumber"] = str(fnumber_val)
+                    
+                    # ISO
+                    if result["exif_iso"] is None:
+                        iso_val = exif_data_tool.get("ISO")
+                        if iso_val:
+                            try:
+                                result["exif_iso"] = int(iso_val)
+                            except (ValueError, TypeError):
+                                result["exif_iso"] = str(iso_val)
 
             # 작업 완료, 결과 전송
             if self._running:
@@ -3013,7 +3065,7 @@ class PhotoSortApp(QMainWindow):
         # JPG 폴더 경로/클리어 컨테이너
         jpg_folder_container = QWidget()
         jpg_folder_layout = QHBoxLayout(jpg_folder_container)
-        jpg_folder_layout.setContentsMargins(0, 3, 0, 3) # 상하 여백 추가
+        jpg_folder_layout.setContentsMargins(0, 0, 0, 0)  # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
         jpg_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # JPG 폴더 경로 표시 레이블 추가
@@ -3091,7 +3143,7 @@ class PhotoSortApp(QMainWindow):
         # RAW 폴더 경로/클리어 컨테이너
         raw_folder_container = QWidget()
         raw_folder_layout = QHBoxLayout(raw_folder_container)
-        raw_folder_layout.setContentsMargins(0, 3, 0, 3) # 상하 여백 추가
+        raw_folder_layout.setContentsMargins(0, 0, 0, 0) # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
         raw_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # RAW 폴더 경로 표시 레이블 추가
@@ -8461,7 +8513,7 @@ class PhotoSortApp(QMainWindow):
         # 확대 옵션 컨테이너 (가로 배치)
         zoom_container = QWidget()
         zoom_layout = QHBoxLayout(zoom_container)
-        zoom_layout.setContentsMargins(0, 5, 0, 5)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
         zoom_layout.setSpacing(UIScaleManager.get("group_box_spacing"))
         
         # 라디오 버튼 생성
@@ -8590,7 +8642,7 @@ class PhotoSortApp(QMainWindow):
         # 미니맵 토글을 중앙에 배치
         minimap_container = QWidget()
         minimap_layout = QHBoxLayout(minimap_container)
-        minimap_layout.setContentsMargins(0, 5, 0, 5)
+        minimap_layout.setContentsMargins(0, 10, 0, 0)
         minimap_layout.addStretch()
         minimap_layout.addWidget(self.minimap_toggle)
         minimap_layout.addStretch()
@@ -9101,7 +9153,7 @@ class PhotoSortApp(QMainWindow):
         # Grid 옵션 컨테이너 (가로 배치)
         grid_container = QWidget()
         grid_layout_h = QHBoxLayout(grid_container)
-        grid_layout_h.setContentsMargins(0, 5, 0, 5)
+        grid_layout_h.setContentsMargins(0, 0, 0, 0)
         grid_layout_h.setSpacing(UIScaleManager.get("group_box_spacing")) 
 
         # 라디오 버튼 생성
@@ -9192,7 +9244,7 @@ class PhotoSortApp(QMainWindow):
         # 파일명 토글을 중앙에 배치하기 위한 컨테이너
         filename_toggle_container = QWidget()
         filename_toggle_layout = QHBoxLayout(filename_toggle_container)
-        filename_toggle_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백 약간 추가
+        filename_toggle_layout.setContentsMargins(0, 10, 0, 0)
         filename_toggle_layout.addStretch()
         filename_toggle_layout.addWidget(self.filename_toggle_grid)
         filename_toggle_layout.addStretch()
@@ -9289,7 +9341,7 @@ class PhotoSortApp(QMainWindow):
     def update_zoom_radio_buttons_state(self):
         """그리드 모드에 따라 줌 라디오 버튼 활성화/비활성화"""
         if self.grid_mode != "Off":
-            # 그리드 모드에서 100%, 200% 비활성화
+            # 그리드 모드에서 100%, spin 비활성화
             self.zoom_100_radio.setEnabled(False)
             self.zoom_spin_btn.setEnabled(False)
             # 비활성화 스타일 적용
@@ -10431,11 +10483,18 @@ class PhotoSortApp(QMainWindow):
         self.info_filename_label.doubleClicked.connect(self.open_current_file_in_explorer)
         self.control_layout.addWidget(self.info_filename_label)
 
+        # 정보 레이블들을 담을 하나의 컨테이너
+        info_container = QWidget()
+        info_container.setFixedWidth(300)  # 고정 너비 설정으로 가운데 정렬 효과
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
+
         # 정보 표시를 위한 레이블들 (왼쪽 정렬)
         # ========== UIScaleManager 적용 ==========
         info_padding = UIScaleManager.get("info_label_padding")
         info_label_style = f"color: #A8A8A8; padding-left: {info_padding}px;"
-        info_font = QFont("Arial", UIScaleManager.get("font_size")) # 전역 폰트 크기 사용
+        info_font = QFont("Arial", UIScaleManager.get("font_size"))
 
         # 정보 레이블 공통 설정 함수
         def configure_info_label(label):
@@ -10458,21 +10517,41 @@ class PhotoSortApp(QMainWindow):
         # 정보 레이블 생성 및 설정 적용
         self.info_datetime_label = QLabel("-")
         configure_info_label(self.info_datetime_label)
+        info_layout.addWidget(self.info_datetime_label)
 
         self.info_resolution_label = QLabel("-")
         configure_info_label(self.info_resolution_label)
+        info_layout.addWidget(self.info_resolution_label)
 
         self.info_camera_label = QLabel("-")
         configure_info_label(self.info_camera_label)
+        info_layout.addWidget(self.info_camera_label)
+
+        self.info_exposure_label = QLabel("-")
+        configure_info_label(self.info_exposure_label)
+        info_layout.addWidget(self.info_exposure_label)
 
         self.info_focal_label = QLabel("-")
         configure_info_label(self.info_focal_label)
+        info_layout.addWidget(self.info_focal_label)
 
-        # 레이아웃에 위젯 추가 (요청된 순서대로)
-        self.control_layout.addWidget(self.info_datetime_label)    # 1. 촬영 날짜
-        self.control_layout.addWidget(self.info_resolution_label)  # 2. 해상도
-        self.control_layout.addWidget(self.info_camera_label)      # 3. 카메라
-        self.control_layout.addWidget(self.info_focal_label)       # 4. 초점거리
+        self.info_aperture_label = QLabel("-")
+        configure_info_label(self.info_aperture_label)
+        info_layout.addWidget(self.info_aperture_label)
+
+        self.info_iso_label = QLabel("-")
+        configure_info_label(self.info_iso_label)
+        info_layout.addWidget(self.info_iso_label)
+
+        # 컨테이너를 가운데 정렬하여 메인 레이아웃에 추가
+        container_wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(container_wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.addStretch()
+        wrapper_layout.addWidget(info_container)
+        wrapper_layout.addStretch()
+        
+        self.control_layout.addWidget(container_wrapper)
 
     def update_file_info_display(self, image_path):
         """파일 정보 표시 - 비동기 버전, RAW 연결 아이콘 추가"""
@@ -10482,7 +10561,10 @@ class PhotoSortApp(QMainWindow):
             self.info_resolution_label.setText("-")
             self.info_camera_label.setText("-")
             self.info_datetime_label.setText("-")
+            self.info_exposure_label.setText("-")
             self.info_focal_label.setText("-")
+            self.info_aperture_label.setText("-")
+            self.info_iso_label.setText("-")
             self.current_exif_path = None
             return
         
@@ -10504,7 +10586,10 @@ class PhotoSortApp(QMainWindow):
         self.info_resolution_label.setText(loading_text)
         self.info_camera_label.setText(loading_text)
         self.info_datetime_label.setText(loading_text)
+        self.info_exposure_label.setText(loading_text)
         self.info_focal_label.setText(loading_text)
+        self.info_aperture_label.setText(loading_text)
+        self.info_iso_label.setText(loading_text)
         
         if image_path in self.exif_cache:
             self.update_info_ui_from_exif(self.exif_cache[image_path], image_path)
@@ -10533,7 +10618,10 @@ class PhotoSortApp(QMainWindow):
             self.info_resolution_label.setText(error_text)
             self.info_camera_label.setText(error_text)
             self.info_datetime_label.setText(error_text)
+            self.info_exposure_label.setText(error_text)
             self.info_focal_label.setText(error_text)
+            self.info_aperture_label.setText(error_text)
+            self.info_iso_label.setText(error_text)
 
     def update_info_ui_from_exif(self, exif_data, image_path):
         """EXIF 데이터로 UI 레이블 업데이트"""
@@ -10583,6 +10671,28 @@ class PhotoSortApp(QMainWindow):
                     self.info_datetime_label.setText(f"▪ {datetime_str}")
             else:
                 self.info_datetime_label.setText("▪ -")
+
+            # 노출 시간 정보 설정
+            exposure_str = "▪ "
+            if exif_data["exif_exposure_time"] is not None:
+                exposure_val = exif_data["exif_exposure_time"]
+                try:
+                    if isinstance(exposure_val, (int, float)):
+                        if exposure_val >= 1:
+                            exposure_str += f"{exposure_val:.1f}s"
+                        else:
+                            # 1초 미만일 때는 분수로 표시
+                            fraction = 1 / exposure_val
+                            exposure_str += f"1/{fraction:.0f}s"
+                    else:
+                        exposure_str += str(exposure_val)
+                        if not str(exposure_val).endswith('s'):
+                            exposure_str += "s"
+                except (ValueError, TypeError, ZeroDivisionError):
+                    exposure_str += str(exposure_val)
+                self.info_exposure_label.setText(exposure_str)
+            else:
+                self.info_exposure_label.setText("▪ -")
             
             # 초점 거리 정보 설정
             focal_str = "▪ "
@@ -10591,21 +10701,21 @@ class PhotoSortApp(QMainWindow):
             # 초점 거리
             if exif_data["exif_focal_mm"] is not None:
                 if isinstance(exif_data["exif_focal_mm"], (int, float)):
-                    focal_parts.append(f"{exif_data['exif_focal_mm']:.0f} mm")
+                    focal_parts.append(f"{exif_data['exif_focal_mm']:.0f}mm")
                 else:
                     focal_parts.append(exif_data["exif_focal_mm"])
                     if "mm" not in str(exif_data["exif_focal_mm"]).lower():
-                        focal_parts[-1] += " mm"
+                        focal_parts[-1] += "mm"
             
             # 35mm 환산 초점 거리
             if exif_data["exif_focal_35mm"] is not None:
                 focal_conversion = f"({LanguageManager.translate('환산')}: "
                 if isinstance(exif_data["exif_focal_35mm"], (int, float)):
-                    focal_conversion += f"{exif_data['exif_focal_35mm']:.0f} mm"
+                    focal_conversion += f"{exif_data['exif_focal_35mm']:.0f}mm"
                 else:
                     focal_conversion += str(exif_data["exif_focal_35mm"])
                     if "mm" not in str(exif_data["exif_focal_35mm"]).lower():
-                        focal_conversion += " mm"
+                        focal_conversion += "mm"
                 focal_conversion += ")"
                 focal_parts.append(focal_conversion)
             
@@ -10615,13 +10725,46 @@ class PhotoSortApp(QMainWindow):
             else:
                 self.info_focal_label.setText("▪ -")
 
+            # 조리개 정보 설정
+            aperture_str = "▪ "
+            if exif_data["exif_fnumber"] is not None:
+                fnumber_val = exif_data["exif_fnumber"]
+                try:
+                    if isinstance(fnumber_val, (int, float)):
+                        aperture_str += f"F{fnumber_val:.1f}"
+                    else:
+                        aperture_str += f"F{fnumber_val}"
+                except (ValueError, TypeError):
+                    aperture_str += str(fnumber_val)
+                self.info_aperture_label.setText(aperture_str)
+            else:
+                self.info_aperture_label.setText("▪ -")
+            
+            # ISO 정보 설정
+            iso_str = "▪ "
+            if exif_data["exif_iso"] is not None:
+                iso_val = exif_data["exif_iso"]
+                try:
+                    if isinstance(iso_val, (int, float)):
+                        iso_str += f"ISO {int(iso_val)}"
+                    else:
+                        iso_str += f"ISO {iso_val}"
+                except (ValueError, TypeError):
+                    iso_str += str(iso_val)
+                self.info_iso_label.setText(iso_str)
+            else:
+                self.info_iso_label.setText("▪ -")
+
         except Exception as e:
             logging.error(f"EXIF 정보 UI 업데이트 오류: {e}")
             # 에러가 발생해도 기본 정보는 표시 시도
             self.info_resolution_label.setText("▪ -")
             self.info_camera_label.setText("▪ -")
             self.info_datetime_label.setText("▪ -")
+            self.info_exposure_label.setText("▪ -")
             self.info_focal_label.setText("▪ -")
+            self.info_aperture_label.setText("▪ -")
+            self.info_iso_label.setText("▪ -")
 
 
     def open_current_file_in_explorer(self, filename):
