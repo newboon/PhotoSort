@@ -3342,7 +3342,7 @@ class PhotoSortApp(QMainWindow):
         # 변경된 상태 저장
         self.save_state()
 
-# ============= 드래그 앤 드랍 관련 함수 시작 ============== #
+    # === 드래그 앤 드랍 관련 코드 시작 === #
     def dragEnterEvent(self, event):
         """드래그 진입 시 호출"""
         try:
@@ -3552,7 +3552,7 @@ class PhotoSortApp(QMainWindow):
                         color: #AAAAAA;
                         padding: 5px;
                         background-color: {ThemeManager.get_color('bg_primary')};
-                        border: 2px solid {ThemeManager.get_color('accent')};
+                        border: 2px solid #08E25F;
                         border-radius: 1px;
                     }}
                 """)
@@ -4265,7 +4265,7 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"_handle_canvas_folder_drop 오류: {e}")
             return False
-# ============= 드래그 앤 드랍 관련 함수 끝 ============== #
+    # === 드래그 앤 드랍 관련 코드 끝 === #
 
     def on_extension_checkbox_changed(self, state):
         # 확장자 그룹 정의 (setup_settings_ui와 동일하게)
@@ -6785,14 +6785,14 @@ class PhotoSortApp(QMainWindow):
         self.update_minimap_position()
     
     def load_jpg_folder(self):
-        """JPG 파일이 있는 폴더 선택 및 로드"""
+        """JPG 등 이미지 파일이 있는 폴더 선택 및 로드"""
         folder_path = QFileDialog.getExistingDirectory(
-            self, LanguageManager.translate("JPG 파일이 있는 폴더 선택"), "",
+            self, LanguageManager.translate("이미지 파일이 있는 폴더 선택"), "",
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
 
         if folder_path:
-            logging.info(f"JPG 폴더 선택: {folder_path}")
+            logging.info(f"이미지(JPG) 폴더 선택: {folder_path}")
             self.clear_raw_folder()  # 새 JPG 폴더 지정 시 RAW 폴더 초기화
 
             if self.load_images_from_folder(folder_path):
@@ -7158,7 +7158,14 @@ class PhotoSortApp(QMainWindow):
     
     def image_mouse_press_event(self, event):
         """이미지 영역 마우스 클릭 이벤트 처리"""
-        # 100% 또는 200% 모드에서만 패닝 활성화
+        # === 빈 캔버스 클릭 시 폴더 선택 기능 ===
+        if event.button() == Qt.LeftButton and not self.image_files:
+            # 아무 이미지도 로드되지 않은 상태에서 캔버스 클릭 시 폴더 선택
+            self.open_folder_dialog_for_canvas()
+            return
+        
+        # === 기존 패닝 기능 ===
+        # 100% 또는 Spin 모드에서만 패닝 활성화
         if self.zoom_mode in ["100%", "Spin"]:
             if event.button() == Qt.LeftButton:
                 # 패닝 상태 활성화
@@ -7166,7 +7173,34 @@ class PhotoSortApp(QMainWindow):
                 self.pan_start_pos = event.position().toPoint()
                 self.image_start_pos = self.image_label.pos()
                 self.setCursor(Qt.ClosedHandCursor)
+    
+    def open_folder_dialog_for_canvas(self):
+        """캔버스 클릭 시 폴더 선택 다이얼로그 열기"""
+        try:
+            folder_path = QFileDialog.getExistingDirectory(
+                self, 
+                LanguageManager.translate("이미지 파일이 있는 폴더 선택"), 
+                "",
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            )
+            
+            if folder_path:
+                # 선택된 폴더에 대해 캔버스 폴더 드롭 로직 적용
+                success = self._handle_canvas_folder_drop(folder_path)
+                if success:
+                    logging.info(f"캔버스 클릭으로 폴더 로드 성공: {folder_path}")
+                else:
+                    logging.warning(f"캔버스 클릭으로 폴더 로드 실패: {folder_path}")
+            else:
+                logging.debug("캔버스 클릭 폴더 선택 취소됨")
                 
+        except Exception as e:
+            logging.error(f"캔버스 클릭 폴더 선택 오류: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical,
+                LanguageManager.translate("오류"),
+                LanguageManager.translate("폴더 선택 중 오류가 발생했습니다.")
+            )
     
     def image_mouse_move_event(self, event):
         """이미지 영역 마우스 이동 이벤트 처리"""
@@ -12797,7 +12831,7 @@ def main():
         "테마": "Theme",
         "설정 및 정보": "Settings and Info",
         "정보": "Info",
-        "JPG 파일이 있는 폴더 선택": "Select JPG Folder",
+        "이미지 파일이 있는 폴더 선택": "Select Image Folder",
         "경고": "Warning",
         "선택한 폴더에 JPG 파일이 없습니다.": "No JPG files found in the selected folder.",
         "선택한 폴더에 RAW 파일이 없습니다.": "No RAW files found in the selected folder.",
