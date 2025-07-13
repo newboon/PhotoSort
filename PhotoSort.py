@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 import logging
 import logging.handlers
 from datetime import datetime
@@ -34,13 +33,13 @@ from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint,
                            QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
                            QMimeData)
 
-from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, 
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
                           QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, 
                           QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence, QDrag)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QDialog, QFileDialog, QFrame, QGridLayout, 
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                              QMainWindow, QMessageBox, QPushButton, QRadioButton,
+                              QMainWindow, QMenu, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
                               QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit, 
                               QSpinBox, QProgressDialog)
@@ -7570,6 +7569,14 @@ class PhotoSortApp(QMainWindow):
     
     def image_mouse_press_event(self, event):
         """이미지 영역 마우스 클릭 이벤트 처리"""
+        # === 우클릭 컨텍스트 메뉴 처리 ===
+        if event.button() == Qt.RightButton and self.image_files:
+            # 이미지가 로드된 상태에서 우클릭 시 컨텍스트 메뉴 표시
+            context_menu = self.create_context_menu(event.position().toPoint())
+            if context_menu:
+                context_menu.exec_(self.image_container.mapToGlobal(event.position().toPoint()))
+            return
+        
         # === 빈 캔버스 클릭 시 폴더 선택 기능 ===
         if event.button() == Qt.LeftButton and not self.image_files:
             # 아무 이미지도 로드되지 않은 상태에서 캔버스 클릭 시 폴더 선택
@@ -7695,12 +7702,12 @@ class PhotoSortApp(QMainWindow):
             if thumbnail_pixmap and not thumbnail_pixmap.isNull():
                 # 썸네일 생성 (32x32 크기)
                 thumbnail = thumbnail_pixmap.scaled(
-                    32, 32, 
+                    64, 64, 
                     Qt.KeepAspectRatio, 
                     Qt.SmoothTransformation
                 )
                 drag.setPixmap(thumbnail)
-                drag.setHotSpot(QPoint(16, 16))  # 드래그 핫스팟을 썸네일 중앙으로
+                drag.setHotSpot(QPoint(32, 32))  # 드래그 핫스팟을 썸네일 중앙으로
             
             logging.info(f"이미지 드래그 시작: {current_image_path.name} (모드: {self.grid_mode}, 인덱스: {drag_image_index})")
             
@@ -7815,6 +7822,65 @@ class PhotoSortApp(QMainWindow):
             
             if self.minimap_visible and self.minimap_widget.isVisible():
                 self.update_minimap()
+    
+    def create_context_menu(self, mouse_pos):
+        """컨텍스트 메뉴 생성 - folder_count에 따라 동적 생성"""
+        # 이미지가 없거나 폴더가 없으면 메뉴 표시 안 함
+        if not self.image_files or not self.target_folders:
+            return None
+            
+        # 컨텍스트 메뉴 생성
+        context_menu = QMenu(self)
+        
+        # 테마 스타일 적용
+        context_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 2px;
+            }}
+            QMenu::item {{
+                padding: 8px 16px;
+                background-color: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                color: {ThemeManager.get_color('text')};
+            }}
+        """)
+        
+        # folder_count에 따라 메뉴 항목 생성
+        for i in range(self.folder_count):
+            # 폴더가 설정되지 않았으면 비활성화
+            folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
+            
+            # 메뉴 항목 텍스트 생성
+            menu_text = LanguageManager.translate("이동 - 폴더 {0}").format(i + 1)
+            
+            # 메뉴 액션 생성
+            action = QAction(menu_text, self)
+            action.triggered.connect(lambda checked, idx=i: self.move_to_folder_from_context(idx))
+            
+            # 폴더가 설정되지 않았거나 유효하지 않으면 비활성화
+            if not folder_path or not os.path.isdir(folder_path):
+                action.setEnabled(False)
+            
+            context_menu.addAction(action)
+        
+        return context_menu
+    
+    def move_to_folder_from_context(self, folder_index):
+        """컨텍스트 메뉴에서 폴더 이동 처리"""
+        if self.grid_mode == "Off":
+            # Grid Off 모드: 현재 이미지 이동
+            if 0 <= self.current_image_index < len(self.image_files):
+                logging.info(f"컨텍스트 메뉴에서 이미지 이동 (Grid Off): 폴더 {folder_index + 1}")
+                self.move_current_image_to_folder(folder_index)
+        else:
+            # Grid On 모드: 선택된 이미지들 이동
+            logging.info(f"컨텍스트 메뉴에서 이미지 이동 (Grid On): 폴더 {folder_index + 1}")
+            self.move_grid_image(folder_index)
     
     def open_folder_in_explorer(self, folder_path):
         """폴더 경로를 윈도우 탐색기에서 열기"""
@@ -9961,6 +10027,27 @@ class PhotoSortApp(QMainWindow):
     def grid_cell_mouse_press_event(self, event, widget, index):
         """Grid 셀 마우스 프레스 이벤트 - 드래그와 클릭을 함께 처리"""
         try:
+            # === 우클릭 컨텍스트 메뉴 처리 ===
+            if event.button() == Qt.RightButton and self.image_files:
+                # 해당 셀에 이미지가 있는지 확인
+                global_index = self.grid_page_start_index + index
+                if 0 <= global_index < len(self.image_files):
+                    # 우클릭한 셀이 이미 선택된 셀들 중 하나인지 확인
+                    if index not in self.selected_grid_indices:
+                        # 선택되지 않은 셀을 우클릭한 경우: 해당 셀만 선택
+                        self.selected_grid_indices.clear()
+                        self.selected_grid_indices.add(index)
+                        self.primary_selected_index = global_index
+                        self.current_grid_index = index
+                        self.update_grid_selection_border()
+                    # 이미 선택된 셀을 우클릭한 경우: 기존 선택 유지 (아무것도 하지 않음)
+                    
+                    # 컨텍스트 메뉴 표시
+                    context_menu = self.create_context_menu(event.position().toPoint())
+                    if context_menu:
+                        context_menu.exec_(widget.mapToGlobal(event.position().toPoint()))
+                return
+            
             # === Fit 모드에서 드래그 앤 드롭 시작 준비 ===
             if (event.button() == Qt.LeftButton and 
                 self.zoom_mode == "Fit" and 
@@ -14081,6 +14168,7 @@ def main():
         "마우스 휠 동작": "Mouse Wheel Action",
         "사진 넘기기": "Photo Navigation", 
         "없음": "None",
+        "이동 - 폴더 {0}": "Move to Folder {0}",
     }
     
     LanguageManager.initialize_translations(translations)
