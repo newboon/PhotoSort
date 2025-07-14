@@ -55,7 +55,10 @@ PhotoSort helps you quickly categorize photos into folders (I use "Keep," "Maybe
 
 ## License
 
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) License.
+This means you are free to share and adapt the software, but you must give appropriate credit, not use it for commercial purposes, and share any modifications under the same license.
+![alt text](https://licensebuttons.net/l/by-nc-sa/4.0/88x31.png)
+For more details, see the LICENSE file.
 
 ---
 
