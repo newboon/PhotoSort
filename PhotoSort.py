@@ -86,7 +86,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.07.24)")
+    logging.info("PhotoSort 시작 (버전: 25.07.15)")
     
     return logger
 # 로거 초기화
@@ -846,16 +846,36 @@ class FolderPathLabel(QLabel):
         try:
             # 분류 폴더 레이블에만 스타일 적용 (folder_index가 0 이상인 경우)
             if self.folder_index >= 0:
-                hover_style = f"""
-                    QLabel {{
-                        color: #FFFFFF;
-                        padding: 5px;
-                        background-color: {ThemeManager.get_color('accent')};
-                        border: 2px solid {ThemeManager.get_color('accent_hover')};
-                        border-radius: 1px;
-                    }}
-                """
-                self.setStyleSheet(hover_style)
+                # 폴더 경로가 실제로 설정되어 있는지 확인
+                parent_app = None
+                current_widget = self.parent()
+                
+                # PhotoSortApp 인스턴스 찾기
+                while current_widget is not None:
+                    if hasattr(current_widget, 'target_folders'):
+                        parent_app = current_widget
+                        break
+                    current_widget = current_widget.parent()
+                
+                # 폴더 경로 유효성 검사
+                if (parent_app and 
+                    hasattr(parent_app, 'target_folders') and 
+                    self.folder_index < len(parent_app.target_folders) and 
+                    parent_app.target_folders[self.folder_index] and 
+                    os.path.isdir(parent_app.target_folders[self.folder_index])):
+                    
+                    hover_style = f"""
+                        QLabel {{
+                            color: #FFFFFF;
+                            padding: 5px;
+                            background-color: {ThemeManager.get_color('accent')};
+                            border: 2px solid {ThemeManager.get_color('accent_hover')};
+                            border-radius: 1px;
+                        }}
+                    """
+                    self.setStyleSheet(hover_style)
+                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 적용 안함
+                
             # JPG/RAW 폴더 레이블들(folder_index == -1)은 스타일 적용 안함
         except Exception as e:
             logging.error(f"_apply_drop_hover_style 오류: {e}")
@@ -7048,7 +7068,7 @@ class PhotoSortApp(QMainWindow):
 
         info_text = f"""
         <h2 style="color: {accent_color};">PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.07.14</p>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.07.15</p>
         <p>{LanguageManager.translate("개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
         <p>{LanguageManager.translate("상업적 이용은 허용되지 않습니다.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
@@ -7859,8 +7879,28 @@ class PhotoSortApp(QMainWindow):
                 # Grid Off 모드: 현재 이미지 인덱스 전달
                 mime_data.setText(f"image_drag:off:{drag_image_index}")
             else:
-                # Grid 모드: 드래그된 이미지 인덱스 전달
-                mime_data.setText(f"image_drag:grid:{drag_image_index}")
+                # Grid 모드: 선택된 이미지들의 전역 인덱스 전달
+                if (hasattr(self, 'selected_grid_indices') and 
+                    self.selected_grid_indices and 
+                    len(self.selected_grid_indices) > 1):
+                    
+                    # 다중 선택된 경우: 선택된 모든 이미지의 전역 인덱스를 전달
+                    selected_global_indices = []
+                    for grid_idx in sorted(self.selected_grid_indices):
+                        global_idx = self.grid_page_start_index + grid_idx
+                        if 0 <= global_idx < len(self.image_files):
+                            selected_global_indices.append(global_idx)
+                    
+                    if selected_global_indices:
+                        indices_str = ",".join(map(str, selected_global_indices))
+                        mime_data.setText(f"image_drag:grid:{indices_str}")
+                        logging.info(f"다중 이미지 드래그 시작: {len(selected_global_indices)}개 이미지")
+                    else:
+                        # 선택된 이미지가 유효하지 않으면 단일 이미지로 처리
+                        mime_data.setText(f"image_drag:grid:{drag_image_index}")
+                else:
+                    # 단일 선택이거나 선택이 없는 경우: 드래그된 이미지만 전달
+                    mime_data.setText(f"image_drag:grid:{drag_image_index}")
             
             drag.setMimeData(mime_data)
             
@@ -7885,7 +7925,7 @@ class PhotoSortApp(QMainWindow):
             
             # 썸네일 설정
             if thumbnail_pixmap and not thumbnail_pixmap.isNull():
-                # 썸네일 생성 (32x32 크기)
+                # 썸네일 생성 (64x64 크기)
                 thumbnail = thumbnail_pixmap.scaled(
                     64, 64, 
                     Qt.KeepAspectRatio, 
@@ -13247,11 +13287,21 @@ class PhotoSortApp(QMainWindow):
         
         try:
             label = self.folder_path_labels[folder_index]
+            
+            # 폴더 경로 유효성 검사 - 유효하지 않으면 스타일 변경 안함
+            has_folder = bool(folder_index < len(self.target_folders) and 
+                            self.target_folders[folder_index] and 
+                            os.path.isdir(self.target_folders[folder_index]))
+            
+            if not has_folder:
+                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 변경 안함
+                return
+                
             if highlight:
-                # accent 색으로 변경
+                # accent 색으로 변경 (유효한 폴더만)
                 label._apply_drop_hover_style()
             else:
-                # 원본 스타일 복원
+                # 원본 스타일 복원 (유효한 폴더만)
                 label._restore_original_style()
         except Exception as e:
             logging.error(f"highlight_folder_label 오류: {e}")
