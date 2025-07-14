@@ -34,7 +34,7 @@ from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint,
                            QMimeData)
 
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
-                          QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, 
+                          QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
                           QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence, QDrag)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QDialog, QFileDialog, QFrame, QGridLayout, 
@@ -2985,6 +2985,9 @@ class PhotoSortApp(QMainWindow):
         
         # 앱 제목 설정
         self.setWindowTitle("PhotoSort")
+
+        # 크로스 플랫폼 윈도우 아이콘 설정
+        self.set_window_icon()
         
         # 내부 변수 초기화
         self.current_folder = ""
@@ -3655,6 +3658,39 @@ class PhotoSortApp(QMainWindow):
         # === 드래그 앤 드랍 설정 끝 ===
 
         self.update_scrollbar_style()
+
+    def set_window_icon(self):
+        """크로스 플랫폼 윈도우 아이콘을 설정합니다."""
+        try:
+            from PySide6.QtGui import QIcon
+            
+            # 플랫폼별 아이콘 파일 결정
+            if sys.platform == "darwin":  # macOS
+                icon_filename = "app_icon.icns"
+            else:  # Windows, Linux
+                icon_filename = "app_icon.ico"
+            
+            # 아이콘 파일 경로 결정
+            if getattr(sys, 'frozen', False):
+                # PyInstaller/Nuitka로 패키징된 경우
+                icon_path = Path(sys.executable).parent / icon_filename
+            else:
+                # 일반 스크립트로 실행된 경우
+                icon_path = Path(__file__).parent / icon_filename
+            
+            if icon_path.exists():
+                icon = QIcon(str(icon_path))
+                self.setWindowIcon(icon)
+                
+                # 애플리케이션 레벨에서도 아이콘 설정 (macOS Dock용)
+                QApplication.instance().setWindowIcon(icon)
+                
+                logging.info(f"윈도우 아이콘 설정 완료: {icon_path}")
+            else:
+                logging.warning(f"아이콘 파일을 찾을 수 없습니다: {icon_path}")
+                
+        except Exception as e:
+            logging.error(f"윈도우 아이콘 설정 실패: {e}")
 
     def _rebuild_folder_selection_ui(self):
         """기존 분류 폴더 UI를 제거하고 새로 생성하여 교체합니다."""
@@ -4814,6 +4850,7 @@ class PhotoSortApp(QMainWindow):
             "raw_files": {k: str(v) for k, v in self.raw_files.items()}, # Path를 str로
             "move_raw_files": self.move_raw_files,
             "target_folders": [str(f) if f else "" for f in self.target_folders],
+            "folder_count": self.folder_count,  # 분류 폴더 개수 저장 추가
             "minimap_visible": self.minimap_toggle.isChecked(), # 현재 UI 상태 반영
             "current_image_index": actual_current_image_list_index, # 전역 인덱스
             "current_grid_index": self.current_grid_index,
@@ -4824,7 +4861,7 @@ class PhotoSortApp(QMainWindow):
             "zoom_mode": self.zoom_mode, # 추가
             "grid_mode": self.grid_mode, # 추가
             "previous_grid_mode": self.previous_grid_mode, # 추가
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # 저장 시점
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             # "viewport_move_speed": self.viewport_move_speed, # 뷰포트 속도는 전역 설정으로 유지, 세션별 저장 X
             # "camera_raw_settings": self.camera_raw_settings, # 카메라별 설정도 전역으로 유지
         }
@@ -4880,18 +4917,67 @@ class PhotoSortApp(QMainWindow):
         self.grid_thumbnail_cache_3x3.clear()
         self.original_pixmap = None
 
+        # 1. 분류 폴더 개수 설정 먼저 복원 (UI 재구성 전에)
+        loaded_folder_count = session_data.get("folder_count", 3)
+        if loaded_folder_count != self.folder_count:
+            logging.info(f"세션 불러오기: 분류 폴더 개수 변경 {self.folder_count} -> {loaded_folder_count}")
+            self.folder_count = loaded_folder_count
+            
+            # 설정창의 콤보박스 동기화
+            if hasattr(self, 'folder_count_combo'):
+                current_count_idx = self.folder_count_combo.findData(self.folder_count)
+                if current_count_idx >= 0:
+                    self.folder_count_combo.setCurrentIndex(current_count_idx)
+                    logging.info(f"세션 불러오기: 설정창 폴더 개수 콤보박스 동기화 완료")
 
-        # 1. 폴더 및 파일 관련 상태 복원
+        # 2. 폴더 및 파일 관련 상태 복원
         self.current_folder = session_data.get("current_folder", "")
         self.raw_folder = session_data.get("raw_folder", "")
         raw_files_str_dict = session_data.get("raw_files", {})
         self.raw_files = {k: Path(v) for k, v in raw_files_str_dict.items() if v} # Path 객체로
         self.move_raw_files = session_data.get("move_raw_files", True)
+        
+        # target_folders 복원 (folder_count 기반으로 크기 조정)
         loaded_folders = session_data.get("target_folders", [])
         self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
+        
         self.is_raw_only_mode = session_data.get("is_raw_only_mode", False)
 
-        # 2. UI 관련 상태 복원
+        # 3. 분류 폴더 UI 재구성 (folder_count 변경 시 필요)
+        self._rebuild_folder_selection_ui()
+
+        # 4. 폴더 경로 UI 라벨 업데이트
+        if self.current_folder and Path(self.current_folder).is_dir():
+            self.folder_path_label.setText(self.current_folder)
+        else:
+            self.current_folder = ""
+            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+
+        if self.raw_folder and Path(self.raw_folder).is_dir():
+            self.raw_folder_path_label.setText(self.raw_folder)
+        else:
+            self.raw_folder = ""
+            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+
+        # 분류 폴더 경로 라벨 업데이트
+        for i in range(self.folder_count):
+            if i < len(self.target_folders) and self.target_folders[i] and Path(self.target_folders[i]).is_dir():
+                folder_path = self.target_folders[i]
+                # 16:10 이하 해상도에서는 더 긴 값을 사용
+                if UIScaleManager.is_16_10_or_less():
+                    self.folder_path_labels[i].setText(
+                        folder_path,
+                        max_length=20, prefix_length=2, suffix_length=12
+                    )
+                else:
+                    self.folder_path_labels[i].setText(
+                        folder_path,
+                        max_length=60, prefix_length=20, suffix_length=25
+                    )
+            else:
+                self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
+
+        # 5. UI 관련 상태 복원
         self.minimap_toggle.setChecked(session_data.get("minimap_visible", True))
         self.show_grid_filenames = session_data.get("show_grid_filenames", False)
         if hasattr(self, 'filename_toggle_grid'): self.filename_toggle_grid.setChecked(self.show_grid_filenames)
@@ -4901,9 +4987,9 @@ class PhotoSortApp(QMainWindow):
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
         elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
 
-        # 3. 이미지 목록 로드 (저장된 폴더 경로 기반)
+        # 6. 이미지 목록 로드 (저장된 폴더 경로 기반)
         images_loaded_successfully = False
-        self.image_files = [] # 이전 목록 초기화
+        self.image_files = []
         
         if self.is_raw_only_mode:
             if self.raw_folder and Path(self.raw_folder).is_dir():
@@ -4919,20 +5005,19 @@ class PhotoSortApp(QMainWindow):
                     # self.raw_files = {} # 위에서 session_data로부터 이미 설정됨
                     self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         
-        # 로드 후 폴더 UI 상태 업데이트
+        # 7. 로드 후 폴더 UI 상태 업데이트
         self.update_jpg_folder_ui_state()
         self.update_raw_folder_ui_state()
         self.update_folder_buttons()
         self.update_match_raw_button_state()
 
-
-        # 4. ImageLoader 전략 설정
+        # 8. ImageLoader 전략 설정
         last_method = session_data.get("last_used_raw_method", "preview")
         if hasattr(self, 'image_loader'):
             self.image_loader.set_raw_load_strategy(last_method)
         logging.info(f"세션 불러오기: ImageLoader 처리 방식 설정됨: {last_method}")
 
-        # 5. 뷰 상태 복원 (인덱스, 그리드 모드 등)
+        # 9. 뷰 상태 복원 (인덱스, 그리드 모드 등)
         if images_loaded_successfully and self.image_files:
             total_images = len(self.image_files)
             self.grid_mode = session_data.get("grid_mode", "Off")
@@ -4984,7 +5069,7 @@ class PhotoSortApp(QMainWindow):
         self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("불러오기 완료"), LanguageManager.translate("'{session_name}' 세션을 불러왔습니다.").format(session_name=session_name))
         
         if self.session_management_popup and self.session_management_popup.isVisible():
-             self.session_management_popup.update_all_button_states()
+            self.session_management_popup.update_all_button_states()
             
         return True
 
@@ -5372,28 +5457,41 @@ class PhotoSortApp(QMainWindow):
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 10, 0, 0)
         
-        # self.settings_popup의 멤버로 confirm_button을 만들어야 exec_() 후 상태 접근 가능
-        # 또는 dialog.accept() / dialog.reject() 를 버튼에 직접 연결
-        confirm_button_first_run = QPushButton(LanguageManager.translate("확인")) # 지역 변수로 생성
+        # 🎯 중요: 확인 버튼을 self의 멤버로 만들어서 언어 변경 시 업데이트 가능하게 함
+        self.first_run_confirm_button = QPushButton(LanguageManager.translate("확인"))
         
         # 스타일 적용 (기존 스타일 재사용 또는 새로 정의)
         if platform.system() == "Darwin": # Mac 스타일
-            confirm_button_first_run.setStyleSheet("""
+            self.first_run_confirm_button.setStyleSheet("""
                 QPushButton { background-color: #444444; color: #D8D8D8; border: none; 
-                              padding: 8px 16px; border-radius: 4px; min-width: 100px; }
+                            padding: 8px 16px; border-radius: 4px; min-width: 100px; }
                 QPushButton:hover { background-color: #555555; }
                 QPushButton:pressed { background-color: #222222; } """)
         else: # Windows/Linux 등
-            confirm_button_first_run.setStyleSheet(f"""
+            self.first_run_confirm_button.setStyleSheet(f"""
                 QPushButton {{ background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
-                              border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
+                            border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
                 QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
                 QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }} """)
 
-        confirm_button_first_run.clicked.connect(self.settings_popup.accept) # <<< "확인" 버튼은 dialog.accept() 호출
+        self.first_run_confirm_button.clicked.connect(self.settings_popup.accept)
+        
+        # 🎯 언어 변경 콜백 등록 - 첫 실행 팝업의 텍스트 업데이트
+        def update_first_run_popup_texts():
+            if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
+                # 팝업 제목 업데이트
+                self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
+                # 환영 메시지 업데이트
+                if hasattr(self.settings_popup, 'welcome_label'):
+                    self.settings_popup.welcome_label.setText(LanguageManager.translate("기본 설정을 선택해주세요."))
+                # 확인 버튼 텍스트 업데이트
+                if hasattr(self, 'first_run_confirm_button'):
+                    self.first_run_confirm_button.setText(LanguageManager.translate("확인"))
+        
+        LanguageManager.register_language_change_callback(update_first_run_popup_texts)
         
         button_layout.addStretch(1)
-        button_layout.addWidget(confirm_button_first_run)
+        button_layout.addWidget(self.first_run_confirm_button)
         button_layout.addStretch(1)
         
         main_layout.addWidget(button_container)
@@ -5401,16 +5499,47 @@ class PhotoSortApp(QMainWindow):
         # --- dialog.exec_() 호출 및 결과에 따른 save_state() 실행 ---
         result = self.settings_popup.exec_() # 모달로 실행하고 결과 받기
 
+        # 🎯 팝업이 닫힌 후 콜백 제거 및 멤버 변수 정리
+        if update_first_run_popup_texts in LanguageManager._language_change_callbacks:
+            LanguageManager._language_change_callbacks.remove(update_first_run_popup_texts)
+        
+        if hasattr(self, 'first_run_confirm_button'):
+            delattr(self, 'first_run_confirm_button')
+
         if result == QDialog.Accepted: # 사용자가 "확인" 버튼을 눌렀다면
             logging.info("첫 실행 설정: '확인' 버튼 클릭됨. 상태 저장 실행.")
             self.save_state() # photosort_data.json 파일 생성 및 현재 설정 저장
             return True # <<< "확인" 눌렀음을 알림
-        else: # 사용자가 창을 닫거나 다른 방식으로 종료 (예: ESC 키)
-            logging.info("첫 실행 설정: 대화상자 '확인' 없이 닫힘. 상태 저장 안 함.")
-            return False # <<< "확인" 안 눌렀음을 알림
-            # 이 경우 photosort_data.json 파일은 생성되지 않음.
-            # 프로그램이 이 상태에서 계속 실행될지, 아니면 종료될지는 정책에 따라 다름.
+        else: # 사용자가 "확인" 버튼을 누르지 않았다면 (팝업 닫기, ESC 키 등)
+            logging.info("첫 실행 설정: '확인' 버튼을 누르지 않음. 상태 저장 안함.")
+            return False # <<< "확인" 누르지 않았음을 알림
 
+    def show_first_run_settings_popup_delayed(self):
+        """메인 윈도우 표시 후 첫 실행 설정 팝업을 표시"""
+        accepted_first_run = self.show_first_run_settings_popup()
+        
+        if not accepted_first_run:
+            logging.info("PhotoSortApp: 첫 실행 설정이 완료되지 않아 앱을 종료합니다.")
+            
+            # 🎯 추가 검증: photosort_data.json 파일이 생성되지 않았는지 확인
+            state_file_path = self.get_script_dir() / self.STATE_FILE
+            if state_file_path.exists():
+                logging.warning("PhotoSortApp: 첫 실행 설정 취소했으나 상태 파일이 존재함. 삭제합니다.")
+                try:
+                    state_file_path.unlink()
+                    logging.info("PhotoSortApp: 상태 파일 삭제 완료.")
+                except Exception as e:
+                    logging.error(f"PhotoSortApp: 상태 파일 삭제 실패: {e}")
+            
+            QApplication.quit()
+            return
+        
+        # 첫 실행 플래그 제거
+        if hasattr(self, 'is_first_run'):
+            delattr(self, 'is_first_run')
+        
+        logging.info("PhotoSortApp: 첫 실행 설정 완료")
+            
     def _build_shortcut_html_text(self):
         """현재 언어 설정에 맞춰 단축키 안내 HTML 텍스트 생성 (개별 p 태그와 margin 사용)"""
         shortcut_definitions = [
@@ -7911,8 +8040,13 @@ class PhotoSortApp(QMainWindow):
             # 폴더가 설정되지 않았으면 비활성화
             folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
             
-            # 메뉴 항목 텍스트 생성
-            menu_text = LanguageManager.translate("이동 - 폴더 {0}").format(i + 1)
+            # 메뉴 항목 텍스트 생성 - 실제 폴더 이름 포함
+            if folder_path and os.path.isdir(folder_path):
+                folder_name = Path(folder_path).name
+                menu_text = LanguageManager.translate("이동 - 폴더 {0} [{1}]").format(i + 1, folder_name)
+            else:
+                # 폴더가 설정되지 않았거나 유효하지 않은 경우 기존 형식 사용
+                menu_text = LanguageManager.translate("이동 - 폴더 {0}").format(i + 1)
             
             # 메뉴 액션 생성
             action = QAction(menu_text, self)
@@ -11031,8 +11165,8 @@ class PhotoSortApp(QMainWindow):
             self.current_image_index = -1
             self.is_raw_only_mode = False # <--- 명시적으로 RAW 모드 해제
             self.move_raw_files = True
-            self.target_folders = [""] * self.folder_count
-            self.folder_count = 3  # 항상 3개 폴더 사용
+            self.target_folders = [""] * self.folder_count  # 기존 folder_count 설정 유지
+            # self.folder_count = 3  # <<<< 제거: 사용자 설정 유지
             self.zoom_mode = "Fit" # Zoom 모드 초기화
             self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 값 초기화 (200%)
             self.grid_mode = "Off" # Grid 모드 초기화
@@ -12133,6 +12267,11 @@ class PhotoSortApp(QMainWindow):
 
     def save_state(self):
         """현재 애플리케이션 상태를 JSON 파일에 저장"""
+
+        #첫 실행 중에는 상태를 저장하지 않음
+        if hasattr(self, 'is_first_run') and self.is_first_run:
+            logging.debug("save_state: 첫 실행 중이므로 상태 저장을 건너뜀")
+            return
         
         # --- 현재 실제로 선택/표시된 이미지의 '전체 리스트' 인덱스 계산 ---
         actual_current_image_list_index = -1
@@ -12226,16 +12365,12 @@ class PhotoSortApp(QMainWindow):
 
             self.update_all_ui_after_load_failure_or_first_run() # UI를 기본 상태로
 
-            accepted_first_run = self.show_first_run_settings_popup() # <<< 반환 값 받기
-
-            if not accepted_first_run: # 사용자가 확인 안 누르고 닫았다면
-                logging.info("PhotoSortApp.load_state: 첫 실행 설정이 완료되지 않아 앱을 시작하지 않습니다.")
-                return False # <<< 앱 시작 안 함을 알림
+            # 첫 실행 플래그 설정 (팝업은 메인 윈도우 표시 후에 표시)
+            self.is_first_run = True
             
-            # accepted_first_run이 True이면 (즉, 확인 누르고 save_state 실행됨) 계속 진행
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-            return True # <<< 앱 정상 시작을 알림
+            return True # 앱 정상 시작을 알림
 
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
@@ -14097,6 +14232,7 @@ def main():
         "사진 넘기기": "Photo Navigation", 
         "없음": "None",
         "이동 - 폴더 {0}": "Move to Folder {0}",
+        "이동 - 폴더 {0} [{1}]": "Move to Folder {0} [{1}]",
     }
     
     LanguageManager.initialize_translations(translations)
@@ -14115,7 +14251,12 @@ def main():
         sys.exit(0) # 또는 return, 어쨌든 app.exec()를 호출하지 않음
 
     window.show()
-    sys.exit(app.exec()) #수정
+
+    # 첫 실행이면 메인 윈도우 표시 후 설정 팝업 표시
+    if hasattr(window, 'is_first_run') and window.is_first_run:
+        QTimer.singleShot(100, window.show_first_run_settings_popup_delayed)
+
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
