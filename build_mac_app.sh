@@ -26,7 +26,16 @@ log_error() {
 }
 
 # 버전 정보
-VERSION="25.05.27"
+VERSION_FILE="version_info.txt"
+if [[ ! -f "$VERSION_FILE" ]]; then
+    log_error "버전 파일($VERSION_FILE)을 찾을 수 없습니다. 스크립트와 같은 위치에 version_info.txt 파일을 생성하고 버전을 입력해주세요."
+    exit 1
+fi
+VERSION=$(grep "FileVersion" "$VERSION_FILE" | awk -F"'" '{print $4}') # FileVersion 라인에서 버전 정보 추출
+if [[ -z "$VERSION" ]]; then
+    log_error "$VERSION_FILE 파일에서 버전 정보를 추출할 수 없습니다. 파일 형식을 확인해주세요."
+    exit 1
+fi
 APP_NAME="PhotoSort"
 BUNDLE_ID="com.newboon.photosort"
 
@@ -44,7 +53,7 @@ log_info "Python 경로: ${PYTHON_BIN}"
 log_info "Python 버전: $(${PYTHON_BIN} --version)"
 
 # 필수 파일 존재 확인
-required_files=("PhotoSort.py" "app_icon.icns" "resources")
+required_files=("PhotoSort.py" "app_icon.icns" "resources" "$VERSION_FILE")
 for file in "${required_files[@]}"; do
     if [[ ! -e "$file" ]]; then
         log_error "필수 파일이 없습니다: $file"
@@ -125,6 +134,7 @@ pyinstaller \
   --collect-all PySide6 \
   --collect-all PIL \
   --collect-all pillow \
+  --collect-all pillow_heif \
   --hidden-import=PIL \
   --hidden-import=PIL.Image \
   --hidden-import=PIL.ExifTags \
@@ -246,6 +256,17 @@ log_info "테스트를 위해 앱을 실행해보세요:"
 echo "  open \"$APP_BUNDLE\""
 
 # 정리
+log_info "빌드 아티팩트 정리 중..."
 rm -f version_info.py
+rm -f "${APP_NAME}.spec"
+if [[ -f "${DIST_DIR}.dmg" ]]; then
+    log_info "DMG 파일 외의 다른 빌드 파일들을 삭제합니다."
+    rm -rf build
+    rm -rf dist
+    rm -rf "$DIST_DIR"
+    rm -f "${DIST_DIR}.zip"
+else
+    log_warning "DMG 파일이 생성되지 않았으므로 중간 파일들을 유지합니다."
+fi
 
 log_success "모든 작업 완료!"

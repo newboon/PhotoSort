@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 import logging
 import logging.handlers
 from datetime import datetime
@@ -27,19 +26,23 @@ import piexif
 import psutil
 import rawpy
 from PIL import Image, ImageQt
+import pillow_heif
 
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
-                           QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF)
-from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication, 
-                          QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, 
-                          QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence)
+                           QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
+                           QMimeData)
+
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
+                          QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
+                          QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence, QDrag)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QDialog, QFileDialog, QFrame, QGridLayout, 
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                              QMainWindow, QMessageBox, QPushButton, QRadioButton,
+                              QMainWindow, QMenu, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
-                              QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit)
+                              QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit, 
+                              QSpinBox, QProgressDialog)
 
 
 # 로깅 시스템 설정
@@ -83,7 +86,7 @@ def setup_logger():
     logger.addHandler(console_handler)
     
     # 버전 및 시작 메시지 로깅
-    logging.info("PhotoSort 시작 (버전: 25.05.27)")
+    logging.info("PhotoSort 시작 (버전: 25.07.15)")
     
     return logger
 # 로거 초기화
@@ -94,29 +97,29 @@ class UIScaleManager:
 
     # 기본 UI 크기 설정
     NORMAL_SETTINGS = {
-        "control_panel_margins": (10, 0, 10, 0), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하 순서 확인 필요)
-        "control_layout_spacing": 8,          # 컨트롤 레이아웃 위젯 간 기본 간격
-        "button_min_height": 30,               # 일반 버튼 최소 높이
-        "button_padding": 8,                   # 일반 버튼 내부 패딩
-        "delete_button_width": 45,             # 삭제(X) 버튼 너비
-        "JPG_RAW_spacing": 15,
-        "section_spacing": 20,                 # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 15,               # 라디오 버튼 등 그룹 내 간격
-        "title_spacing": 10,                   # Zoom, Grid 등 섹션 제목 아래 간격
-        "settings_button_size": 35,            # 설정(톱니바퀴) 버튼 크기
-        "filename_label_padding": 40,          # 파일명 레이블 상하 패딩
-        "info_label_padding": 5,               # 파일 정보 레이블 좌측 패딩
-        "font_size": 10,                       # 기본 폰트 크기
-        "filename_font_size": 11,              # 파일명 폰트 크기
-        "folder_container_spacing": 6,         # 버튼 - 레이블 - X버튼 간격
-        "folder_label_padding": 13,            # 폴더 경로 레이블 높이 계산용 패딩
-        "category_folder_vertical_spacing": 7,
+        "control_panel_margins": (10, 15, 10, 15), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_layout_spacing": 8,               # 컨트롤 레이아웃 위젯 간 기본 간격
+        "button_min_height": 30,                   # 일반 버튼 최소 높이
+        "button_padding": 8,                       # 일반 버튼 내부 패딩
+        "delete_button_width": 45,                 # 삭제(X) 버튼 너비
+        "JPG_RAW_spacing": 8,
+        "section_spacing": 20,                     # 구분선(HorizontalLine) 주변 간격
+        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
+        "title_spacing": 10,                       # Zoom, Grid 등 섹션 제목 아래 간격
+        "settings_button_size": 35,                # 설정(톱니바퀴) 버튼 크기
+        "filename_label_padding": 40,              # 파일명 레이블 상하 패딩
+        "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
+        "font_size": 10,                           # 기본 폰트 크기
+        "zoom_grid_font_size": 11,                 # Zoom, Grid 등 섹션 제목 폰트 크기
+        "filename_font_size": 11,                  # 파일명 폰트 크기
+        "folder_container_spacing": 6,             # 버튼 - 레이블 - X버튼 간격
+        "folder_label_padding": 13,                # 폴더 경로 레이블 높이 계산용 패딩
+        "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
         "combobox_padding": 4,
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
-        "settings_popup_height": 950,
+        "settings_popup_height": 1240,
         "settings_layout_vspace": 15,
-        "viewshortcuts_seperator": 0,
         "infotext_licensebutton": 30,
         "donation_between_tworows": 25,
         "bottom_space": 25,
@@ -129,32 +132,32 @@ class UIScaleManager:
 
     # 컴팩트 모드 UI 크기 설정
     COMPACT_SETTINGS = {
-        "control_panel_margins": (10, 0, 10, 0),
-        "control_layout_spacing": 6,
-        "button_min_height": 30,
-        "button_padding": 3,
-        "delete_button_width": 42,
-        "JPG_RAW_spacing": 10,
-        "section_spacing": 12,
-        "group_box_spacing": 15,
-        "title_spacing": 7,
-        "settings_button_size": 30,
-        "filename_label_padding": 25,
-        "info_label_padding": 5,
-        "font_size": 9,
-        "filename_font_size": 10,
-        "folder_container_spacing": 5,
-        "folder_label_padding": 10,
-        "category_folder_vertical_spacing": 5,
+        "control_panel_margins": (10, 12, 10, 12), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_layout_spacing": 6,               # 컨트롤 레이아웃 위젯 간 기본 간격
+        "button_min_height": 20,                   # 일반 버튼 최소 높이
+        "button_padding": 8,                       # 일반 버튼 내부 패딩
+        "delete_button_width": 42,                 # 삭제(X) 버튼 너비
+        "JPG_RAW_spacing": 6, 
+        "section_spacing": 12,                     # 구분선(HorizontalLine) 주변 간격
+        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
+        "title_spacing": 7,                        # Zoom, Grid 등 섹션 제목 아래 간격
+        "settings_button_size": 30,                # 설정(톱니바퀴) 버튼 크기
+        "filename_label_padding": 25,              # 파일명 레이블 상하 패딩
+        "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
+        "font_size": 9,                            # 기본 폰트 크기
+        "zoom_grid_font_size": 10,                 # Zoom, Grid 등 섹션 제목 폰트 크기
+        "filename_font_size": 10,                  # 파일명 폰트 크기
+        "folder_container_spacing": 5,             # 버튼 - 레이블 - X버튼 간격
+        "folder_label_padding": 10,                # 폴더 경로 레이블 높이 계산용 패딩
+        "category_folder_vertical_spacing": 7,     # 분류 폴더 UI 사이 간격
         "combobox_padding": 3,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
-        "settings_popup_height": 835,  # 크게 줄임
-        "settings_layout_vspace": 10,
-        "viewshortcuts_seperator": 0,
+        "settings_popup_height": 940,
+        "settings_layout_vspace": 7,
         "infotext_licensebutton": 20,
         "donation_between_tworows": 17,
-        "bottom_space": 20,
+        "bottom_space": 15,
         # 정보 텍스트 여백 관련 키 추가 (컴팩트 모드에서는 여백 축소)
         "info_version_margin": 20,
         "info_paragraph_margin": 20,
@@ -171,7 +174,7 @@ class UIScaleManager:
             screen = QGuiApplication.primaryScreen()
             if not screen:
                 logging.warning("Warning: Primary screen not found. Using default UI scale.")
-                cls._current_settings = cls.NORMAL_SETTINGS
+                cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 return
 
             screen_geometry = screen.geometry()
@@ -179,15 +182,23 @@ class UIScaleManager:
             is_compact = vertical_resolution < 1201 
 
             if is_compact:
-                cls._current_settings = cls.COMPACT_SETTINGS
+                cls._current_settings = cls.COMPACT_SETTINGS.copy()
                 logging.info(f"세로 해상도: {vertical_resolution}px / Compact UI 모드 활성")
             else:
-                cls._current_settings = cls.NORMAL_SETTINGS
+                cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 logging.info(f"세로 해상도: {vertical_resolution}px / Normal UI 모드 활성")
+
+            # 화면 비율에 따른 group_box_spacing 조정
+            if cls.is_16_10_or_less():
+                cls._current_settings["group_box_spacing"] = 15
+                logging.info("화면 비율 16:10 이하: group_box_spacing = 15")
+            else:
+                cls._current_settings["group_box_spacing"] = 40
+                logging.info("화면 비율 16:10 초과: group_box_spacing = 40")
 
         except Exception as e:
             logging.error(f"Error initializing UIScaleManager: {e}. Using default UI scale.")
-            cls._current_settings = cls.NORMAL_SETTINGS
+            cls._current_settings = cls.NORMAL_SETTINGS.copy()
 
     @classmethod
     def is_compact_mode(cls):
@@ -206,6 +217,24 @@ class UIScaleManager:
         """현재 모드에 맞는 마진 튜플 반환"""
         # 마진 값은 튜플이므로 직접 반환
         return cls._current_settings.get("control_panel_margins")
+    
+    @classmethod
+    def is_16_10_or_less(cls):
+        """
+        화면의 가로/세로 비율이 16:10(1.6)과 같거나 그보다 작은지 판별.
+        약간의 오차 허용 (1.6 이하 또는 1.6±0.05 이내면 True)
+        """
+        screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return False
+        geometry = screen.geometry()
+        width = geometry.width()
+        height = geometry.height()
+        if height == 0:
+            return False
+        aspect_ratio = width / height
+        # 16:10(1.6)과 같거나 그보다 작으면 True, 1.6±0.05 이내도 허용
+        return aspect_ratio <= 1.6 or abs(aspect_ratio - 1.6) < 0.05
 
 class ThemeManager:
 
@@ -223,9 +252,9 @@ class ThemeManager:
         "border": "#555555",        # 테두리 색상
     }
     _UI_COLORS_SONY = {
-        "accent": "#E2570D",
-        "accent_hover": "#E2570D",
-        "accent_pressed": "#C83E00",
+        "accent": "#FF6600",
+        "accent_hover": "#FF6600",
+        "accent_pressed": "#CC5200",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -236,9 +265,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_NIKON = {
-        "accent": "#E0CB00",
-        "accent_hover": "#E0CB00",
-        "accent_pressed": "#C6B200",
+        "accent": "#FFE100",
+        "accent_hover": "#FFE100",
+        "accent_pressed": "#CCB800",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -249,9 +278,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_CANON = {
-        "accent": "#D71215",
-        "accent_hover": "#D71215",
-        "accent_pressed": "#BE0000",
+        "accent": "#CC0000",
+        "accent_hover": "#CC0000",
+        "accent_pressed": "#A30000",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -262,9 +291,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_FUJIFILM = {
-        "accent": "#2AA58F",
-        "accent_hover": "#2AA58F",
-        "accent_pressed": "#108C76",
+        "accent": "#01916D",
+        "accent_hover": "#01916D",
+        "accent_pressed": "#016954",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -277,7 +306,7 @@ class ThemeManager:
     _UI_COLORS_PANASONIC = {
         "accent": "#0041C0",
         "accent_hover": "#0041C0",
-        "accent_pressed": "#0027A6",
+        "accent_pressed": "#002D87",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -288,9 +317,9 @@ class ThemeManager:
         "border": "#555555",
     }
     _UI_COLORS_LEICA = {
-        "accent": "#DD171A",
-        "accent_hover": "#DD171A",
-        "accent_pressed": "#C40000",
+        "accent": "#E20612",
+        "accent_hover": "#E20612",
+        "accent_pressed": "#B00000",
         "text": "#D8D8D8",
         "text_disabled": "#595959",
         "bg_primary": "#333333",
@@ -300,16 +329,72 @@ class ThemeManager:
         "bg_disabled": "#222222",
         "border": "#555555",
     }
+    _UI_COLORS_OLYMPUS = {
+        "accent": "#08107B",
+        "accent_hover": "#08107B",
+        "accent_pressed": "#050A5B",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_SAMSUNG = {
+        "accent": "#1428A0",
+        "accent_hover": "#1428A0",
+        "accent_pressed": "#101F7A",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_PENTAX = {
+        "accent": "#01CA47",
+        "accent_hover": "#01CA47",
+        "accent_pressed": "#019437",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }
+    _UI_COLORS_RICOH = {
+        "accent": "#D61B3E",
+        "accent_hover": "#D61B3E",
+        "accent_pressed": "#B00030",
+        "text": "#D8D8D8",
+        "text_disabled": "#595959",
+        "bg_primary": "#333333",
+        "bg_secondary": "#444444",
+        "bg_hover": "#555555",
+        "bg_pressed": "#222222",
+        "bg_disabled": "#222222",
+        "border": "#555555",
+    }   
 
     # 모든 테마 저장 (이제 클래스 내부 변수 참조)
     THEMES = {
         "default": _UI_COLORS_DEFAULT, # 또는 ThemeManager._UI_COLORS_DEFAULT
         "sony": _UI_COLORS_SONY,
-        "nikon": _UI_COLORS_NIKON,
         "canon": _UI_COLORS_CANON,
+        "nikon": _UI_COLORS_NIKON,
         "fujifilm": _UI_COLORS_FUJIFILM,
         "panasonic": _UI_COLORS_PANASONIC,
-        "leica": _UI_COLORS_LEICA
+        "ricoh": _UI_COLORS_RICOH,
+        "leica": _UI_COLORS_LEICA,
+        "olympus": _UI_COLORS_OLYMPUS,
+        "pentax": _UI_COLORS_PENTAX,
+        "samsung": _UI_COLORS_SAMSUNG,
     }
     
     _current_theme = "default"  # 현재 테마
@@ -636,10 +721,14 @@ class QRLinkLabel(QLabel):
 class FolderPathLabel(QLabel):
     """폴더 경로를 보여주는 레이블 클래스, 더블클릭 시 탐색기 열기"""
     doubleClicked = Signal(str)
+    imageDropped = Signal(int, str)  # 폴더 인덱스, 드롭 데이터 전달
     
     def __init__(self, text="", fixed_height_padding=10, parent=None):
         super().__init__(parent=parent)
         self.full_path = ""
+        self.folder_index = -1  # 폴더 인덱스 저장
+        self.original_style = ""  # 원본 스타일 저장
+        
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)")
 
@@ -649,7 +738,7 @@ class FolderPathLabel(QLabel):
         # 폰트 메트릭스를 이용해 2줄 높이 계산
         fm = QFontMetrics(font)
         line_height = fm.height()
-        fixed_height = (line_height * 2) + fixed_height_padding # ========== UIScaleManager 적용 - 인자 사용 ==========
+        fixed_height = (line_height * 2) + fixed_height_padding
         self.setFixedHeight(fixed_height)
 
         self.setWordWrap(True)
@@ -661,20 +750,166 @@ class FolderPathLabel(QLabel):
                 border-radius: 1px;
             }}
         """)
+        self.original_style = self.styleSheet()  # 원본 스타일 저장
+        
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        
+        # === 드롭 기능 활성화 ===
+        self.setAcceptDrops(True)
+        
         self.setText(text)
 
-    def setText(self, text: str, max_length=35, prefix_length=15, suffix_length=17):
+    def set_folder_index(self, index):
+        """폴더 인덱스 설정"""
+        self.folder_index = index
+        logging.debug(f"FolderPathLabel {index} 드롭 기능 활성화됨")
+
+    def dragEnterEvent(self, event):
+        """드래그 진입 시 호출"""
+        try:
+            if event.mimeData().hasText():
+                drag_data = event.mimeData().text()
+                if drag_data.startswith("image_drag:"):
+                    # 분류 폴더 레이블에만 드래그 허용 (folder_index >= 0)
+                    if self.folder_index >= 0:
+                        event.acceptProposedAction()
+                        self._apply_drop_hover_style()
+                        logging.debug(f"폴더 {self.folder_index}: 드래그 진입 허용")
+                    else:
+                        # JPG/RAW 폴더 레이블에는 드래그 거부
+                        event.ignore()
+                        logging.debug(f"폴더 {self.folder_index}: 드래그 진입 거부 (분류 폴더 아님)")
+                    return
+            
+            event.ignore()
+        except Exception as e:
+            logging.error(f"FolderPathLabel.dragEnterEvent 오류: {e}")
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """드래그 이동 시 호출"""
+        try:
+            if event.mimeData().hasText():
+                drag_data = event.mimeData().text()
+                if drag_data.startswith("image_drag:"):
+                    # 분류 폴더 레이블에만 드래그 허용 (folder_index >= 0)
+                    if self.folder_index >= 0:
+                        event.acceptProposedAction()
+                    else:
+                        # JPG/RAW 폴더 레이블에는 드래그 거부
+                        event.ignore()
+                    return
+            
+            event.ignore()
+        except Exception as e:
+            logging.error(f"FolderPathLabel.dragMoveEvent 오류: {e}")
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """드래그 벗어날 때 호출"""
+        try:
+            self._restore_original_style()
+            logging.debug(f"폴더 {self.folder_index}: 드래그 벗어남")
+        except Exception as e:
+            logging.error(f"FolderPathLabel.dragLeaveEvent 오류: {e}")
+
+    def dropEvent(self, event):
+        """드롭 시 호출"""
+        try:
+            if event.mimeData().hasText():
+                drag_data = event.mimeData().text()
+                if drag_data.startswith("image_drag:"):
+                    # 분류 폴더 레이블에만 드롭 허용 (folder_index >= 0)
+                    if self.folder_index >= 0:
+                        # 스타일 복원
+                        self._restore_original_style()
+                        
+                        # 이미지 드롭 시그널 발생
+                        self.imageDropped.emit(self.folder_index, drag_data)
+                        event.acceptProposedAction()
+                        
+                        logging.info(f"폴더 {self.folder_index}에 이미지 드롭됨: {drag_data}")
+                    else:
+                        # JPG/RAW 폴더 레이블에는 드롭 거부
+                        event.ignore()
+                        logging.debug(f"폴더 {self.folder_index}: 드롭 거부 (분류 폴더 아님)")
+                    return
+            
+            event.ignore()
+        except Exception as e:
+            logging.error(f"FolderPathLabel.dropEvent 오류: {e}")
+            event.ignore()
+
+    def _apply_drop_hover_style(self):
+        """드롭 가능 시 hover 스타일 적용 (분류 폴더 레이블에만)"""
+        try:
+            # 분류 폴더 레이블에만 스타일 적용 (folder_index가 0 이상인 경우)
+            if self.folder_index >= 0:
+                # 폴더 경로가 실제로 설정되어 있는지 확인
+                parent_app = None
+                current_widget = self.parent()
+                
+                # PhotoSortApp 인스턴스 찾기
+                while current_widget is not None:
+                    if hasattr(current_widget, 'target_folders'):
+                        parent_app = current_widget
+                        break
+                    current_widget = current_widget.parent()
+                
+                # 폴더 경로 유효성 검사
+                if (parent_app and 
+                    hasattr(parent_app, 'target_folders') and 
+                    self.folder_index < len(parent_app.target_folders) and 
+                    parent_app.target_folders[self.folder_index] and 
+                    os.path.isdir(parent_app.target_folders[self.folder_index])):
+                    
+                    hover_style = f"""
+                        QLabel {{
+                            color: #FFFFFF;
+                            padding: 5px;
+                            background-color: {ThemeManager.get_color('accent')};
+                            border: 2px solid {ThemeManager.get_color('accent_hover')};
+                            border-radius: 1px;
+                        }}
+                    """
+                    self.setStyleSheet(hover_style)
+                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 적용 안함
+                
+            # JPG/RAW 폴더 레이블들(folder_index == -1)은 스타일 적용 안함
+        except Exception as e:
+            logging.error(f"_apply_drop_hover_style 오류: {e}")
+
+    def _restore_original_style(self):
+        """원본 스타일 복원"""
+        try:
+            self.setStyleSheet(self.original_style)
+        except Exception as e:
+            logging.error(f"_restore_original_style 오류: {e}")
+
+    def setText(self, text: str, max_length=None, prefix_length=None, suffix_length=None):
         """
         라벨 텍스트 설정 및 긴 경로 생략 처리
-        max_length: 이 길이를 초과하면 경로를 생략함
-        prefix_length: 생략 시 앞에서 표시할 글자 수
-        suffix_length: 생략 시 뒤에서 표시할 글자 수
         """
-        self.full_path = text  # 원본 경로 저장
-        self.setToolTip(text)  # 툴팁으로 전체 경로 표시
-        
+        self.full_path = text
+        self.setToolTip(text)
+
+        # 파라미터로 전달된 값을 우선 사용, None이면 해상도에 따라 기본값 적용
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geometry = screen.geometry()
+            width = geometry.width()
+            height = geometry.height()
+            aspect_ratio = width / height if height else 0
+            if abs(aspect_ratio - 1.6) < 0.05:
+                if max_length is None: max_length = 30
+                if prefix_length is None: prefix_length = 12
+                if suffix_length is None: suffix_length = 15
+            else:
+                if max_length is None: max_length = 60
+                if prefix_length is None: prefix_length = 20
+                if suffix_length is None: suffix_length = 35
+
         # 경로가 너무 길면 중간을 '...'로 표시
         if len(text) > max_length:
             display_text = text[:prefix_length] + "..." + text[-suffix_length:]
@@ -779,14 +1014,78 @@ class ZoomScrollArea(QScrollArea):
         self.app_parent = parent
 
     def wheelEvent(self, event: QWheelEvent):
-        # 부모 위젯 (PhotoSortApp)의 zoom_mode 확인
-        if self.app_parent and hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "200%"]:
-            # 100% 또는 200% 줌 모드에서는 휠 이벤트를 무시
-            event.accept()
-            return
-        else:
-            # 그 외의 경우 (Fit 모드 등) 기본 스크롤 동작 수행
-            super().wheelEvent(event)
+        # 부모 위젯 (PhotoSortApp) 상태 및 마우스 휠 설정 확인
+        if self.app_parent and hasattr(self.app_parent, 'mouse_wheel_action'):
+            # [신규] Ctrl 키가 눌린 상태에서 Spin 모드일 때 줌 조정
+            if (event.modifiers() & Qt.ControlModifier and 
+                hasattr(self.app_parent, 'zoom_mode') and 
+                self.app_parent.zoom_mode == "Spin"):
+                
+                wheel_delta = event.angleDelta().y()
+                if wheel_delta != 0:
+                    # SpinBox에서 직접 정수 값 가져오기 (부동소수점 오차 방지)
+                    if hasattr(self.app_parent, 'zoom_spin'):
+                        current_zoom = self.app_parent.zoom_spin.value()  # 이미 정수값
+                        
+                        # 휠 방향에 따라 10씩 증가/감소
+                        if wheel_delta > 0:
+                            new_zoom = min(500, current_zoom + 10)  # 최대 500%
+                        else:
+                            new_zoom = max(10, current_zoom - 10)   # 최소 10%
+                        
+                        # 값이 실제로 변경되었을 때만 업데이트
+                        if new_zoom != current_zoom:
+                            # SpinBox 값 먼저 설정 (정확한 정수값 보장)
+                            self.app_parent.zoom_spin.setValue(new_zoom)
+                            
+                            # zoom_spin_value 동기화
+                            self.app_parent.zoom_spin_value = new_zoom / 100.0
+                            
+                            # 이미지에 즉시 반영
+                            self.app_parent.apply_zoom_to_image()
+                    
+                    event.accept()
+                    return
+            
+            # 마우스 휠 동작이 "없음"으로 설정된 경우 기존 방식 사용
+            if getattr(self.app_parent, 'mouse_wheel_action', 'photo_navigation') == 'none':
+                # 기존 ZoomScrollArea 동작 (100%/Spin 모드에서 휠 이벤트 무시)
+                if hasattr(self.app_parent, 'zoom_mode') and self.app_parent.zoom_mode in ["100%", "Spin"]:
+                    event.accept()
+                    return
+                else:
+                    super().wheelEvent(event)
+                    return
+            
+            # 마우스 휠 동작이 "사진 넘기기"로 설정된 경우
+            if hasattr(self.app_parent, 'grid_mode'):
+                wheel_delta = event.angleDelta().y()
+                if wheel_delta == 0:
+                    super().wheelEvent(event)
+                    return
+                
+                if self.app_parent.grid_mode == "Off":
+                    # === Grid Off 모드: 이전/다음 사진 ===
+                    if wheel_delta > 0:
+                        self.app_parent.show_previous_image()
+                    else:
+                        self.app_parent.show_next_image()
+                    
+                    event.accept()
+                    return
+                    
+                elif self.app_parent.grid_mode in ["2x2", "3x3"]:
+                    # === Grid 모드: 그리드 셀 간 이동 ===
+                    if wheel_delta > 0:
+                        self.app_parent.navigate_grid(-1)
+                    else:
+                        self.app_parent.navigate_grid(1)
+                    
+                    event.accept()
+                    return
+        
+        # 기타 경우에는 기본 스크롤 동작 수행
+        super().wheelEvent(event)
 
 class GridCellWidget(QWidget):
     def __init__(self, parent=None):
@@ -797,8 +1096,13 @@ class GridCellWidget(QWidget):
         self._is_selected = False
         self.setMinimumSize(1, 1) # 최소 크기 설정 중요
 
-        # 내부 QLabel을 사용하여 이미지와 텍스트를 분리하는 방법도 고려했으나,
-        # QPainter가 더 직접적인 제어를 제공합니다.
+        # 드래그 앤 드롭 관련 변수
+        self.drag_start_pos = QPoint(0, 0)
+        self.is_potential_drag = False
+        self.drag_threshold = 10
+        
+        # 마우스 추적 활성화
+        self.setMouseTracking(True)
 
     def setPixmap(self, pixmap):
         if pixmap is None:
@@ -826,6 +1130,96 @@ class GridCellWidget(QWidget):
 
     def text(self):
         return self._filename
+
+    def mousePressEvent(self, event):
+        """마우스 클릭 이벤트 처리 - 드래그 시작 준비"""
+        try:
+            # 부모 앱 참조 얻기
+            app = self.get_parent_app()
+            if not app:
+                super().mousePressEvent(event)
+                return
+            
+            # === Fit 모드에서 드래그 앤 드롭 시작 준비 ===
+            if (event.button() == Qt.LeftButton and 
+                app.zoom_mode == "Fit" and 
+                app.image_files and 
+                0 <= app.current_image_index < len(app.image_files)):
+                
+                # 드래그 시작 준비
+                self.drag_start_pos = event.position().toPoint()
+                self.is_potential_drag = True
+                logging.debug(f"Grid 셀에서 드래그 시작 준비: {self.drag_start_pos}")
+                return
+            
+            # 기존 이벤트 처리
+            super().mousePressEvent(event)
+            
+        except Exception as e:
+            logging.error(f"GridCellWidget.mousePressEvent 오류: {e}")
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """마우스 이동 이벤트 처리 - 드래그 시작 감지"""
+        try:
+            # 부모 앱 참조 얻기
+            app = self.get_parent_app()
+            if not app:
+                super().mouseMoveEvent(event)
+                return
+            
+            # === Fit 모드에서 드래그 시작 감지 ===
+            if (self.is_potential_drag and 
+                app.zoom_mode == "Fit" and 
+                app.image_files and 
+                0 <= app.current_image_index < len(app.image_files)):
+                
+                current_pos = event.position().toPoint()
+                move_distance = (current_pos - self.drag_start_pos).manhattanLength()
+                
+                if move_distance > self.drag_threshold:
+                    # 드래그 시작
+                    app.start_image_drag()
+                    self.is_potential_drag = False
+                    logging.debug("Grid 셀에서 드래그 시작됨")
+                    return
+            
+            # 기존 이벤트 처리
+            super().mouseMoveEvent(event)
+            
+        except Exception as e:
+            logging.error(f"GridCellWidget.mouseMoveEvent 오류: {e}")
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """마우스 릴리스 이벤트 처리 - 드래그 상태 초기화"""
+        try:
+            # 드래그 상태 초기화
+            if self.is_potential_drag:
+                self.is_potential_drag = False
+                logging.debug("Grid 셀에서 드래그 시작 준비 상태 해제")
+            
+            # 기존 이벤트 처리
+            super().mouseReleaseEvent(event)
+            
+        except Exception as e:
+            logging.error(f"GridCellWidget.mouseReleaseEvent 오류: {e}")
+            super().mouseReleaseEvent(event)
+
+    def get_parent_app(self):
+        """부모 위젯을 타고 올라가면서 PhotoSortApp 인스턴스 찾기"""
+        try:
+            current_widget = self.parent()
+            while current_widget:
+                if hasattr(current_widget, 'start_image_drag'):
+                    return current_widget
+                current_widget = current_widget.parent()
+            return None
+        except Exception as e:
+            logging.error(f"get_parent_app 오류: {e}")
+            return None
+
+
 
     # 그리드 파일명 상단 중앙
     # def paintEvent(self, event):
@@ -1017,7 +1411,11 @@ class ExifWorker(QObject):
                 return
                 
             file_path_obj = Path(image_path)
+            suffix = file_path_obj.suffix.lower()
             is_raw = file_path_obj.suffix.lower() in self.raw_extensions
+            is_heic = file_path_obj.suffix.lower() in {'.heic', '.heif'} 
+
+            skip_piexif_formats = {'.heic', '.heif', '.png', '.webp', '.bmp'} # piexif 시도를 건너뛸 포맷 목록
             
             # 결과를 저장할 딕셔너리 초기화
             result = {
@@ -1027,6 +1425,9 @@ class ExifWorker(QObject):
                 "exif_datetime": None,
                 "exif_focal_mm": None,
                 "exif_focal_35mm": None,
+                "exif_exposure_time": None,
+                "exif_fnumber": None,
+                "exif_iso": None,
                 "exif_orientation": None,
                 "image_path": image_path
             }
@@ -1048,7 +1449,7 @@ class ExifWorker(QObject):
 
             # PHASE 1: Piexif로 EXIF 정보 추출 시도
             piexif_success = False
-            if self._running:
+            if self._running and suffix not in skip_piexif_formats: # <<< HEIC 파일이면 piexif 시도 건너뛰기
                 try:
                     # JPG 이미지 크기 (RAW는 위에서 추출)
                     if not is_raw and not result["exif_resolution"]:
@@ -1090,6 +1491,22 @@ class ExifWorker(QObject):
                     if result["exif_focal_35mm"] is None and piexif.ExifIFD.FocalLengthIn35mmFilm in exif_ifd:
                         result["exif_focal_35mm"] = exif_ifd.get(piexif.ExifIFD.FocalLengthIn35mmFilm)
 
+                    # 노출 시간
+                    if result["exif_exposure_time"] is None and piexif.ExifIFD.ExposureTime in exif_ifd:
+                        val = exif_ifd.get(piexif.ExifIFD.ExposureTime)
+                        if isinstance(val, tuple) and len(val) == 2 and val[1] != 0:
+                            result["exif_exposure_time"] = val[0] / val[1]
+                    
+                    # 조리개값
+                    if result["exif_fnumber"] is None and piexif.ExifIFD.FNumber in exif_ifd:
+                        val = exif_ifd.get(piexif.ExifIFD.FNumber)
+                        if isinstance(val, tuple) and len(val) == 2 and val[1] != 0:
+                            result["exif_fnumber"] = val[0] / val[1]
+                    
+                    # ISO
+                    if result["exif_iso"] is None and piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
+                        result["exif_iso"] = exif_ifd.get(piexif.ExifIFD.ISOSpeedRatings)
+
                     # 필수 정보 확인
                     required_info_count = sum([
                         result["exif_resolution"] is not None,
@@ -1106,7 +1523,9 @@ class ExifWorker(QObject):
                 
             needs_exiftool = False
             if self.exiftool_available:
-                if is_raw and result["exif_orientation"] is None:
+                if is_heic: # <<< HEIC 파일은 항상 ExifTool 필요
+                    needs_exiftool = True
+                elif is_raw and result["exif_orientation"] is None:
                     needs_exiftool = True
                 elif not result["exif_resolution"]:
                     needs_exiftool = True
@@ -1164,6 +1583,33 @@ class ExifWorker(QObject):
                                 result["exif_focal_35mm"] = float(str(focal_35_val).lower().replace(" mm", ""))
                             except (ValueError, TypeError):
                                 result["exif_focal_35mm"] = str(focal_35_val)
+
+                    # 노출 시간
+                    if result["exif_exposure_time"] is None:
+                        exposure_val = exif_data_tool.get("ExposureTime")
+                        if exposure_val:
+                            try:
+                                result["exif_exposure_time"] = float(exposure_val)
+                            except (ValueError, TypeError):
+                                result["exif_exposure_time"] = str(exposure_val)
+                    
+                    # 조리개값
+                    if result["exif_fnumber"] is None:
+                        fnumber_val = exif_data_tool.get("FNumber")
+                        if fnumber_val:
+                            try:
+                                result["exif_fnumber"] = float(fnumber_val)
+                            except (ValueError, TypeError):
+                                result["exif_fnumber"] = str(fnumber_val)
+                    
+                    # ISO
+                    if result["exif_iso"] is None:
+                        iso_val = exif_data_tool.get("ISO")
+                        if iso_val:
+                            try:
+                                result["exif_iso"] = int(iso_val)
+                            except (ValueError, TypeError):
+                                result["exif_iso"] = str(iso_val)
 
             # 작업 완료, 결과 전송
             if self._running:
@@ -1660,17 +2106,16 @@ class ResourceManager:
 
 class ImageLoader(QObject):
     """이미지 로딩 및 캐싱을 관리하는 클래스"""
+
     imageLoaded = Signal(int, QPixmap, str)  # 인덱스, 픽스맵, 이미지 경로
     loadCompleted = Signal(QPixmap, str, int)  # pixmap, image_path, requested_index
     loadFailed = Signal(str, str, int)  # error_message, image_path, requested_index
+    decodingFailedForFile = Signal(str) # 디코딩 실패 시 PhotoSortApp에 알리기 위한 새 시그널(실패한 파일 경로 전달)
 
      # 클래스 변수로 전역 전략 설정 (스레드 간 공유)
     _global_raw_strategy = "undetermined"
     _strategy_initialized = False  # 전략 초기화 여부 플래그 추가
 
-    # 디코딩 실패 시 PhotoSortApp에 알리기 위한 새 시그널
-    decodingFailedForFile = Signal(str) # 실패한 파일 경로 전달
-    
     def __init__(self, parent=None, raw_extensions=None):
         super().__init__(parent)
         self.raw_extensions = raw_extensions or set()
@@ -2536,6 +2981,22 @@ class SessionManagementDialog(QDialog):
                 self.parent_app.delete_session(session_name_to_delete)
                 # self.populate_session_list() # delete_session 내부에서 호출될 것임
 
+def format_camera_name(make, model):
+    make_str = (make or "").strip()
+    model_str = (model or "").strip()
+    # 1. OLYMPUS IMAGING CORP. → OLYMPUS로 치환
+    if make_str.upper() == "OLYMPUS IMAGING CORP.":
+        make_str = "OLYMPUS"
+    # 2. RICOH가 make에 있으면 make 생략
+    if "RICOH" in make_str.upper():
+        make_str = ""
+    if make_str.upper().find("NIKON") != -1 and model_str.upper().startswith("NIKON"):
+        return model_str
+    if make_str.upper().find("CANON") != -1 and model_str.upper().startswith("CANON"):
+        return model_str
+    return f"{make_str} {model_str}".strip()
+
+
 class PhotoSortApp(QMainWindow):
     STATE_FILE = "photosort_data.json" # 상태 저장 파일 이름 정의
 
@@ -2544,11 +3005,17 @@ class PhotoSortApp(QMainWindow):
         
         # 앱 제목 설정
         self.setWindowTitle("PhotoSort")
+
+        # 크로스 플랫폼 윈도우 아이콘 설정
+        self.set_window_icon()
         
         # 내부 변수 초기화
         self.current_folder = ""
         self.raw_folder = ""
         self.image_files = []
+        self.supported_image_extensions = {
+            '.jpg', '.jpeg'
+        }
         self.raw_files = {}  # 키: 기본 파일명, 값: RAW 파일 경로
         self.is_raw_only_mode = False # RAW 단독 로드 모드인지 나타내는 플래그
         self.raw_extensions = {'.arw', '.crw', '.dng', '.cr2', '.cr3', '.nef', 
@@ -2557,9 +3024,11 @@ class PhotoSortApp(QMainWindow):
                              '.3fr', '.fff', '.mef', '.iiq', '.braw', '.ari', '.r3d'}
         self.current_image_index = -1
         self.move_raw_files = True  # RAW 파일 이동 여부 (기본값: True)
-        self.target_folders = ["", "", ""]  # 분류 대상 폴더 경로 (최대 3개)
-        self.folder_count = 3  # 기본 폴더 개수
-        self.zoom_mode = "Fit"  # 기본 확대 모드: "Fit", "100%", "200%"
+        self.folder_count = 3  # 기본 폴더 개수 (load_state에서 덮어쓸 값)
+        self.target_folders = [""] * self.folder_count  # folder_count에 따라 동적으로 리스트 생성
+        self.zoom_mode = "Fit"  # 기본 확대 모드: "Fit", "100%", "Spin"
+        self.last_active_zoom_mode = "100%" # 기본 확대 모드는 100%
+        self.zoom_spin_value = 2.0  # 기본 200% (2.0 배율)
         self.original_pixmap = None  # 원본 이미지 pixmap
         self.panning = False  # 패닝 모드 여부
         self.pan_start_pos = QPoint(0, 0)  # 패닝 시작 위치
@@ -2568,8 +3037,11 @@ class PhotoSortApp(QMainWindow):
         self.control_panel_on_right = False # 기본값: 왼쪽 (False)
 
         self.viewport_move_speed = 5 # 뷰포트 이동 속도 (1~10), 기본값 5
+        self.mouse_wheel_action = "photo_navigation"  # 마우스 휠 동작: "photo_navigation" 또는 "none"
         self.last_processed_camera_model = None
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
+
+        self.image_processing = False  # 이미지 처리 중 여부
 
         # --- 세션 저장을 위한 딕셔너리 ---
         # 형식: {"세션이름": {상태정보 딕셔너리}}
@@ -2609,7 +3081,7 @@ class PhotoSortApp(QMainWindow):
         self.memory_monitor_timer.start()
 
 
-        # current_image_index 주기적 저장을 위한
+        # current_image_index 주기적 자동동저장을 위한
         self.state_save_timer = QTimer(self)
         self.state_save_timer.setSingleShot(True) # 한 번만 실행되도록 설정
         self.state_save_timer.setInterval(5000)  # 5초 (5000ms)
@@ -2633,6 +3105,11 @@ class PhotoSortApp(QMainWindow):
         self.previous_grid_mode = None # 이전 그리드 모드 저장 변수
         self.grid_layout = None # 그리드 레이아웃 객체
         self.grid_labels = []   # 그리드 셀 QLabel 목록
+
+        # 다중 선택 관리 변수 추가
+        self.selected_grid_indices = set()  # 선택된 그리드 셀 인덱스들 (페이지 내 상대 인덱스)
+        self.primary_selected_index = -1  # 첫 번째로 선택된 이미지의 인덱스 (파일 정보 표시용)
+        self.last_single_click_index = -1  # Shift+클릭 범위 선택을 위한 마지막 단일 클릭 인덱스
 
         # 리소스 매니저 초기화
         self.resource_manager = ResourceManager.instance()
@@ -2694,10 +3171,27 @@ class PhotoSortApp(QMainWindow):
         self.placeholder_pixmap = QPixmap(100, 100)
         self.placeholder_pixmap.fill(QColor("#222222"))
 
+        # === 이미지→폴더 드래그 앤 드롭 관련 변수 ===
+        self.drag_start_pos = QPoint(0, 0)  # 드래그 시작 위치
+        self.is_potential_drag = False  # 드래그 시작 가능 상태
+        self.drag_threshold = 10  # 드래그 시작을 위한 최소 이동 거리 (픽셀)
+        
+        # 드래그 앤 드롭 관련 변수
+        self.drag_target_label = None  # 현재 드래그 타겟 레이블
+        self.original_label_styles = {}
+        
+        logging.info("이미지→폴더 드래그 앤 드롭 기능 초기화됨")
+        # === 이미지→폴더 드래그 앤 드롭 설정 끝 ===
+
+        self.pressed_number_keys = set()  # 현재 눌린 숫자키 추적
+        self.key_highlight_timers = {}    # 키별 타이머 저장
+
         # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
         # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
         self.camera_raw_settings = {} 
         
+        # ==================== 여기서부터 UI 관련 코드 ====================
+
         # 다크 테마 적용
         self.setup_dark_theme()
         
@@ -2718,12 +3212,23 @@ class PhotoSortApp(QMainWindow):
         self.splitter.setHandleWidth(0)  # 분할기 핸들 너비를 0픽셀로 설정
         self.main_layout.addWidget(self.splitter)
         
-        # 좌측 컨트롤 영역 생성
-        self.control_panel = QWidget()
-        self.control_layout = QVBoxLayout(self.control_panel)
-        self.control_layout.setContentsMargins(*UIScaleManager.get_margins()) # *는 Python의 언패킹(unpacking) 연산자. (10, 0, 10, 0)과 동일.
+        # 1. 스크롤 가능한 컨트롤 패널을 위한 QScrollArea 생성
+        self.control_panel = QScrollArea() # 기존 self.control_panel을 QScrollArea로 변경
+        self.control_panel.setWidgetResizable(True) # 내용물이 스크롤 영역에 꽉 차도록 설정
+        self.control_panel.setFrameShape(QFrame.NoFrame) # 테두리 제거
+        self.control_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff) # 가로 스크롤바는 항상 끔
+
+        # 2. 스크롤 영역에 들어갈 실제 콘텐츠를 담을 위젯 생성
+        scroll_content_widget = QWidget()
+
+        # 3. 기존 control_layout을 이 새로운 위젯에 설정
+        self.control_layout = QVBoxLayout(scroll_content_widget)
+        self.control_layout.setContentsMargins(*UIScaleManager.get_margins())
         self.control_layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
-        
+
+        # 4. QScrollArea(self.control_panel)에 콘텐츠 위젯을 설정
+        self.control_panel.setWidget(scroll_content_widget)
+
         # 우측 이미지 영역 생성 (검은색 배경으로 설정)
         self.image_panel = QFrame()
         self.image_panel.setFrameShape(QFrame.NoFrame)
@@ -2733,6 +3238,19 @@ class PhotoSortApp(QMainWindow):
         image_palette = self.image_panel.palette()
         image_palette.setColor(QPalette.Window, QColor(0, 0, 0))
         self.image_panel.setPalette(image_palette)
+
+        # === 캔버스 영역 드래그 앤 드랍 활성화 ===
+        # 이미지 패널에 드래그 앤 드랍 활성화
+        self.image_panel.setAcceptDrops(True)
+        
+        # 드래그 앤 드랍 이벤트 핸들러 연결
+        self.image_panel.dragEnterEvent = self.canvas_dragEnterEvent
+        self.image_panel.dragMoveEvent = self.canvas_dragMoveEvent
+        self.image_panel.dragLeaveEvent = self.canvas_dragLeaveEvent
+        self.image_panel.dropEvent = self.canvas_dropEvent
+        
+        logging.info("캔버스 영역 드래그 앤 드랍 기능 활성화됨")
+        # === 캔버스 드래그 앤 드랍 설정 끝 ===
         
         # 이미지 레이아웃 설정 - 초기에는 단일 이미지 레이아웃
         self.image_layout = QVBoxLayout(self.image_panel) # 기본 이미지 표시용 레이아웃
@@ -2792,7 +3310,7 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addStretch(1)
 
         # --- JPG 폴더 섹션 ---
-        self.load_button = QPushButton(LanguageManager.translate("JPG 불러오기")) # 버튼 먼저 추가
+        self.load_button = QPushButton(LanguageManager.translate("이미지 불러오기")) # 버튼 먼저 추가
         self.load_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('bg_secondary')};
@@ -2820,7 +3338,7 @@ class PhotoSortApp(QMainWindow):
         # JPG 폴더 경로/클리어 컨테이너
         jpg_folder_container = QWidget()
         jpg_folder_layout = QHBoxLayout(jpg_folder_container)
-        jpg_folder_layout.setContentsMargins(0, 3, 0, 3) # 상하 여백 추가
+        jpg_folder_layout.setContentsMargins(0, 0, 0, 0)  # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
         jpg_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # JPG 폴더 경로 표시 레이블 추가
@@ -2898,7 +3416,7 @@ class PhotoSortApp(QMainWindow):
         # RAW 폴더 경로/클리어 컨테이너
         raw_folder_container = QWidget()
         raw_folder_layout = QHBoxLayout(raw_folder_container)
-        raw_folder_layout.setContentsMargins(0, 3, 0, 3) # 상하 여백 추가
+        raw_folder_layout.setContentsMargins(0, 0, 0, 0) # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
         raw_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # RAW 폴더 경로 표시 레이블 추가
@@ -2973,10 +3491,10 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
         
         # 분류 폴더 설정 영역
-        self.setup_folder_selection_ui()
+        self._rebuild_folder_selection_ui() # 이 시점에는 self.folder_count = 3
         
         # 구분선 추가
-        self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20) - UIScaleManager.get("category_folder_vertical_spacing"))
+        self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
         self.control_layout.addWidget(HorizontalLine())
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
         
@@ -3061,7 +3579,29 @@ class PhotoSortApp(QMainWindow):
         self.update_folder_label_style(self.raw_folder_path_label, self.raw_folder) # RAW 폴더 레이블 초기 스타일
         self.update_match_raw_button_state() # <--- 추가: RAW 관련 버튼 초기 상태 업데이트      
         
-        self.showMaximized()
+        # 화면 해상도 기반 면적 75% 크기로 중앙 배치
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            available_geometry = screen.availableGeometry()
+            screen_width = available_geometry.width()
+            screen_height = available_geometry.height()
+            
+            # 면적 기준 75%를 위한 스케일 팩터 계산
+            scale_factor = 0.75 ** 0.5  # √0.75 ≈ 0.866
+            
+            # 75% 면적 크기 계산
+            window_width = int(screen_width * scale_factor)
+            window_height = int(screen_height * scale_factor)
+            
+            # 중앙 위치 계산
+            center_x = (screen_width - window_width) // 2
+            center_y = (screen_height - window_height) // 2
+            
+            # 윈도우 크기 및 위치 설정
+            self.setGeometry(center_x, center_y, window_width, window_height)
+        else:
+            # 화면 정보를 가져올 수 없는 경우 기본 크기로 설정
+            self.resize(1200, 800)
 
         # 초기 레이아웃 설정
         QApplication.processEvents()
@@ -3130,9 +3670,1065 @@ class PhotoSortApp(QMainWindow):
         self.current_exif_path = None  # 현재 처리 중인 EXIF 경로
         # === 병렬 처리 설정 끝 ===
 
+        # 드래그 앤 드랍 관련 변수
+        self.drag_target_label = None  # 현재 드래그 타겟 레이블
+        self.original_label_styles = {}  # 원래 레이블 스타일 저장
+        
+        logging.info("드래그 앤 드랍 기능 활성화됨")
+        # === 드래그 앤 드랍 설정 끝 ===
 
-    # PhotoSortApp에 새 메서드 추가
-    def _trigger_state_save_for_index(self):
+        self.update_scrollbar_style()
+
+    def set_window_icon(self):
+        """크로스 플랫폼 윈도우 아이콘을 설정합니다."""
+        try:
+            from PySide6.QtGui import QIcon
+            
+            # 플랫폼별 아이콘 파일 결정
+            if sys.platform == "darwin":  # macOS
+                icon_filename = "app_icon.icns"
+            else:  # Windows, Linux
+                icon_filename = "app_icon.ico"
+            
+            # 아이콘 파일 경로 결정
+            if getattr(sys, 'frozen', False):
+                # PyInstaller/Nuitka로 패키징된 경우
+                icon_path = Path(sys.executable).parent / icon_filename
+            else:
+                # 일반 스크립트로 실행된 경우
+                icon_path = Path(__file__).parent / icon_filename
+            
+            if icon_path.exists():
+                icon = QIcon(str(icon_path))
+                self.setWindowIcon(icon)
+                
+                # 애플리케이션 레벨에서도 아이콘 설정 (macOS Dock용)
+                QApplication.instance().setWindowIcon(icon)
+                
+                logging.info(f"윈도우 아이콘 설정 완료: {icon_path}")
+            else:
+                logging.warning(f"아이콘 파일을 찾을 수 없습니다: {icon_path}")
+                
+        except Exception as e:
+            logging.error(f"윈도우 아이콘 설정 실패: {e}")
+
+    def _rebuild_folder_selection_ui(self):
+        """기존 분류 폴더 UI를 제거하고 새로 생성하여 교체합니다."""
+        # 1. 기존 위젯이 있다면 제거
+        if hasattr(self, 'category_folder_container') and self.category_folder_container:
+            self.control_layout.removeWidget(self.category_folder_container)
+            self.category_folder_container.deleteLater()
+
+        # 2. 새 컨테이너 위젯 생성
+        self.category_folder_container = self.setup_folder_selection_ui()
+        
+        # 3. 컨트롤 레이아웃의 올바른 위치에 새 위젯 삽입
+        #    "JPG + RAW 이동" 토글 버튼 아래, 첫 번째 구분선 위에 삽입합니다.
+        insertion_index = self.control_layout.indexOf(self.toggle_container) + 4 # 토글 컨테이너와 그 아래 여백(Spacing) 다음
+        self.control_layout.insertWidget(insertion_index, self.category_folder_container)
+        
+        # 4. UI 상태 업데이트
+        self.update_folder_buttons()
+
+    def on_folder_count_changed(self, index):
+        """분류 폴더 개수 콤보박스 변경 시 호출되는 슬롯"""
+        if index < 0: return
+        
+        new_count = self.folder_count_combo.itemData(index)
+        if new_count is None or new_count == self.folder_count:
+            return
+
+        logging.info(f"분류 폴더 개수 변경: {self.folder_count} -> {new_count}")
+        self.folder_count = new_count
+
+        # self.target_folders 리스트 크기 조정
+        current_len = len(self.target_folders)
+        if new_count > current_len:
+            # 늘어난 만큼 빈 문자열 추가
+            self.target_folders.extend([""] * (new_count - current_len))
+        elif new_count < current_len:
+            # 줄어든 만큼 뒤에서부터 잘라냄
+            self.target_folders = self.target_folders[:new_count]
+            
+        # UI 재구축
+        self._rebuild_folder_selection_ui()
+        
+        # 변경된 상태 저장
+        self.save_state()
+
+    # === 드래그 앤 드랍 관련 코드 시작 === #
+    def dragEnterEvent(self, event):
+        """드래그 진입 시 호출"""
+        try:
+            # 폴더만 허용
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:  # 하나의 항목만 허용
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        logging.debug(f"드래그 진입: 폴더 감지됨 - {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("드래그 진입: 폴더가 아니거나 여러 항목 감지됨")
+        except Exception as e:
+            logging.error(f"dragEnterEvent 오류: {e}")
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """드래그 이동 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 현재 마우스 위치에서 타겟 레이블 찾기
+                        pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
+                        target_label, target_type = self._find_target_label_at_position(pos)
+                        
+                        # 폴더 유효성 검사
+                        is_valid = self._validate_folder_for_target(file_path, target_type)
+                        
+                        # 이전 타겟과 다르면 스타일 복원
+                        if self.drag_target_label and self.drag_target_label != target_label:
+                            self._restore_original_style(self.drag_target_label)
+                            self.drag_target_label = None
+                        
+                        # 새 타겟에 스타일 적용
+                        if target_label and target_label != self.drag_target_label:
+                            self._save_original_style(target_label)
+                            if is_valid:
+                                self._set_drag_accept_style(target_label)
+                            else:
+                                self._set_drag_reject_style(target_label)
+                            self.drag_target_label = target_label
+                        
+                        event.acceptProposedAction()
+                        return
+            
+            # 조건에 맞지 않으면 스타일 복원 후 거부
+            if self.drag_target_label:
+                self._restore_original_style(self.drag_target_label)
+                self.drag_target_label = None
+            event.ignore()
+        except Exception as e:
+            logging.error(f"dragMoveEvent 오류: {e}")
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """드래그 벗어날 때 호출"""
+        try:
+            # 모든 스타일 복원
+            if self.drag_target_label:
+                self._restore_original_style(self.drag_target_label)
+                self.drag_target_label = None
+            logging.debug("드래그 벗어남: 스타일 복원됨")
+        except Exception as e:
+            logging.error(f"dragLeaveEvent 오류: {e}")
+
+    def dropEvent(self, event):
+        """드랍 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 현재 마우스 위치에서 타겟 레이블 찾기
+                        pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
+                        target_label, target_type = self._find_target_label_at_position(pos)
+                        
+                        # 스타일 복원
+                        if self.drag_target_label:
+                            self._restore_original_style(self.drag_target_label)
+                            self.drag_target_label = None
+                        
+                        # 타겟에 따른 처리
+                        success = self._handle_folder_drop(file_path, target_type)
+                        
+                        if success:
+                            event.acceptProposedAction()
+                            logging.info(f"폴더 드랍 성공: {file_path} -> {target_type}")
+                        else:
+                            event.ignore()
+                            logging.warning(f"폴더 드랍 실패: {file_path} -> {target_type}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("dropEvent: 유효하지 않은 드랍")
+        except Exception as e:
+            logging.error(f"dropEvent 오류: {e}")
+            event.ignore()
+
+    def _find_target_label_at_position(self, pos):
+        """좌표에서 타겟 레이블과 타입을 찾기"""
+        try:
+            # 컨트롤 패널 내의 위젯에서 좌표 확인
+            widget_at_pos = self.childAt(pos)
+            if not widget_at_pos:
+                return None, None
+            
+            # 부모 위젯들을 따라가며 타겟 레이블 찾기
+            current_widget = widget_at_pos
+            for _ in range(10):  # 최대 10단계까지 부모 탐색
+                if current_widget is None:
+                    break
+                
+                # JPG 폴더 레이블 확인
+                if hasattr(self, 'folder_path_label') and current_widget == self.folder_path_label:
+                    return self.folder_path_label, "image_folder"
+                
+                # RAW 폴더 레이블 확인
+                if hasattr(self, 'raw_folder_path_label') and current_widget == self.raw_folder_path_label:
+                    return self.raw_folder_path_label, "raw_folder"
+                
+                # 분류 폴더 레이블들 확인
+                if hasattr(self, 'folder_path_labels'):
+                    for i, label in enumerate(self.folder_path_labels):
+                        if current_widget == label:
+                            return label, f"category_folder_{i}"
+                
+                # 부모로 이동
+                current_widget = current_widget.parent()
+            
+            return None, None
+        except Exception as e:
+            logging.error(f"_find_target_label_at_position 오류: {e}")
+            return None, None
+
+    def _validate_folder_for_target(self, folder_path, target_type):
+        """타겟별 폴더 유효성 검사"""
+        try:
+            if not folder_path or not target_type:
+                return False
+            
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return False
+            
+            if target_type == "image_folder":
+                # 이미지 폴더: 지원하는 이미지 파일이 있는지 확인
+                return self._has_supported_image_files(folder_path_obj)
+            
+            elif target_type == "raw_folder":
+                # RAW 폴더: RAW 파일이 있는지 확인
+                return self._has_raw_files(folder_path_obj)
+            
+            elif target_type.startswith("category_folder_"):
+                # 분류 폴더: 모든 디렉토리 허용
+                return True
+            
+            return False
+        except Exception as e:
+            logging.error(f"_validate_folder_for_target 오류: {e}")
+            return False
+
+    def _has_supported_image_files(self, folder_path):
+        """폴더에 지원하는 이미지 파일이 있는지 확인"""
+        try:
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                    return True
+            return False
+        except Exception as e:
+            logging.debug(f"이미지 파일 확인 오류: {e}")
+            return False
+
+    def _has_raw_files(self, folder_path):
+        """폴더에 RAW 파일이 있는지 확인"""
+        try:
+            for file_path in folder_path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in self.raw_extensions:
+                    return True
+            return False
+        except Exception as e:
+            logging.debug(f"RAW 파일 확인 오류: {e}")
+            return False
+
+    def _save_original_style(self, widget):
+        """원래 스타일 저장"""
+        try:
+            if widget:
+                self.original_label_styles[widget] = widget.styleSheet()
+        except Exception as e:
+            logging.error(f"_save_original_style 오류: {e}")
+
+    def _set_drag_accept_style(self, widget):
+        """드래그 수락 스타일 적용"""
+        try:
+            if widget:
+                widget.setStyleSheet(f"""
+                    QLabel {{
+                        color: #AAAAAA;
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_primary')};
+                        border: 2px solid #08E25F;
+                        border-radius: 1px;
+                    }}
+                """)
+        except Exception as e:
+            logging.error(f"_set_drag_accept_style 오류: {e}")
+
+    def _set_drag_reject_style(self, widget):
+        """드래그 거부 스타일 적용"""
+        try:
+            if widget:
+                widget.setStyleSheet(f"""
+                    QLabel {{
+                        color: #AAAAAA;
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_primary')};
+                        border: 2px solid #FF4444;
+                        border-radius: 1px;
+                    }}
+                """)
+        except Exception as e:
+            logging.error(f"_set_drag_reject_style 오류: {e}")
+
+    def _restore_original_style(self, widget):
+        """원래 스타일 복원"""
+        try:
+            if widget and widget in self.original_label_styles:
+                original_style = self.original_label_styles[widget]
+                widget.setStyleSheet(original_style)
+                del self.original_label_styles[widget]
+        except Exception as e:
+            logging.error(f"_restore_original_style 오류: {e}")
+
+    def _handle_folder_drop(self, folder_path, target_type):
+        """타겟별 폴더 드랍 처리"""
+        try:
+            if not folder_path or not target_type:
+                return False
+            
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return False
+            
+            if target_type == "image_folder":
+                # 이미지 폴더 처리
+                return self._handle_image_folder_drop(folder_path)
+            
+            elif target_type == "raw_folder":
+                # RAW 폴더 처리
+                return self._handle_raw_folder_drop(folder_path)
+            
+            elif target_type.startswith("category_folder_"):
+                # 분류 폴더 처리
+                folder_index = int(target_type.split("_")[-1])
+                return self._handle_category_folder_drop(folder_path, folder_index)
+            
+            return False
+        except Exception as e:
+            logging.error(f"_handle_folder_drop 오류: {e}")
+            return False
+
+    def _handle_image_folder_drop(self, folder_path):
+        """이미지 폴더 드랍 처리"""
+        try:
+            # 기존 load_images_from_folder 함수 재사용
+            success = self.load_images_from_folder(folder_path)
+            if success:
+                # load_jpg_folder와 동일한 UI 업데이트 로직 추가
+                self.current_folder = folder_path
+                self.folder_path_label.setText(folder_path)
+                self.update_jpg_folder_ui_state()  # UI 상태 업데이트
+                self.save_state()  # 상태 저장
+                
+                # 세션 관리 팝업이 열려있으면 업데이트
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()
+                
+                logging.info(f"드래그 앤 드랍으로 이미지 폴더 로드 성공: {folder_path}")
+                return True
+            else:
+                # 실패 시에도 load_images_from_folder 내부에서 UI 초기화가 이미 처리됨
+                # 추가로 current_folder도 초기화
+                self.current_folder = ""
+                self.update_jpg_folder_ui_state()
+                
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()
+                
+                logging.warning(f"드래그 앤 드랍으로 이미지 폴더 로드 실패: {folder_path}")
+                return False
+        except Exception as e:
+            logging.error(f"_handle_image_folder_drop 오류: {e}")
+            return False
+
+    def _load_raw_only_from_path(self, folder_path):
+        """RAW 전용 폴더를 지정된 경로에서 로드 (드래그 앤 드랍용)"""
+        try:
+            if not folder_path:
+                return False
+                
+            target_path = Path(folder_path)
+            temp_raw_file_list = []
+
+            # RAW 파일 검색
+            for ext in self.raw_extensions:
+                temp_raw_file_list.extend(target_path.glob(f'*{ext}'))
+                temp_raw_file_list.extend(target_path.glob(f'*{ext.upper()}')) # 대문자 확장자도 고려
+
+            # 중복 제거 및 정렬
+            unique_raw_files = sorted(list(set(temp_raw_file_list)))
+
+            if not unique_raw_files:
+                self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 RAW 파일이 없습니다."))
+                # UI 초기화 (기존 JPG 로드 실패와 유사하게)
+                self.image_files = []
+                self.current_image_index = -1
+                self.image_label.clear()
+                self.image_label.setStyleSheet("background-color: black;")
+                self.setWindowTitle("PhotoSort")
+                self.update_counters()
+                self.update_file_info_display(None)
+                # RAW 관련 UI 업데이트
+                self.raw_folder = ""
+                self.is_raw_only_mode = False # 실패 시 모드 해제
+                self.update_raw_folder_ui_state() # raw_folder_path_label 포함
+                self.update_match_raw_button_state() # 버튼 텍스트 원복
+                # JPG 버튼 활성화
+                self.load_button.setEnabled(True)
+                if self.session_management_popup and self.session_management_popup.isVisible():
+                    self.session_management_popup.update_all_button_states()                
+                return False
+            
+            # --- 1. 첫 번째 RAW 파일 분석 ---
+            first_raw_file_path_obj = unique_raw_files[0]
+            first_raw_file_path_str = str(first_raw_file_path_obj)
+            logging.info(f"첫 번째 RAW 파일 분석 시작: {first_raw_file_path_obj.name}")
+
+            is_raw_compatible = False
+            camera_model_name = LanguageManager.translate("알 수 없는 카메라") # 기본값
+            original_resolution_str = "-"
+            preview_resolution_str = "-"
+            
+            # exiftool을 사용해야 할 수도 있으므로 미리 경로 확보
+            exiftool_path = self.get_exiftool_path() # 기존 get_exiftool_path() 사용
+            exiftool_available = Path(exiftool_path).exists() and Path(exiftool_path).is_file()
+
+            # 1.1. {RAW 호환 여부} 및 {원본 해상도 (rawpy 시도)}, {카메라 모델명 (rawpy 시도)}
+            rawpy_exif_data = {} # rawpy에서 얻은 부분적 EXIF 저장용
+            try:
+                with rawpy.imread(first_raw_file_path_str) as raw:
+                    is_raw_compatible = True
+                    original_width = raw.sizes.width # postprocess 후 크기 (raw_width는 센서 크기)
+                    original_height = raw.sizes.height
+                    if original_width > 0 and original_height > 0 :
+                        original_resolution_str = f"{original_width}x{original_height}"
+                    
+                    if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer and \
+                    hasattr(raw, 'model') and raw.model:
+                        camera_model_name = f"{raw.camera_manufacturer.strip()} {raw.model.strip()}"
+                    elif hasattr(raw, 'model') and raw.model: # 모델명만 있는 경우
+                        camera_model_name = raw.model.strip()
+                    
+                    # 임시로 rawpy에서 일부 EXIF 정보 추출 (카메라 모델 등)
+                    rawpy_exif_data["exif_make"] = raw.camera_manufacturer.strip() if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer else ""
+                    rawpy_exif_data["exif_model"] = raw.model.strip() if hasattr(raw, 'model') and raw.model else ""
+
+            except Exception as e_rawpy:
+                is_raw_compatible = False # rawpy로 기본 정보 읽기 실패 시 호환 안됨으로 간주
+                logging.warning(f"rawpy로 첫 파일({first_raw_file_path_obj.name}) 분석 중 오류 (호환 안됨 가능성): {e_rawpy}")
+
+            # 1.2. {카메라 모델명 (ExifTool 시도 - rawpy 실패 시 또는 보강)} 및 {원본 해상도 (ExifTool 시도 - rawpy 실패 시)}
+            if (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라") or \
+            not original_resolution_str or original_resolution_str == "-") and exiftool_available:
+                logging.info(f"Exiftool로 추가 정보 추출 시도: {first_raw_file_path_obj.name}")
+                try:
+                    cmd = [exiftool_path, "-json", "-Model", "-ImageWidth", "-ImageHeight", "-Make", first_raw_file_path_str]
+                    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                    process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
+                    if process.returncode == 0 and process.stdout:
+                        exif_data_list = json.loads(process.stdout)
+                        if exif_data_list and isinstance(exif_data_list, list):
+                            exif_data = exif_data_list[0]
+                            model = exif_data.get("Model")
+                            make = exif_data.get("Make")
+                            
+                            if make and model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = f"{make.strip()} {model.strip()}"
+                            elif model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
+                                camera_model_name = model.strip()
+                            
+                            # rawpy_exif_data 보강
+                            if not rawpy_exif_data.get("exif_make") and make: rawpy_exif_data["exif_make"] = make.strip()
+                            if not rawpy_exif_data.get("exif_model") and model: rawpy_exif_data["exif_model"] = model.strip()
+
+                            if (not original_resolution_str or original_resolution_str == "-"): # is_raw_compatible이 False인 경우 등
+                                width = exif_data.get("ImageWidth")
+                                height = exif_data.get("ImageHeight")
+                                if width and height and int(width) > 0 and int(height) > 0:
+                                    original_resolution_str = f"{width}x{height}"
+                except Exception as e_exiftool:
+                    logging.error(f"Exiftool로 정보 추출 중 오류: {e_exiftool}")
+            
+            # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
+            final_camera_model_display = ""
+            if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = format_camera_name(rawpy_exif_data["exif_make"], rawpy_exif_data["exif_model"])
+            elif rawpy_exif_data.get("exif_model"):
+                final_camera_model_display = rawpy_exif_data["exif_model"]
+            elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
+                final_camera_model_display = camera_model_name
+            else:
+                final_camera_model_display = LanguageManager.translate("알 수 없는 카메라")
+
+            # 1.3. {미리보기 해상도} 추출
+            # ImageLoader의 _load_raw_preview_with_orientation을 임시로 호출하여 미리보기 정보 얻기
+            # (ImageLoader 인스턴스가 필요)
+            preview_pixmap, preview_width, preview_height = self.image_loader._load_raw_preview_with_orientation(first_raw_file_path_str)
+            if preview_pixmap and not preview_pixmap.isNull() and preview_width and preview_height:
+                preview_resolution_str = f"{preview_width}x{preview_height}"
+            else: # 미리보기 추출 실패 또는 정보 없음
+                preview_resolution_str = LanguageManager.translate("정보 없음") # 또는 "-"
+
+            logging.info(f"파일 분석 완료: 호환={is_raw_compatible}, 모델='{final_camera_model_display}', 원본={original_resolution_str}, 미리보기={preview_resolution_str}")
+
+            self.last_processed_camera_model = None # 새 폴더 로드 시 이전 카메라 모델 정보 초기화
+            
+            # --- 2. 저장된 설정 확인 및 메시지 박스 표시 결정 ---
+            chosen_method = None # 사용자가 최종 선택한 처리 방식 ("preview" or "decode")
+            dont_ask_again_for_this_model = False
+
+            # final_camera_model_display가 유효할 때만 camera_raw_settings 확인
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                saved_setting_for_this_action = self.get_camera_raw_setting(final_camera_model_display)
+                if saved_setting_for_this_action: # 해당 모델에 대한 설정이 존재하면
+                    # 저장된 "dont_ask" 값을 dont_ask_again_for_this_model의 초기값으로 사용
+                    dont_ask_again_for_this_model = saved_setting_for_this_action.get("dont_ask", False)
+
+                    if dont_ask_again_for_this_model: # "다시 묻지 않음"이 True이면
+                        chosen_method = saved_setting_for_this_action.get("method")
+                        logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
+                    else: # "다시 묻지 않음"이 False이거나 dont_ask 키가 없으면 메시지 박스 표시
+                        chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                            is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                        )
+                        # 사용자가 대화상자를 닫지 않았을 때만 dont_ask_again_for_this_model 값을 업데이트
+                        if chosen_method is not None:
+                            dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+                else: # 해당 모델에 대한 설정이 아예 없으면 메시지 박스 표시
+                    chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                        is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                    )
+                    if chosen_method is not None:
+                        dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+            else: # 카메라 모델을 알 수 없는 경우 -> 항상 메시지 박스 표시
+                logging.info(f"카메라 모델을 알 수 없어, 메시지 박스 표시 (호환성 기반)")
+                chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
+                    is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+                )
+                if chosen_method is not None:
+                    dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
+
+            if chosen_method is None:
+                logging.info("RAW 처리 방식 선택되지 않음 (대화상자 닫힘 등). 로드 취소.")
+                return False
+            
+            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}")
+
+            # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
+            # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                # chosen_method가 None이 아닐 때만 저장 로직 실행
+                self.set_camera_raw_setting(final_camera_model_display, chosen_method, dont_ask_again_for_this_model)
+            
+            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
+                self.last_processed_camera_model = final_camera_model_display
+            else:
+                self.last_processed_camera_model = None
+            
+            # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
+            self.image_loader.set_raw_load_strategy(chosen_method)
+            logging.info(f"ImageLoader 처리 방식 설정 (새 로드): {chosen_method}")
+
+            # --- RAW 로드 성공 시 ---
+            logging.info(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
+            self.image_files = unique_raw_files
+            
+            self.raw_folder = folder_path
+            self.is_raw_only_mode = True
+
+            self.current_folder = ""
+            self.raw_files = {} # RAW 전용 모드에서는 이 딕셔너리는 다른 용도로 사용되지 않음
+            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+            self.update_jpg_folder_ui_state()
+
+            self.raw_folder_path_label.setText(folder_path)
+            self.update_raw_folder_ui_state()
+            self.update_match_raw_button_state()
+            self.load_button.setEnabled(False)
+
+            self.grid_page_start_index = 0
+            self.current_grid_index = 0
+            self.image_loader.clear_cache() # 이전 캐시 비우기 (다른 전략이었을 수 있으므로)
+
+            self.zoom_mode = "Fit"
+            self.fit_radio.setChecked(True)
+            self.grid_mode = "Off"
+            self.grid_off_radio.setChecked(True)
+            self.update_zoom_radio_buttons_state()
+            self.save_state()
+
+            self.current_image_index = 0
+            # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
+            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})")
+            self.display_current_image() 
+
+            if self.grid_mode == "Off":
+                self.start_background_thumbnail_preloading()
+
+            if self.session_management_popup and self.session_management_popup.isVisible():
+                self.session_management_popup.update_all_button_states()
+
+            return True
+            
+        except Exception as e:
+            logging.error(f"_load_raw_only_from_path 오류: {e}")
+            return False
+
+    def _handle_raw_folder_drop(self, folder_path):
+        """RAW 폴더 드랍 처리"""
+        try:
+            # 이미지 파일이 로드되지 않았다면 RAW 전용 모드로 동작
+            if not self.image_files:
+                # RAW 전용 모드: 새로운 함수 사용
+                success = self._load_raw_only_from_path(folder_path)
+                if success:
+                    logging.info(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 성공: {folder_path}")
+                    return True
+                else:
+                    logging.warning(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 실패: {folder_path}")
+                    return False
+            else:
+                # JPG-RAW 매칭 모드: 이미 로드된 이미지들과 RAW 파일 매칭
+                self.raw_folder = folder_path
+                self.raw_folder_path_label.setText(folder_path)
+                
+                # 현재 로드된 이미지들과 RAW 파일 매칭 시도
+                self.match_raw_files(folder_path)
+                logging.info(f"드래그 앤 드랍으로 RAW 폴더 설정 및 매칭 완료: {folder_path}")
+                
+                # UI 상태 업데이트
+                self.update_raw_folder_ui_state()
+                self.update_match_raw_button_state()
+                self.save_state()
+                return True
+        except Exception as e:
+            logging.error(f"_handle_raw_folder_drop 오류: {e}")
+            return False
+
+    def _handle_category_folder_drop(self, folder_path, folder_index):
+        """분류 폴더 드랍 처리"""
+        try:
+            if 0 <= folder_index < len(self.target_folders):
+                # 기존 select_category_folder 로직 재사용
+                self.target_folders[folder_index] = folder_path
+                
+                # 레이블 텍스트 업데이트
+                if UIScaleManager.is_16_10_or_less():
+                    self.folder_path_labels[folder_index].setText(
+                        folder_path,
+                        max_length=20, prefix_length=2, suffix_length=12
+                    )
+                else:
+                    self.folder_path_labels[folder_index].setText(
+                        folder_path,
+                        max_length=60, prefix_length=20, suffix_length=25
+                    )
+                
+                # UI 업데이트
+                self.update_folder_buttons()
+                self.save_state()
+                
+                logging.info(f"드래그 앤 드랍으로 분류 폴더 {folder_index+1} 설정 완료: {folder_path}")
+                return True
+            else:
+                logging.error(f"잘못된 분류 폴더 인덱스: {folder_index}")
+                return False
+        except Exception as e:
+            logging.error(f"_handle_category_folder_drop 오류: {e}")
+            return False
+        
+    def canvas_dragEnterEvent(self, event):
+        """캔버스 영역 드래그 진입 시 호출"""
+        try:
+            # 폴더만 허용
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:  # 하나의 항목만 허용
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        logging.debug(f"캔버스 드래그 진입: 폴더 감지됨 - {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("캔버스 드래그 진입: 폴더가 아니거나 여러 항목 감지됨")
+        except Exception as e:
+            logging.error(f"canvas_dragEnterEvent 오류: {e}")
+            event.ignore()
+
+    def canvas_dragMoveEvent(self, event):
+        """캔버스 영역 드래그 이동 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        event.acceptProposedAction()
+                        return
+            
+            event.ignore()
+        except Exception as e:
+            logging.error(f"canvas_dragMoveEvent 오류: {e}")
+            event.ignore()
+
+    def canvas_dragLeaveEvent(self, event):
+        """캔버스 영역 드래그 벗어날 때 호출"""
+        try:
+            logging.debug("캔버스 드래그 벗어남")
+        except Exception as e:
+            logging.error(f"canvas_dragLeaveEvent 오류: {e}")
+
+    def canvas_dropEvent(self, event):
+        """캔버스 영역 드랍 시 호출"""
+        try:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                if len(urls) == 1:
+                    file_path = urls[0].toLocalFile()
+                    if file_path and Path(file_path).is_dir():
+                        # 캔버스 폴더 드랍 처리
+                        success = self._handle_canvas_folder_drop(file_path)
+                        
+                        if success:
+                            event.acceptProposedAction()
+                            logging.info(f"캔버스 폴더 드랍 성공: {file_path}")
+                        else:
+                            event.ignore()
+                            logging.warning(f"캔버스 폴더 드랍 실패: {file_path}")
+                        return
+            
+            # 조건에 맞지 않으면 거부
+            event.ignore()
+            logging.debug("canvas_dropEvent: 유효하지 않은 드랍")
+        except Exception as e:
+            logging.error(f"canvas_dropEvent 오류: {e}")
+            event.ignore()
+
+    def _analyze_folder_contents(self, folder_path):
+        """폴더 내용 분석 (RAW 파일, 일반 이미지 파일, 매칭 여부)"""
+        try:
+            folder_path_obj = Path(folder_path)
+            if not folder_path_obj.is_dir():
+                return None
+            
+            # 파일 분류
+            raw_files = []
+            image_files = []
+            
+            for file_path in folder_path_obj.iterdir():
+                if not file_path.is_file():
+                    continue
+                
+                ext = file_path.suffix.lower()
+                if ext in self.raw_extensions:
+                    raw_files.append(file_path)
+                elif ext in self.supported_image_extensions:
+                    image_files.append(file_path)
+            
+            # 매칭 파일 확인 (이름이 같은 파일)
+            raw_stems = {f.stem for f in raw_files}
+            image_stems = {f.stem for f in image_files}
+            matching_files = raw_stems & image_stems
+            
+            return {
+                'raw_files': raw_files,
+                'image_files': image_files,
+                'has_raw': len(raw_files) > 0,
+                'has_images': len(image_files) > 0,
+                'has_matching': len(matching_files) > 0,
+                'matching_count': len(matching_files)
+            }
+        except Exception as e:
+            logging.error(f"_analyze_folder_contents 오류: {e}")
+            return None
+
+    def _show_folder_choice_dialog(self, has_matching=False):
+        """폴더 선택지 팝업 대화상자"""
+        try:
+            dialog = QDialog(self)
+            dialog.setWindowTitle(LanguageManager.translate("폴더 불러오기"))
+            
+            # 다크 테마 적용
+            if sys.platform == "win32":
+                try:
+                    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+                    dwmapi = ctypes.WinDLL("dwmapi")
+                    dwmapi.DwmSetWindowAttribute.argtypes = [
+                        ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
+                    ]
+                    hwnd = int(dialog.winId())
+                    value = ctypes.c_int(1)
+                    dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                                ctypes.byref(value), ctypes.sizeof(value))
+                except Exception:
+                    pass
+            
+            palette = QPalette()
+            palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
+            dialog.setPalette(palette)
+            dialog.setAutoFillBackground(True)
+            
+            layout = QVBoxLayout(dialog)
+            layout.setSpacing(15)
+            layout.setContentsMargins(20, 20, 20, 20)
+            
+            # 메시지 레이블
+            message_label = QLabel(LanguageManager.translate("폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?"))
+            message_label.setWordWrap(True)
+            message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            layout.addWidget(message_label)
+            
+            # 라디오 버튼 그룹
+            radio_group = QButtonGroup(dialog)
+            radio_style = f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 5px 0px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: {ThemeManager.get_color('accent')};
+                    border: 2px solid {ThemeManager.get_color('accent')};
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked:hover {{
+                    border: 2px solid {ThemeManager.get_color('text_disabled')};
+                }}
+            """
+            
+            if has_matching:
+                # 3선택지: 매칭, 일반 이미지, RAW
+                option1 = QRadioButton(LanguageManager.translate("파일명이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기"))
+                option2 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
+                option3 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
+                
+                option1.setStyleSheet(radio_style)
+                option2.setStyleSheet(radio_style)
+                option3.setStyleSheet(radio_style)
+                
+                radio_group.addButton(option1, 0)  # 매칭
+                radio_group.addButton(option2, 1)  # 일반 이미지
+                radio_group.addButton(option3, 2)  # RAW
+                
+                option1.setChecked(True)  # 기본 선택: 매칭
+                
+                layout.addWidget(option1)
+                layout.addWidget(option2)
+                layout.addWidget(option3)
+            else:
+                # 2선택지: 일반 이미지, RAW
+                option1 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
+                option2 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
+                
+                option1.setStyleSheet(radio_style)
+                option2.setStyleSheet(radio_style)
+                
+                radio_group.addButton(option1, 0)  # 일반 이미지
+                radio_group.addButton(option2, 1)  # RAW
+                
+                option1.setChecked(True)  # 기본 선택: 일반 이미지
+                
+                layout.addWidget(option1)
+                layout.addWidget(option2)
+            
+            # 확인 버튼
+            confirm_button = QPushButton(LanguageManager.translate("확인"))
+            confirm_button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    color: {ThemeManager.get_color('text')};
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    min-width: 80px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ThemeManager.get_color('bg_hover')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ThemeManager.get_color('bg_pressed')};
+                }}
+            """)
+            confirm_button.clicked.connect(dialog.accept)
+            
+            # 버튼 컨테이너 (가운데 정렬)
+            button_container = QWidget()
+            button_layout = QHBoxLayout(button_container)
+            button_layout.setContentsMargins(0, 0, 0, 0)
+            button_layout.addStretch(1)
+            button_layout.addWidget(confirm_button)
+            button_layout.addStretch(1)
+            
+            layout.addWidget(button_container)
+            
+            if dialog.exec() == QDialog.Accepted:
+                return radio_group.checkedId()
+            else:
+                return None
+                
+        except Exception as e:
+            logging.error(f"_show_folder_choice_dialog 오류: {e}")
+            return None
+
+    def _handle_canvas_folder_drop(self, folder_path):
+        """캔버스 영역 폴더 드랍 메인 처리 로직"""
+        try:
+            # 폴더 내용 분석
+            analysis = self._analyze_folder_contents(folder_path)
+            if not analysis:
+                return False
+            
+            # 현재 상태 확인
+            current_has_images = bool(self.image_files and not self.is_raw_only_mode)
+            
+            if not self.image_files:
+                # === 아무런 파일도 로드되어 있지 않은 경우 ===
+                if analysis['has_raw'] and not analysis['has_images']:
+                    # 1. RAW 파일만 있는 경우
+                    return self._handle_raw_folder_drop(folder_path)
+                
+                elif analysis['has_images'] and not analysis['has_raw']:
+                    # 2. 일반 이미지 파일만 있는 경우
+                    return self._handle_image_folder_drop(folder_path)
+                
+                elif analysis['has_raw'] and analysis['has_images']:
+                    if not analysis['has_matching']:
+                        # 3. 둘 다 있지만 매칭되는 파일이 없는 경우
+                        choice = self._show_folder_choice_dialog(has_matching=False)
+                        if choice is None:
+                            return False
+                        elif choice == 0:  # 일반 이미지만
+                            return self._handle_image_folder_drop(folder_path)
+                        elif choice == 1:  # RAW만
+                            return self._handle_raw_folder_drop(folder_path)
+                    else:
+                        # 4. 둘 다 있고 매칭되는 파일이 있는 경우
+                        choice = self._show_folder_choice_dialog(has_matching=True)
+                        if choice is None:
+                            return False
+                        elif choice == 0:  # 매칭하여 불러오기
+                            # 일반 이미지 먼저 로드, 그 다음 RAW 매칭
+                            if self._handle_image_folder_drop(folder_path):
+                                return self._handle_raw_folder_drop(folder_path)
+                            return False
+                        elif choice == 1:  # 일반 이미지만
+                            return self._handle_image_folder_drop(folder_path)
+                        elif choice == 2:  # RAW만
+                            return self._handle_raw_folder_drop(folder_path)
+                else:
+                    # 지원하는 파일이 없는 경우
+                    self.show_themed_message_box(
+                        QMessageBox.Warning, 
+                        LanguageManager.translate("경고"), 
+                        LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다.")
+                    )
+                    return False
+            
+            elif current_has_images:
+                # === 일반 이미지가 이미 로드된 경우 ===
+                if analysis['has_raw']:
+                    # RAW 파일이 있으면 JPG-RAW 매칭 시도
+                    return self.match_raw_files(folder_path)
+                else:
+                    # RAW 파일이 없으면 안내 메시지
+                    self.show_themed_message_box(
+                        QMessageBox.Information,
+                        LanguageManager.translate("정보"),
+                        LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
+                    )
+                    return False
+            
+            else:
+                # === 그 외의 경우 (RAW 전용 모드 등) ===
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("정보"),
+                    LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
+                )
+                return False
+                
+        except Exception as e:
+            logging.error(f"_handle_canvas_folder_drop 오류: {e}")
+            return False
+    # === 드래그 앤 드랍 관련 코드 끝 === #
+
+    def on_extension_checkbox_changed(self, state):
+        # 확장자 그룹 정의 (setup_settings_ui와 동일하게)
+        extension_groups = {
+            "JPG": ['.jpg', '.jpeg'],
+            "HEIC": ['.heic', '.heif'],
+            "PNG": ['.png'],
+            "WebP": ['.webp'],
+            "BMP": ['.bmp'],
+            "TIFF": ['.tif', '.tiff']
+        }
+
+        # 1. 현재 체크된 모든 확장자를 수집
+        new_supported_extensions = set()
+        checked_count = 0
+        for name, checkbox in self.ext_checkboxes.items():
+            if checkbox.isChecked():
+                checked_count += 1
+                new_supported_extensions.update(extension_groups[name])
+
+        # 2. 모든 체크박스가 해제되었는지 확인 (핵심 수정 부분)
+        if checked_count == 0:
+            # 마지막 체크박스가 해제되려는 순간, 신호를 보낸 체크박스의 연결을 잠시 끊음
+            sender_checkbox = self.sender()
+            if sender_checkbox:
+                sender_checkbox.blockSignals(True)  # 시그널 전파 중지
+                sender_checkbox.setChecked(False)   # UI상으로는 체크 해제된 것처럼 보이게 함 (선택적)
+                sender_checkbox.blockSignals(False) # 시그널 다시 연결
+
+            # JPG 체크박스를 찾아서 강제로 체크 상태로 만듦
+            jpg_checkbox = self.ext_checkboxes.get("JPG")
+            if jpg_checkbox:
+                jpg_checkbox.blockSignals(True)   # 무한 재귀 방지를 위해 시그널 중지
+                jpg_checkbox.setChecked(True)     # JPG를 강제로 체크
+                jpg_checkbox.blockSignals(False)  # 시그널 다시 연결
+
+            # JPG 확장자만 다시 new_supported_extensions에 추가
+            new_supported_extensions.update(extension_groups["JPG"])
+            logging.warning("모든 확장자 선택 해제 시도됨. JPG를 기본값으로 자동 선택합니다.")
+
+        # 3. 변경된 확장자 목록을 self.supported_image_extensions에 반영
+        self.supported_image_extensions = new_supported_extensions
+        logging.info(f"지원 확장자 변경됨: {sorted(list(self.supported_image_extensions))}")
+
+        # (선택 사항) 변경 사항을 즉시 저장하고 싶다면 아래 주석 해제
+        # self.save_state()
+
+    
+    def _trigger_state_save_for_index(self): # 자동저장
         """current_image_index를 포함한 전체 상태를 저장합니다 (주로 타이머에 의해 호출)."""
         logging.debug(f"Index save timer triggered. Saving state (current_image_index: {self.current_image_index}).")
         self.save_state()
@@ -3158,7 +4754,15 @@ class PhotoSortApp(QMainWindow):
 
         view_rect = self.scroll_area.viewport().rect()
         image_label_pos = self.image_label.pos()
-        current_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        
+        # <<<--- 줌 배율 계산 로직 수정 ---<<<
+        if self.zoom_mode == "100%":
+            current_zoom_factor = 1.0
+        elif self.zoom_mode == "Spin":
+            current_zoom_factor = self.zoom_spin_value
+        else: # 예외 상황 (이론상 발생 안 함)
+            current_zoom_factor = 1.0
+        
         zoomed_img_width = self.original_pixmap.width() * current_zoom_factor
         zoomed_img_height = self.original_pixmap.height() * current_zoom_factor
 
@@ -3179,18 +4783,29 @@ class PhotoSortApp(QMainWindow):
         """
         if orientation_type in self.viewport_focus_by_orientation:
             saved_focus = self.viewport_focus_by_orientation[orientation_type]
-            # 저장된 상대 중심은 사용하되, 줌 레벨은 현재 요청된 줌 레벨을 따름
-            logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 사용: rel_center={saved_focus['rel_center']} (원래 줌: {saved_focus['zoom_level']}), 요청 줌: {requested_zoom_level}")
-            return saved_focus["rel_center"], requested_zoom_level # 상대 중심과 "요청된" 줌 레벨
+            saved_zoom_level = saved_focus.get("zoom_level", "")
+            saved_rel_center = saved_focus.get("rel_center", QPointF(0.5, 0.5))
+            
+            # 200% → Spin 호환성 처리
+            if saved_zoom_level == "200%" and requested_zoom_level == "Spin":
+                # 기존 200% 데이터를 Spin으로 사용 (2.0 = 200%)
+                if not hasattr(self, 'zoom_spin_value') or self.zoom_spin_value != 2.0:
+                    self.zoom_spin_value = 2.0
+                    if hasattr(self, 'zoom_spin'):
+                        self.zoom_spin.setValue(200)
+                logging.debug(f"200% → Spin 호환성 처리: zoom_spin_value를 2.0으로 설정")
+            
+            logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 사용: rel_center={saved_rel_center} (원래 줌: {saved_zoom_level}), 요청 줌: {requested_zoom_level}")
+            return saved_rel_center, requested_zoom_level
         
         logging.debug(f"_get_orientation_viewport_focus: 방향 '{orientation_type}'에 저장된 포커스 없음. 중앙 및 요청 줌({requested_zoom_level}) 사용.")
-        return QPointF(0.5, 0.5), requested_zoom_level # 기본값: 중앙, 요청된 줌 레벨
+        return QPointF(0.5, 0.5), requested_zoom_level
 
 
     def _prepare_for_photo_change(self):
         """사진 변경 직전에 현재 활성 뷰포트와 이전 이미지 상태를 기록합니다."""
         # 현재 활성 뷰포트 정보를 "방향 타입" 고유 포커스로 저장
-        if self.grid_mode == "Off" and self.current_active_zoom_level in ["100%", "200%"] and \
+        if self.grid_mode == "Off" and self.current_active_zoom_level in ["100%", "Spin"] and \
            self.original_pixmap and hasattr(self, 'current_image_orientation') and self.current_image_orientation:
             self._save_orientation_viewport_focus(
                 self.current_image_orientation, # 현재 이미지의 방향 타입
@@ -3255,6 +4870,7 @@ class PhotoSortApp(QMainWindow):
             "raw_files": {k: str(v) for k, v in self.raw_files.items()}, # Path를 str로
             "move_raw_files": self.move_raw_files,
             "target_folders": [str(f) if f else "" for f in self.target_folders],
+            "folder_count": self.folder_count,  # 분류 폴더 개수 저장 추가
             "minimap_visible": self.minimap_toggle.isChecked(), # 현재 UI 상태 반영
             "current_image_index": actual_current_image_list_index, # 전역 인덱스
             "current_grid_index": self.current_grid_index,
@@ -3265,7 +4881,7 @@ class PhotoSortApp(QMainWindow):
             "zoom_mode": self.zoom_mode, # 추가
             "grid_mode": self.grid_mode, # 추가
             "previous_grid_mode": self.previous_grid_mode, # 추가
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # 저장 시점
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             # "viewport_move_speed": self.viewport_move_speed, # 뷰포트 속도는 전역 설정으로 유지, 세션별 저장 X
             # "camera_raw_settings": self.camera_raw_settings, # 카메라별 설정도 전역으로 유지
         }
@@ -3321,17 +4937,67 @@ class PhotoSortApp(QMainWindow):
         self.grid_thumbnail_cache_3x3.clear()
         self.original_pixmap = None
 
+        # 1. 분류 폴더 개수 설정 먼저 복원 (UI 재구성 전에)
+        loaded_folder_count = session_data.get("folder_count", 3)
+        if loaded_folder_count != self.folder_count:
+            logging.info(f"세션 불러오기: 분류 폴더 개수 변경 {self.folder_count} -> {loaded_folder_count}")
+            self.folder_count = loaded_folder_count
+            
+            # 설정창의 콤보박스 동기화
+            if hasattr(self, 'folder_count_combo'):
+                current_count_idx = self.folder_count_combo.findData(self.folder_count)
+                if current_count_idx >= 0:
+                    self.folder_count_combo.setCurrentIndex(current_count_idx)
+                    logging.info(f"세션 불러오기: 설정창 폴더 개수 콤보박스 동기화 완료")
 
-        # 1. 폴더 및 파일 관련 상태 복원
+        # 2. 폴더 및 파일 관련 상태 복원
         self.current_folder = session_data.get("current_folder", "")
         self.raw_folder = session_data.get("raw_folder", "")
         raw_files_str_dict = session_data.get("raw_files", {})
         self.raw_files = {k: Path(v) for k, v in raw_files_str_dict.items() if v} # Path 객체로
         self.move_raw_files = session_data.get("move_raw_files", True)
-        self.target_folders = session_data.get("target_folders", ["", "", ""])
+        
+        # target_folders 복원 (folder_count 기반으로 크기 조정)
+        loaded_folders = session_data.get("target_folders", [])
+        self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
+        
         self.is_raw_only_mode = session_data.get("is_raw_only_mode", False)
 
-        # 2. UI 관련 상태 복원
+        # 3. 분류 폴더 UI 재구성 (folder_count 변경 시 필요)
+        self._rebuild_folder_selection_ui()
+
+        # 4. 폴더 경로 UI 라벨 업데이트
+        if self.current_folder and Path(self.current_folder).is_dir():
+            self.folder_path_label.setText(self.current_folder)
+        else:
+            self.current_folder = ""
+            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+
+        if self.raw_folder and Path(self.raw_folder).is_dir():
+            self.raw_folder_path_label.setText(self.raw_folder)
+        else:
+            self.raw_folder = ""
+            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+
+        # 분류 폴더 경로 라벨 업데이트
+        for i in range(self.folder_count):
+            if i < len(self.target_folders) and self.target_folders[i] and Path(self.target_folders[i]).is_dir():
+                folder_path = self.target_folders[i]
+                # 16:10 이하 해상도에서는 더 긴 값을 사용
+                if UIScaleManager.is_16_10_or_less():
+                    self.folder_path_labels[i].setText(
+                        folder_path,
+                        max_length=20, prefix_length=2, suffix_length=12
+                    )
+                else:
+                    self.folder_path_labels[i].setText(
+                        folder_path,
+                        max_length=60, prefix_length=20, suffix_length=25
+                    )
+            else:
+                self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
+
+        # 5. UI 관련 상태 복원
         self.minimap_toggle.setChecked(session_data.get("minimap_visible", True))
         self.show_grid_filenames = session_data.get("show_grid_filenames", False)
         if hasattr(self, 'filename_toggle_grid'): self.filename_toggle_grid.setChecked(self.show_grid_filenames)
@@ -3339,11 +5005,11 @@ class PhotoSortApp(QMainWindow):
         self.zoom_mode = session_data.get("zoom_mode", "Fit")
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+        elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
 
-        # 3. 이미지 목록 로드 (저장된 폴더 경로 기반)
+        # 6. 이미지 목록 로드 (저장된 폴더 경로 기반)
         images_loaded_successfully = False
-        self.image_files = [] # 이전 목록 초기화
+        self.image_files = []
         
         if self.is_raw_only_mode:
             if self.raw_folder and Path(self.raw_folder).is_dir():
@@ -3359,20 +5025,19 @@ class PhotoSortApp(QMainWindow):
                     # self.raw_files = {} # 위에서 session_data로부터 이미 설정됨
                     self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         
-        # 로드 후 폴더 UI 상태 업데이트
+        # 7. 로드 후 폴더 UI 상태 업데이트
         self.update_jpg_folder_ui_state()
         self.update_raw_folder_ui_state()
         self.update_folder_buttons()
         self.update_match_raw_button_state()
 
-
-        # 4. ImageLoader 전략 설정
+        # 8. ImageLoader 전략 설정
         last_method = session_data.get("last_used_raw_method", "preview")
         if hasattr(self, 'image_loader'):
             self.image_loader.set_raw_load_strategy(last_method)
         logging.info(f"세션 불러오기: ImageLoader 처리 방식 설정됨: {last_method}")
 
-        # 5. 뷰 상태 복원 (인덱스, 그리드 모드 등)
+        # 9. 뷰 상태 복원 (인덱스, 그리드 모드 등)
         if images_loaded_successfully and self.image_files:
             total_images = len(self.image_files)
             self.grid_mode = session_data.get("grid_mode", "Off")
@@ -3424,7 +5089,7 @@ class PhotoSortApp(QMainWindow):
         self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("불러오기 완료"), LanguageManager.translate("'{session_name}' 세션을 불러왔습니다.").format(session_name=session_name))
         
         if self.session_management_popup and self.session_management_popup.isVisible():
-             self.session_management_popup.update_all_button_states()
+            self.session_management_popup.update_all_button_states()
             
         return True
 
@@ -3501,7 +5166,7 @@ class PhotoSortApp(QMainWindow):
 
     def smooth_viewport_move(self):
         """타이머에 의해 호출되어 뷰포트를 부드럽게 이동시킵니다."""
-        if not (self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and self.original_pixmap and self.pressed_keys_for_viewport):
+        if not (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap and self.pressed_keys_for_viewport):
             self.viewport_move_timer.stop() # 조건 안 맞으면 타이머 중지
             return
 
@@ -3533,8 +5198,13 @@ class PhotoSortApp(QMainWindow):
         new_x, new_y = current_pos.x() + dx, current_pos.y() + dy
 
         # 패닝 범위 제한 로직 (동일하게 적용)
-        img_width = self.original_pixmap.width() * (1.0 if self.zoom_mode == "100%" else 2.0)
-        img_height = self.original_pixmap.height() * (1.0 if self.zoom_mode == "100%" else 2.0)
+        if self.zoom_mode == "100%":
+            zoom_factor = 1.0
+        else: # Spin 모드
+            zoom_factor = self.zoom_spin_value
+            
+        img_width = self.original_pixmap.width() * zoom_factor
+        img_height = self.original_pixmap.height() * zoom_factor
         view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
         x_min_limit = min(0, view_width - img_width) if img_width > view_width else (view_width - img_width) // 2
         x_max_limit = 0 if img_width > view_width else x_min_limit
@@ -3807,28 +5477,41 @@ class PhotoSortApp(QMainWindow):
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 10, 0, 0)
         
-        # self.settings_popup의 멤버로 confirm_button을 만들어야 exec_() 후 상태 접근 가능
-        # 또는 dialog.accept() / dialog.reject() 를 버튼에 직접 연결
-        confirm_button_first_run = QPushButton(LanguageManager.translate("확인")) # 지역 변수로 생성
+        # 🎯 중요: 확인 버튼을 self의 멤버로 만들어서 언어 변경 시 업데이트 가능하게 함
+        self.first_run_confirm_button = QPushButton(LanguageManager.translate("확인"))
         
         # 스타일 적용 (기존 스타일 재사용 또는 새로 정의)
         if platform.system() == "Darwin": # Mac 스타일
-            confirm_button_first_run.setStyleSheet("""
+            self.first_run_confirm_button.setStyleSheet("""
                 QPushButton { background-color: #444444; color: #D8D8D8; border: none; 
-                              padding: 8px 16px; border-radius: 4px; min-width: 100px; }
+                            padding: 8px 16px; border-radius: 4px; min-width: 100px; }
                 QPushButton:hover { background-color: #555555; }
                 QPushButton:pressed { background-color: #222222; } """)
         else: # Windows/Linux 등
-            confirm_button_first_run.setStyleSheet(f"""
+            self.first_run_confirm_button.setStyleSheet(f"""
                 QPushButton {{ background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
-                              border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
+                            border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
                 QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
                 QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }} """)
 
-        confirm_button_first_run.clicked.connect(self.settings_popup.accept) # <<< "확인" 버튼은 dialog.accept() 호출
+        self.first_run_confirm_button.clicked.connect(self.settings_popup.accept)
+        
+        # 🎯 언어 변경 콜백 등록 - 첫 실행 팝업의 텍스트 업데이트
+        def update_first_run_popup_texts():
+            if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
+                # 팝업 제목 업데이트
+                self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
+                # 환영 메시지 업데이트
+                if hasattr(self.settings_popup, 'welcome_label'):
+                    self.settings_popup.welcome_label.setText(LanguageManager.translate("기본 설정을 선택해주세요."))
+                # 확인 버튼 텍스트 업데이트
+                if hasattr(self, 'first_run_confirm_button'):
+                    self.first_run_confirm_button.setText(LanguageManager.translate("확인"))
+        
+        LanguageManager.register_language_change_callback(update_first_run_popup_texts)
         
         button_layout.addStretch(1)
-        button_layout.addWidget(confirm_button_first_run)
+        button_layout.addWidget(self.first_run_confirm_button)
         button_layout.addStretch(1)
         
         main_layout.addWidget(button_container)
@@ -3836,36 +5519,69 @@ class PhotoSortApp(QMainWindow):
         # --- dialog.exec_() 호출 및 결과에 따른 save_state() 실행 ---
         result = self.settings_popup.exec_() # 모달로 실행하고 결과 받기
 
+        # 🎯 팝업이 닫힌 후 콜백 제거 및 멤버 변수 정리
+        if update_first_run_popup_texts in LanguageManager._language_change_callbacks:
+            LanguageManager._language_change_callbacks.remove(update_first_run_popup_texts)
+        
+        if hasattr(self, 'first_run_confirm_button'):
+            delattr(self, 'first_run_confirm_button')
+
         if result == QDialog.Accepted: # 사용자가 "확인" 버튼을 눌렀다면
             logging.info("첫 실행 설정: '확인' 버튼 클릭됨. 상태 저장 실행.")
             self.save_state() # photosort_data.json 파일 생성 및 현재 설정 저장
             return True # <<< "확인" 눌렀음을 알림
-        else: # 사용자가 창을 닫거나 다른 방식으로 종료 (예: ESC 키)
-            logging.info("첫 실행 설정: 대화상자 '확인' 없이 닫힘. 상태 저장 안 함.")
-            return False # <<< "확인" 안 눌렀음을 알림
-            # 이 경우 photosort_data.json 파일은 생성되지 않음.
-            # 프로그램이 이 상태에서 계속 실행될지, 아니면 종료될지는 정책에 따라 다름.
+        else: # 사용자가 "확인" 버튼을 누르지 않았다면 (팝업 닫기, ESC 키 등)
+            logging.info("첫 실행 설정: '확인' 버튼을 누르지 않음. 상태 저장 안함.")
+            return False # <<< "확인" 누르지 않았음을 알림
 
+    def show_first_run_settings_popup_delayed(self):
+        """메인 윈도우 표시 후 첫 실행 설정 팝업을 표시"""
+        accepted_first_run = self.show_first_run_settings_popup()
+        
+        if not accepted_first_run:
+            logging.info("PhotoSortApp: 첫 실행 설정이 완료되지 않아 앱을 종료합니다.")
+            
+            # 🎯 추가 검증: photosort_data.json 파일이 생성되지 않았는지 확인
+            state_file_path = self.get_script_dir() / self.STATE_FILE
+            if state_file_path.exists():
+                logging.warning("PhotoSortApp: 첫 실행 설정 취소했으나 상태 파일이 존재함. 삭제합니다.")
+                try:
+                    state_file_path.unlink()
+                    logging.info("PhotoSortApp: 상태 파일 삭제 완료.")
+                except Exception as e:
+                    logging.error(f"PhotoSortApp: 상태 파일 삭제 실패: {e}")
+            
+            QApplication.quit()
+            return
+        
+        # 첫 실행 플래그 제거
+        if hasattr(self, 'is_first_run'):
+            delattr(self, 'is_first_run')
+        
+        logging.info("PhotoSortApp: 첫 실행 설정 완료")
+            
     def _build_shortcut_html_text(self):
         """현재 언어 설정에 맞춰 단축키 안내 HTML 텍스트 생성 (개별 p 태그와 margin 사용)"""
         shortcut_definitions = [
             (0, "▪ WASD: 사진 넘기기"),
             (0, "▪ Shift + WASD:"),
             (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
-            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
             (0, "▪ 방향키:"),
             (1, "  - 사진 넘기기"),
-            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
-            (0, "▪ 1, 2, 3: 지정한 폴더로 사진 이동"),
-            (0, "▪ Space:"),
+            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
+            (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
+            (0, "▪ 스페이스바:"),
             (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
             (1, "  - Grid On: 선택한 이미지 확대 보기"),
-            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ ESC:"),
-            (1, "  - Zoom 100% / 200%: 이미지 축소(Fit)"),
+            (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
             (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
+            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ Ctrl + Z: 파일 이동 취소"),
             (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
+            (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
             (0, "▪ Enter: 파일 목록 표시"),
             (0, "▪ Delete: 작업 상태 초기화"),
         ]
@@ -3910,20 +5626,22 @@ class PhotoSortApp(QMainWindow):
             (0, "▪ WASD: 사진 넘기기"),
             (0, "▪ Shift + WASD:"),
             (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
-            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
+            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
             (0, "▪ 방향키:"),
             (1, "  - 사진 넘기기"),
-            (1, "  - Zoom 100%/200%: 뷰포트 이동"),
-            (0, "▪ 1, 2, 3: 지정한 폴더로 사진 이동"),
-            (0, "▪ Space:"),
+            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
+            (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
+            (0, "▪ 스페이스바:"),
             (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
             (1, "  - Grid On: 선택한 이미지 확대 보기"),
-            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ ESC:"),
-            (1, "  - Zoom 100% / 200%: 이미지 축소(Fit)"),
+            (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
             (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
+            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ Ctrl + Z: 파일 이동 취소"),
             (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
+            (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
             (0, "▪ Enter: 파일 목록 표시"),
             (0, "▪ Delete: 작업 상태 초기화"),
         ]
@@ -4121,6 +5839,15 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"백그라운드 이미지 사전 로드 오류 ({Path(image_path).name}): {e}")
             return False
+        
+    def on_mouse_wheel_action_changed(self, button):
+        """마우스 휠 동작 설정 변경 시 호출"""
+        if button == self.mouse_wheel_photo_radio:
+            self.mouse_wheel_action = "photo_navigation"
+            logging.info("마우스 휠 동작: 사진 넘기기로 변경됨")
+        elif button == self.mouse_wheel_none_radio:
+            self.mouse_wheel_action = "none"
+            logging.info("마우스 휠 동작: 없음으로 변경됨")
 
     def setup_settings_ui(self, is_first_run_popup=False):
         """설정 UI 구성 (언어, 날짜 형식, 테마 설정)"""
@@ -4139,7 +5866,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font())
         font.setPointSize(UIScaleManager.get("font_size"))
         language_title.setFont(font)
-        language_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        language_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         language_title.setObjectName("language_title_label")
         
         # 라디오 버튼 컨테이너
@@ -4222,7 +5949,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font()) # 현재 적용된 폰트 가져오기
         font.setPointSize(UIScaleManager.get("font_size")) # 명시적으로 설정
         panel_pos_title.setFont(font)
-        panel_pos_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
+        panel_pos_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
         panel_pos_title.setObjectName("panel_pos_title_label")
 
         # 라디오 버튼 컨테이너
@@ -4301,7 +6028,7 @@ class PhotoSortApp(QMainWindow):
         date_format_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         date_format_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         date_format_title.setFont(font)
-        date_format_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        date_format_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         date_format_title.setObjectName("date_format_title_label")
         
         self.date_format_combo = QComboBox()
@@ -4332,7 +6059,7 @@ class PhotoSortApp(QMainWindow):
         theme_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         theme_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         theme_title.setFont(font)
-        theme_title.setMinimumWidth(200) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        theme_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         theme_title.setObjectName("theme_title_label")
         
         self.theme_combo = QComboBox()
@@ -4355,6 +6082,100 @@ class PhotoSortApp(QMainWindow):
         # ========== 테마 설정 끝 ==========
 
         if not is_first_run_popup: # 초기 설정 창에는 나오지 않을 설정들
+        # ========== 이미지 형식 설정 ==========
+            ext_container = QWidget()
+            ext_layout = QVBoxLayout(ext_container)
+            ext_layout.setContentsMargins(0, 5, 0, 5)
+
+            ext_title = QLabel(LanguageManager.translate("불러올 이미지 형식")) # 새 번역 키
+            ext_title.setObjectName("ext_title_label")  # objectName 지정
+            ext_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            ext_title.setMinimumWidth(250) 
+
+            # 체크박스 6개를 가로로 나란히 배치 (QHBoxLayout 사용)
+            self.ext_checkboxes = {} # 체크박스 위젯들을 저장할 딕셔너리
+
+            # 확장자 그룹 정의 (UI 표시용)
+            extension_groups = {
+                "JPG": ['.jpg', '.jpeg'],
+                "PNG": ['.png'],
+                "WebP": ['.webp'],
+                "HEIC": ['.heic', '.heif'],
+                "BMP": ['.bmp'],
+                "TIFF": ['.tif', '.tiff']
+            }
+            
+            # 체크박스 스타일
+            checkbox_style = f"""
+                QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 2px; }}
+                QCheckBox::indicator {{ width: 11px; height: 11px; }}
+                QCheckBox::indicator:checked {{ background-color: #848484; border: 2px solid #848484; border-radius: 1px; }}
+                QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 1px; }}
+                QCheckBox::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+            """
+
+            # 한 줄에 ext_title + 체크박스 6개 가로 배치
+            ext_row_widget = QWidget()
+            ext_row_layout = QHBoxLayout(ext_row_widget)
+            ext_row_layout.setContentsMargins(0, 0, 0, 0)
+            ext_row_layout.setSpacing(10)
+            ext_row_layout.addWidget(ext_title)
+
+            # 체크박스 6개를 가로로 추가
+            checkbox_row_widget = QWidget()
+            checkbox_row_layout = QHBoxLayout(checkbox_row_widget)
+            checkbox_row_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_row_layout.setSpacing(20)  # 체크박스 사이 간격
+            
+            for name, exts in extension_groups.items():
+                checkbox = QCheckBox(name)
+                checkbox.setStyleSheet(checkbox_style)
+                is_checked = any(ext in self.supported_image_extensions for ext in exts)
+                checkbox.setChecked(is_checked)
+                checkbox.stateChanged.connect(self.on_extension_checkbox_changed)
+                self.ext_checkboxes[name] = checkbox
+                checkbox_row_layout.addWidget(checkbox)
+            checkbox_row_layout.addStretch()
+
+            ext_row_layout.addWidget(checkbox_row_widget)
+            ext_layout.addWidget(ext_row_widget)
+            settings_layout.addWidget(ext_container)
+            # ========== 이미지 형식 설정 끝 ==========
+
+            # ========== 분류 폴더 개수 설정 ==========
+            folder_count_container = QWidget()
+            folder_count_layout = QHBoxLayout(folder_count_container)
+            folder_count_layout.setContentsMargins(0, 5, 0, 5)
+
+            folder_count_title = QLabel(LanguageManager.translate("분류 폴더 개수")) # 새 번역 키
+            folder_count_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            folder_count_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
+            folder_count_title.setFont(font)
+            folder_count_title.setMinimumWidth(250)
+            folder_count_title.setObjectName("folder_count_title_label")
+
+            self.folder_count_combo = QComboBox()
+            for i in range(1, 10): # 1부터 9까지
+                self.folder_count_combo.addItem(str(i), i)
+
+            # 현재 self.folder_count 값으로 콤보박스 초기 선택 설정
+            current_count_idx = self.folder_count_combo.findData(self.folder_count)
+            if current_count_idx >= 0:
+                self.folder_count_combo.setCurrentIndex(current_count_idx)
+
+            self.folder_count_combo.setStyleSheet(self.generate_combobox_style())
+            # 새 슬롯 연결
+            self.folder_count_combo.currentIndexChanged.connect(self.on_folder_count_changed)
+            self.folder_count_combo.setMinimumWidth(80)
+
+            folder_count_layout.addWidget(folder_count_title)
+            folder_count_layout.addWidget(self.folder_count_combo)
+            folder_count_layout.addStretch(1)
+
+            settings_layout.addWidget(folder_count_container)
+            # ========== 분류 폴더 개수 설정 끝 ==========
+            
             # === 뷰포트 이동 속도 설정 ===
             viewport_speed_container = QWidget()
             viewport_speed_layout = QHBoxLayout(viewport_speed_container)
@@ -4365,7 +6186,7 @@ class PhotoSortApp(QMainWindow):
             viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
             viewport_speed_label.setFont(font)
-            viewport_speed_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤
+            viewport_speed_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤
             viewport_speed_label.setObjectName("viewport_speed_label")
 
             self.viewport_speed_combo = QComboBox()
@@ -4392,6 +6213,99 @@ class PhotoSortApp(QMainWindow):
             settings_layout.addWidget(viewport_speed_container)
             # === 뷰포트 이동 속도 설정 끝 ===
 
+            # === 마우스 휠 동작 설정 ===
+            mouse_wheel_container = QWidget()
+            mouse_wheel_layout = QHBoxLayout(mouse_wheel_container)
+            mouse_wheel_layout.setContentsMargins(0, 5, 0, 5)
+
+            mouse_wheel_label = QLabel(LanguageManager.translate("마우스 휠 동작"))
+            mouse_wheel_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+            mouse_wheel_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+            font = QFont(self.font())
+            font.setPointSize(UIScaleManager.get("font_size"))
+            mouse_wheel_label.setFont(font)
+            mouse_wheel_label.setMinimumWidth(250)
+            mouse_wheel_label.setObjectName("mouse_wheel_label")
+
+            # 라디오 버튼 컨테이너
+            mouse_wheel_radio_container = QWidget()
+            mouse_wheel_radio_layout = QHBoxLayout(mouse_wheel_radio_container)
+            mouse_wheel_radio_layout.setContentsMargins(0, 0, 0, 0)
+            mouse_wheel_radio_layout.setSpacing(20)
+
+            # 라디오 버튼 그룹
+            self.mouse_wheel_group = QButtonGroup()
+
+            # "사진 넘기기" 라디오 버튼
+            self.mouse_wheel_photo_radio = QRadioButton(LanguageManager.translate("사진 넘기기"))
+            self.mouse_wheel_photo_radio.setStyleSheet(f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 2px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: #848484;
+                    border: 2px solid #848484;
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+            """)
+
+            # "없음" 라디오 버튼
+            self.mouse_wheel_none_radio = QRadioButton(LanguageManager.translate("없음"))
+            self.mouse_wheel_none_radio.setStyleSheet(f"""
+                QRadioButton {{
+                    color: {ThemeManager.get_color('text')};
+                    padding: 2px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px;
+                    height: 14px;
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: #848484;
+                    border: 2px solid #848484;
+                    border-radius: 9px;
+                }}
+                QRadioButton::indicator:unchecked {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('border')};
+                    border-radius: 9px;
+                }}
+            """)
+
+            # 버튼 그룹에 추가
+            self.mouse_wheel_group.addButton(self.mouse_wheel_photo_radio, 0)
+            self.mouse_wheel_group.addButton(self.mouse_wheel_none_radio, 1)
+
+            # 현재 설정에 따라 초기 선택
+            if getattr(self, 'mouse_wheel_action', 'photo_navigation') == 'photo_navigation':
+                self.mouse_wheel_photo_radio.setChecked(True)
+            else:
+                self.mouse_wheel_none_radio.setChecked(True)
+
+            # 시그널 연결
+            self.mouse_wheel_group.buttonClicked.connect(self.on_mouse_wheel_action_changed)
+
+            # 레이아웃에 추가
+            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_photo_radio)
+            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_none_radio)
+            mouse_wheel_radio_layout.addStretch(1)
+
+            mouse_wheel_layout.addWidget(mouse_wheel_label)
+            mouse_wheel_layout.addWidget(mouse_wheel_radio_container)
+            mouse_wheel_layout.addStretch(1)
+
+            settings_layout.addWidget(mouse_wheel_container)
+            # === 마우스 휠 동작 설정 끝 ===
 
             # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
             raw_settings_reset_container = QWidget()
@@ -4405,7 +6319,7 @@ class PhotoSortApp(QMainWindow):
             font = QFont(self.font())
             font.setPointSize(UIScaleManager.get("font_size"))
             raw_reset_label.setFont(font)
-            raw_reset_label.setMinimumWidth(200) # 다른 라벨들과 너비 맞춤 (선택 사항)
+            raw_reset_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤 (선택 사항)
             raw_reset_label.setObjectName("raw_reset_label")
 
             self.reset_camera_settings_button = QPushButton(LanguageManager.translate("초기화")) # 새 번역 키
@@ -4513,12 +6427,49 @@ class PhotoSortApp(QMainWindow):
         ThemeManager.set_theme(theme_name)
         # 모든 UI가 update_ui_colors()를 통해 자동으로 업데이트됨
 
+
+    def update_scrollbar_style(self):
+        """컨트롤 패널의 스크롤바 스타일을 현재 테마에 맞게 업데이트합니다."""
+        if hasattr(self, 'control_panel') and isinstance(self.control_panel, QScrollArea):
+            self.control_panel.setStyleSheet(f"""
+                QScrollArea {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: none;
+                }}
+                QScrollBar:vertical {{
+                    border: none;
+                    background: {ThemeManager.get_color('bg_primary')};
+                    width: 6px;
+                    margin: 0px 0px 0px 0px;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: {ThemeManager.get_color('border')};
+                    min-height: 20px;
+                    border-radius: 5px;
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: {ThemeManager.get_color('accent_hover')};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }}
+                QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {{
+                    background: none;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: none;
+                }}
+            """)
+
     def update_ui_colors(self):
         """테마 변경 시 모든 UI 요소의 색상을 업데이트"""
         # 모든 UI 요소의 스타일시트를 다시 설정
         self.update_button_styles()
         self.update_label_styles()
         self.update_folder_styles()
+        self.update_scrollbar_style()
         
         # 설정 버튼 스타일 업데이트
         self.settings_button.setStyleSheet(f"""
@@ -4550,9 +6501,9 @@ class PhotoSortApp(QMainWindow):
                 background-color: {ThemeManager.get_color('bg_secondary')};
                 color: {ThemeManager.get_color('text')};
                 border: none;
-                padding: 8px;
+                padding: {UIScaleManager.get("button_padding")}px;
                 border-radius: 1px;
-                min-height: 30px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
             }}
             QPushButton:hover {{
                 background-color: {ThemeManager.get_color('accent_hover')};
@@ -4575,7 +6526,7 @@ class PhotoSortApp(QMainWindow):
                 border: none;
                 padding: 4px;
                 border-radius: 1px;
-                min-height: 30px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
             }}
             QPushButton:hover {{
                 background-color: {ThemeManager.get_color('accent_hover')};
@@ -4801,6 +6752,7 @@ class PhotoSortApp(QMainWindow):
         info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        info_label.setObjectName("photosort_info_label")
 
         # 링크 활성화 설정 추가
         info_label.setOpenExternalLinks(True)
@@ -5081,7 +7033,7 @@ class PhotoSortApp(QMainWindow):
         text_browser.setHtml(html_content)
         
         # 텍스트 브라우저의 최소/권장 크기 설정 (내용에 따라 조절)
-        text_browser.setMinimumHeight(880)
+        text_browser.setMinimumHeight(980)
         text_browser.setMinimumWidth(550)
 
         layout.addWidget(text_browser)
@@ -5111,19 +7063,24 @@ class PhotoSortApp(QMainWindow):
 
     def create_translated_info_text(self):
         """현재 언어에 맞게 번역된 정보 텍스트를 생성하여 반환"""
-        # UIScaleManager에서 여백 값 가져오기
         version_margin = UIScaleManager.get("info_version_margin", 40)
         paragraph_margin = UIScaleManager.get("info_paragraph_margin", 30) 
         bottom_margin = UIScaleManager.get("info_bottom_margin", 30)
+        accent_color = "#01CA47"
 
         info_text = f"""
-        <h2>PhotoSort</h2>
-        <p style="margin-bottom: {version_margin}px;">Version: 25.05.27</p>
-        <p>{LanguageManager.translate("조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
-        <p>{LanguageManager.translate("제작자 정보를 바꿔서 배포하지만 말아주세요.")}</p>
+        <h2 style="color: {accent_color};">PhotoSort</h2>
+        <p style="margin-bottom: {version_margin}px;">Version: 25.07.15</p>
+        <p>{LanguageManager.translate("개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
+        <p>{LanguageManager.translate("상업적 이용은 허용되지 않습니다.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
-        <p style="margin-bottom: {bottom_margin}px;">Copyright © 2025 ffamilist</p>
-        <p>{LanguageManager.translate("피드백 및 업데이트 확인:")} <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: #E2570D; text-decoration: none;">[EN]</a>&nbsp;&nbsp;<a href="https://blog.naver.com/ffamilist/223844618813" style="color: #E2570D; text-decoration: none;">[KR]</a></p>
+        <p style="margin-bottom: {bottom_margin}px;">Copyright © 2025 newboon</p>
+        <p>
+            {LanguageManager.translate("피드백 및 업데이트 확인:")}
+            <a href="https://medium.com/@ffamilist/photosort-simple-sorting-for-busy-dads-e9a4f45b03dc" style="color: {accent_color}; text-decoration: none;">[EN]</a>&nbsp;
+            <a href="https://blog.naver.com/ffamilist/223844618813" style="color: {accent_color}; text-decoration: none;">[KR]</a>&nbsp;
+            <a href="https://github.com/newboon/PhotoSort/releases" style="color: {accent_color}; text-decoration: none;">[GitHub]</a>
+        </p>
         """
         return info_text
 
@@ -5206,6 +7163,13 @@ class PhotoSortApp(QMainWindow):
         <li><strong>License</strong>: HPND License (Historical Permission Notice and Disclaimer)</li>
         <li><strong>Website</strong>: <a href="https://pypi.org/project/pillow/">https://pypi.org/project/pillow/</a></li>
         <li>Pillow is the friendly PIL fork. PIL is the Python Imaging Library that adds image processing capabilities to your Python interpreter.</li>
+        </ul>
+
+        <h2>pillow-heif</h2>
+        <ul>
+        <li><strong>License</strong>: Apache-2.0 (Python wrapper), LGPL-3.0 (libheif core)</li>
+        <li><strong>Website</strong>: <a href="https://github.com/bigcat88/pillow_heif">https://github.com/bigcat88/pillow_heif</a></li>
+        <li>A Pillow-plugin for HEIF/HEIC support, powered by libheif.</li>
         </ul>
 
         <h2>piexif</h2>
@@ -5401,9 +7365,15 @@ class PhotoSortApp(QMainWindow):
         
         # 컨트롤 패널의 너비 계산
         control_width = window_width - image_width
+
+        # 컨트롤 패널 최소 너비 보장 (319px)
+        min_control_width = 319
+        if control_width < min_control_width:
+            control_width = min_control_width
+            image_width = window_width - control_width
         
         control_on_right = getattr(self, 'control_panel_on_right', False)
-
+        
         if control_width > 0:
             if control_on_right:
                 self.splitter.setSizes([image_width, control_width]) # 우측 배치 시 순서 변경
@@ -5433,14 +7403,14 @@ class PhotoSortApp(QMainWindow):
         self.update_minimap_position()
     
     def load_jpg_folder(self):
-        """JPG 파일이 있는 폴더 선택 및 로드"""
+        """JPG 등 이미지 파일이 있는 폴더 선택 및 로드"""
         folder_path = QFileDialog.getExistingDirectory(
-            self, LanguageManager.translate("JPG 파일이 있는 폴더 선택"), "",
+            self, LanguageManager.translate("이미지 파일이 있는 폴더 선택"), "",
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
 
         if folder_path:
-            logging.info(f"JPG 폴더 선택: {folder_path}")
+            logging.info(f"이미지(JPG) 폴더 선택: {folder_path}")
             self.clear_raw_folder()  # 새 JPG 폴더 지정 시 RAW 폴더 초기화
 
             if self.load_images_from_folder(folder_path):
@@ -5481,23 +7451,23 @@ class PhotoSortApp(QMainWindow):
         target_path = Path(folder_path)
 
         # 대소문자 구분 없이 JPG 파일 검색
-        all_jpg_files = []
+        all_image_files = []
         for file_path in target_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in ['.jpg', '.jpeg']:
-                all_jpg_files.append(file_path)
+            if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                all_image_files.append(file_path)
 
         # 파일명을 소문자로 변환하여 set으로 중복 제거 후 원본 경로 유지
         seen_files = set()
-        for file_path in all_jpg_files:
+        for file_path in all_image_files:
             lower_name = file_path.name.lower()
             if lower_name not in seen_files:
                 seen_files.add(lower_name)
                 temp_image_files.append(file_path)
 
-        # --- JPG 파일 유무 검사 추가 ---
+        # --- 이미지 파일 유무 검사 추가 ---
         if not temp_image_files:
-            logging.warning(f"선택한 폴더에 JPG 파일이 없습니다: {folder_path}")
-            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 JPG 파일이 없습니다."))
+            logging.warning(f"선택한 폴더에 지원하는 이미지 파일이 없습니다: {folder_path}")
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 지원하는 이미지 파일이 없습니다."))
             # UI 초기화
             self.image_files = [] # 내부 목록도 비움
             self.current_image_index = -1
@@ -5602,7 +7572,7 @@ class PhotoSortApp(QMainWindow):
         # 1. Fit 모드 처리
         if self.zoom_mode == "Fit":
             # Fit으로 변경될 때, 이전 100/200 상태의 "활성" 포커스를 해당 "방향 타입"의 고유 포커스로 저장
-            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "200%"]:
+            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "Spin"]:
                 self._save_orientation_viewport_focus(
                     image_orientation_type, # 현재 이미지의 방향에
                     self.current_active_rel_center, # 현재 활성 중심을
@@ -5624,8 +7594,14 @@ class PhotoSortApp(QMainWindow):
             if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
             return
 
-        # 2. Zoom 100% 또는 200% 처리
-        new_zoom_factor = 1.0 if self.zoom_mode == "100%" else 2.0
+        # 2. Zoom 100% 또는 Spin 처리
+        if self.zoom_mode == "100%":
+            new_zoom_factor = 1.0
+        elif self.zoom_mode == "Spin":
+            new_zoom_factor = self.zoom_spin_value
+        else: # 예외 처리
+            return
+            
         new_zoomed_width = img_width_orig * new_zoom_factor
         new_zoomed_height = img_height_orig * new_zoom_factor
         
@@ -5685,9 +7661,13 @@ class PhotoSortApp(QMainWindow):
         if new_zoomed_height <= view_height: new_y = (view_height - new_zoomed_height) // 2
         else: new_y = min(0, max(view_height - new_zoomed_height, new_y))
 
-        if self.zoom_mode == "100%": self.image_label.setPixmap(self.original_pixmap)
-        else:
-            scaled_pixmap = self.original_pixmap.scaled(int(new_zoomed_width), int(new_zoomed_height), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        if self.zoom_mode == "100%":
+            self.image_label.setPixmap(self.original_pixmap)
+        else: # Spin 모드
+            scaled_pixmap = self.original_pixmap.scaled(
+                int(new_zoomed_width), int(new_zoomed_height), 
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
             self.image_label.setPixmap(scaled_pixmap)
         self.image_label.setGeometry(int(new_x), int(new_y), int(new_zoomed_width), int(new_zoomed_height))
         self.image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
@@ -5796,18 +7776,193 @@ class PhotoSortApp(QMainWindow):
     
     def image_mouse_press_event(self, event):
         """이미지 영역 마우스 클릭 이벤트 처리"""
-        # 100% 또는 200% 모드에서만 패닝 활성화
-        if self.zoom_mode in ["100%", "200%"]:
+        # === 우클릭 컨텍스트 메뉴 처리 ===
+        if event.button() == Qt.RightButton and self.image_files:
+            # 이미지가 로드된 상태에서 우클릭 시 컨텍스트 메뉴 표시
+            context_menu = self.create_context_menu(event.position().toPoint())
+            if context_menu:
+                context_menu.exec_(self.image_container.mapToGlobal(event.position().toPoint()))
+            return
+        
+        # === 빈 캔버스 클릭 시 폴더 선택 기능 ===
+        if event.button() == Qt.LeftButton and not self.image_files:
+            # 아무 이미지도 로드되지 않은 상태에서 캔버스 클릭 시 폴더 선택
+            self.open_folder_dialog_for_canvas()
+            return
+        
+        # === Fit 모드에서 드래그 앤 드롭 시작 준비 ===
+        if (event.button() == Qt.LeftButton and 
+            self.zoom_mode == "Fit" and 
+            self.image_files and 
+            0 <= self.current_image_index < len(self.image_files)):
+            
+            # 드래그 시작 준비
+            self.drag_start_pos = event.position().toPoint()
+            self.is_potential_drag = True
+            logging.debug(f"드래그 시작 준비: {self.drag_start_pos}")
+            return
+        
+        # === 기존 패닝 기능 ===
+        # 100% 또는 Spin 모드에서만 패닝 활성화
+        if self.zoom_mode in ["100%", "Spin"]:
             if event.button() == Qt.LeftButton:
                 # 패닝 상태 활성화
                 self.panning = True
                 self.pan_start_pos = event.position().toPoint()
                 self.image_start_pos = self.image_label.pos()
                 self.setCursor(Qt.ClosedHandCursor)
-                
     
+    def open_folder_dialog_for_canvas(self):
+        """캔버스 클릭 시 폴더 선택 다이얼로그 열기"""
+        try:
+            folder_path = QFileDialog.getExistingDirectory(
+                self, 
+                LanguageManager.translate("이미지 파일이 있는 폴더 선택"), 
+                "",
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            )
+            
+            if folder_path:
+                # 선택된 폴더에 대해 캔버스 폴더 드롭 로직 적용
+                success = self._handle_canvas_folder_drop(folder_path)
+                if success:
+                    logging.info(f"캔버스 클릭으로 폴더 로드 성공: {folder_path}")
+                else:
+                    logging.warning(f"캔버스 클릭으로 폴더 로드 실패: {folder_path}")
+            else:
+                logging.debug("캔버스 클릭 폴더 선택 취소됨")
+                
+        except Exception as e:
+            logging.error(f"캔버스 클릭 폴더 선택 오류: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical,
+                LanguageManager.translate("오류"),
+                LanguageManager.translate("폴더 선택 중 오류가 발생했습니다.")
+            )
+    
+    def start_image_drag(self, dragged_grid_index=None):
+        """이미지 드래그 시작 (Grid 모드에서는 드래그된 셀의 인덱스 전달)"""
+        try:
+            # 현재 이미지 정보 확인
+            if not self.image_files:
+                logging.warning("드래그 시작 실패: 유효한 이미지가 없음")
+                return
+            
+            # 드래그할 이미지 인덱스 결정
+            if self.grid_mode == "Off":
+                # Grid Off 모드: 현재 이미지 인덱스 사용
+                if (self.current_image_index < 0 or 
+                    self.current_image_index >= len(self.image_files)):
+                    logging.warning("드래그 시작 실패: 유효한 이미지가 없음")
+                    return
+                drag_image_index = self.current_image_index
+                current_image_path = self.image_files[self.current_image_index]
+            else:
+                # Grid 모드: 드래그된 셀의 이미지 인덱스 사용
+                if dragged_grid_index is not None:
+                    # 드래그된 특정 셀의 인덱스 사용
+                    drag_image_index = self.grid_page_start_index + dragged_grid_index
+                else:
+                    # 현재 선택된 그리드 셀 사용 (fallback)
+                    drag_image_index = self.grid_page_start_index + self.current_grid_index
+                
+                if drag_image_index < 0 or drag_image_index >= len(self.image_files):
+                    logging.warning("드래그 시작 실패: 유효하지 않은 그리드 인덱스")
+                    return
+                    
+                current_image_path = self.image_files[drag_image_index]
+            
+            # QDrag 객체 생성
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            
+            # 드래그 데이터 설정
+            if self.grid_mode == "Off":
+                # Grid Off 모드: 현재 이미지 인덱스 전달
+                mime_data.setText(f"image_drag:off:{drag_image_index}")
+            else:
+                # Grid 모드: 선택된 이미지들의 전역 인덱스 전달
+                if (hasattr(self, 'selected_grid_indices') and 
+                    self.selected_grid_indices and 
+                    len(self.selected_grid_indices) > 1):
+                    
+                    # 다중 선택된 경우: 선택된 모든 이미지의 전역 인덱스를 전달
+                    selected_global_indices = []
+                    for grid_idx in sorted(self.selected_grid_indices):
+                        global_idx = self.grid_page_start_index + grid_idx
+                        if 0 <= global_idx < len(self.image_files):
+                            selected_global_indices.append(global_idx)
+                    
+                    if selected_global_indices:
+                        indices_str = ",".join(map(str, selected_global_indices))
+                        mime_data.setText(f"image_drag:grid:{indices_str}")
+                        logging.info(f"다중 이미지 드래그 시작: {len(selected_global_indices)}개 이미지")
+                    else:
+                        # 선택된 이미지가 유효하지 않으면 단일 이미지로 처리
+                        mime_data.setText(f"image_drag:grid:{drag_image_index}")
+                else:
+                    # 단일 선택이거나 선택이 없는 경우: 드래그된 이미지만 전달
+                    mime_data.setText(f"image_drag:grid:{drag_image_index}")
+            
+            drag.setMimeData(mime_data)
+            
+            # 드래그 커서 설정 (드래그된 이미지의 썸네일 사용)
+            thumbnail_pixmap = None
+            
+            # 드래그된 이미지의 썸네일 생성 시도
+            if self.grid_mode == "Off":
+                # Grid Off 모드: original_pixmap 사용
+                if self.original_pixmap and not self.original_pixmap.isNull():
+                    thumbnail_pixmap = self.original_pixmap
+            else:
+                # Grid 모드: 해당 이미지의 캐시된 픽스맵 사용
+                drag_image_path = str(current_image_path)
+                cached_pixmap = self.image_loader.cache.get(drag_image_path)
+                if cached_pixmap and not cached_pixmap.isNull():
+                    thumbnail_pixmap = cached_pixmap
+                else:
+                    # 캐시에 없으면 원본 픽스맵 사용 (fallback)
+                    if self.original_pixmap and not self.original_pixmap.isNull():
+                        thumbnail_pixmap = self.original_pixmap
+            
+            # 썸네일 설정
+            if thumbnail_pixmap and not thumbnail_pixmap.isNull():
+                # 썸네일 생성 (64x64 크기)
+                thumbnail = thumbnail_pixmap.scaled(
+                    64, 64, 
+                    Qt.KeepAspectRatio, 
+                    Qt.SmoothTransformation
+                )
+                drag.setPixmap(thumbnail)
+                drag.setHotSpot(QPoint(32, 32))  # 드래그 핫스팟을 썸네일 중앙으로
+            
+            logging.info(f"이미지 드래그 시작: {current_image_path.name} (모드: {self.grid_mode}, 인덱스: {drag_image_index})")
+            
+            # 드래그 실행
+            drop_action = drag.exec_(Qt.MoveAction)
+            logging.debug(f"드래그 완료: {drop_action}")
+            
+        except Exception as e:
+            logging.error(f"이미지 드래그 시작 오류: {e}")
+
     def image_mouse_move_event(self, event):
         """이미지 영역 마우스 이동 이벤트 처리"""
+        # === Fit 모드에서 드래그 시작 감지 ===
+        if (self.is_potential_drag and 
+            self.zoom_mode == "Fit" and 
+            self.image_files and 
+            0 <= self.current_image_index < len(self.image_files)):
+            
+            current_pos = event.position().toPoint()
+            move_distance = (current_pos - self.drag_start_pos).manhattanLength()
+            
+            if move_distance > self.drag_threshold:
+                # 드래그 시작
+                self.start_image_drag()
+                self.is_potential_drag = False
+                return
+        
+        # === 기존 패닝 기능 ===
         # 패닝 중이 아니면 이벤트 무시
         if not self.panning:
             return
@@ -5825,13 +7980,13 @@ class PhotoSortApp(QMainWindow):
             # 새로운 이미지 위치 계산 (시작 위치 기준 - 절대 위치 기반)
             new_pos = self.image_start_pos + delta
             
-            # 이미지 크기 가져오기
+            # 이미지 크기 가져오기 - 키보드 이동과 동일한 로직 적용
             if self.zoom_mode == "100%":
                 img_width = self.original_pixmap.width()
                 img_height = self.original_pixmap.height()
-            else:  # 200%
-                img_width = self.original_pixmap.width() * 2
-                img_height = self.original_pixmap.height() * 2
+            else:  # Spin 모드 - zoom_spin_value 사용으로 수정
+                img_width = self.original_pixmap.width() * self.zoom_spin_value
+                img_height = self.original_pixmap.height() * self.zoom_spin_value
             
             # 뷰포트 크기
             view_width = self.scroll_area.width()
@@ -5868,14 +8023,19 @@ class PhotoSortApp(QMainWindow):
                     self.update_minimap()
     
     def image_mouse_release_event(self, event: QMouseEvent): # QMouseEvent 타입 명시
+        # === 드래그 상태 초기화 ===
+        if self.is_potential_drag:
+            self.is_potential_drag = False
+            logging.debug("드래그 시작 준비 상태 해제")
+        
+        # === 기존 패닝 기능 ===
         if event.button() == Qt.LeftButton and self.panning:
             self.panning = False
             self.setCursor(Qt.ArrowCursor)
             
-            # --- 수정 시작: _save_orientation_viewport_focus 호출 시 인자 전달 ---
-            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
+            # --- 수정: 올바른 인자 전달 ---
+            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and \
                self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                current_image_path_str = str(self.image_files[self.current_image_index])
                 current_rel_center = self._get_current_view_relative_center() # 현재 뷰 중심 계산
                 current_zoom_level = self.zoom_mode
                 
@@ -5883,12 +8043,76 @@ class PhotoSortApp(QMainWindow):
                 self.current_active_rel_center = current_rel_center
                 self.current_active_zoom_level = current_zoom_level
                 
-                # 이미지별 고유 포커스 저장
-                self._save_orientation_viewport_focus(current_image_path_str, current_rel_center, current_zoom_level)
+                # 방향별 포커스 저장 (파일 경로가 아닌 orientation 전달)
+                self._save_orientation_viewport_focus(self.current_image_orientation, current_rel_center, current_zoom_level)
             # --- 수정 끝 ---
             
             if self.minimap_visible and self.minimap_widget.isVisible():
                 self.update_minimap()
+    
+    def create_context_menu(self, mouse_pos):
+        """컨텍스트 메뉴 생성 - folder_count에 따라 동적 생성"""
+        # 이미지가 없거나 폴더가 없으면 메뉴 표시 안 함
+        if not self.image_files or not self.target_folders:
+            return None
+            
+        # 컨텍스트 메뉴 생성
+        context_menu = QMenu(self)
+        
+        # 테마 스타일 적용
+        context_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 2px;
+            }}
+            QMenu::item {{
+                padding: 8px 16px;
+                background-color: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                color: {ThemeManager.get_color('text')};
+            }}
+        """)
+        
+        # folder_count에 따라 메뉴 항목 생성
+        for i in range(self.folder_count):
+            # 폴더가 설정되지 않았으면 비활성화
+            folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
+            
+            # 메뉴 항목 텍스트 생성 - 실제 폴더 이름 포함
+            if folder_path and os.path.isdir(folder_path):
+                folder_name = Path(folder_path).name
+                menu_text = LanguageManager.translate("이동 - 폴더 {0} [{1}]").format(i + 1, folder_name)
+            else:
+                # 폴더가 설정되지 않았거나 유효하지 않은 경우 기존 형식 사용
+                menu_text = LanguageManager.translate("이동 - 폴더 {0}").format(i + 1)
+            
+            # 메뉴 액션 생성
+            action = QAction(menu_text, self)
+            action.triggered.connect(lambda checked, idx=i: self.move_to_folder_from_context(idx))
+            
+            # 폴더가 설정되지 않았거나 유효하지 않으면 비활성화
+            if not folder_path or not os.path.isdir(folder_path):
+                action.setEnabled(False)
+            
+            context_menu.addAction(action)
+        
+        return context_menu
+    
+    def move_to_folder_from_context(self, folder_index):
+        """컨텍스트 메뉴에서 폴더 이동 처리"""
+        if self.grid_mode == "Off":
+            # Grid Off 모드: 현재 이미지 이동
+            if 0 <= self.current_image_index < len(self.image_files):
+                logging.info(f"컨텍스트 메뉴에서 이미지 이동 (Grid Off): 폴더 {folder_index + 1}")
+                self.move_current_image_to_folder(folder_index)
+        else:
+            # Grid On 모드: 선택된 이미지들 이동
+            logging.info(f"컨텍스트 메뉴에서 이미지 이동 (Grid On): 폴더 {folder_index + 1}")
+            self.move_grid_image(folder_index)
     
     def open_folder_in_explorer(self, folder_path):
         """폴더 경로를 윈도우 탐색기에서 열기"""
@@ -6037,7 +8261,7 @@ class PhotoSortApp(QMainWindow):
             # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
             final_camera_model_display = ""
             if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
-                final_camera_model_display = f"{rawpy_exif_data['exif_make']} {rawpy_exif_data['exif_model']}"
+                final_camera_model_display = format_camera_name(rawpy_exif_data["exif_make"], rawpy_exif_data["exif_model"])
             elif rawpy_exif_data.get("exif_model"):
                 final_camera_model_display = rawpy_exif_data["exif_model"]
             elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
@@ -6484,38 +8708,205 @@ class PhotoSortApp(QMainWindow):
         """RAW 이동 토글 상태 변경 처리"""
         self.move_raw_files = checked
         print(f"RAW 파일 이동 설정: {'활성화' if checked else '비활성화'}")
-    
+
+    def on_folder_image_dropped(self, folder_index, drag_data):
+        """폴더 레이블에 이미지가 드롭되었을 때 호출"""
+        try:
+            logging.info(f"이미지 드롭 이벤트: 폴더 {folder_index}, 데이터: {drag_data}")
+            
+            # 캔버스 드래그인 경우 (2단계에서 추가된 기능)
+            if drag_data == "image_drag":
+                return self.handle_canvas_to_folder_drop(folder_index)
+            
+            # 기존 그리드 드래그 처리 ("image_drag:mode:indices" 형태)
+            parts = drag_data.split(":")
+            if len(parts) < 3 or parts[0] != "image_drag":
+                logging.error(f"잘못된 드래그 데이터 형식: {drag_data}")
+                return
+            
+            mode = parts[1]  # "off" 또는 "grid"
+            indices_str = parts[2]  # 이미지 인덱스들
+            
+            # 폴더 유효성 확인
+            if (folder_index < 0 or 
+                folder_index >= len(self.target_folders) or 
+                not self.target_folders[folder_index] or 
+                not os.path.isdir(self.target_folders[folder_index])):
+                
+                self.show_themed_message_box(
+                    QMessageBox.Warning,
+                    LanguageManager.translate("경고"),
+                    LanguageManager.translate("유효하지 않은 폴더입니다.")
+                )
+                return
+            
+            # 모드에 따른 이미지 이동 처리 (기존 코드)
+            if mode == "off":
+                # Grid Off 모드: 단일 이미지 이동
+                try:
+                    image_index = int(indices_str)
+                    if 0 <= image_index < len(self.image_files):
+                        # 현재 인덱스를 임시로 설정하고 이동
+                        original_index = self.current_image_index
+                        self.current_image_index = image_index
+                        self.move_current_image_to_folder(folder_index)
+                        # 인덱스는 move_current_image_to_folder에서 자동으로 조정됨
+                    else:
+                        logging.error(f"유효하지 않은 이미지 인덱스: {image_index}")
+                except ValueError:
+                    logging.error(f"이미지 인덱스 파싱 오류: {indices_str}")
+            
+            elif mode == "grid":
+                # Grid 모드: 단일 또는 다중 이미지 이동
+                try:
+                    if "," in indices_str:
+                        # 다중 선택된 경우 (기존 코드)
+                        selected_indices = [int(idx) for idx in indices_str.split(",")]
+                        grid_indices = []
+                        for global_idx in selected_indices:
+                            if self.grid_page_start_index <= global_idx < self.grid_page_start_index + 9:
+                                grid_idx = global_idx - self.grid_page_start_index
+                                grid_indices.append(grid_idx)
+                        
+                        if grid_indices:
+                            self.selected_grid_indices = set(grid_indices)
+                            self.move_grid_image(folder_index)
+                    else:
+                        # 단일 선택된 경우 (기존 코드)
+                        global_index = int(indices_str)
+                        if 0 <= global_index < len(self.image_files):
+                            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                            num_cells = rows * cols
+                            self.grid_page_start_index = (global_index // num_cells) * num_cells
+                            self.current_grid_index = global_index % num_cells
+                            
+                            if hasattr(self, 'selected_grid_indices'):
+                                self.selected_grid_indices.clear()
+                            
+                            self.move_grid_image(folder_index)
+                        else:
+                            logging.error(f"유효하지 않은 이미지 인덱스: {global_index}")
+                except ValueError:
+                    logging.error(f"그리드 인덱스 파싱 오류: {indices_str}")
+            
+            else:
+                logging.error(f"알 수 없는 드래그 모드: {mode}")
+            
+        except Exception as e:
+            logging.error(f"on_folder_image_dropped 오류: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical,
+                LanguageManager.translate("오류"),
+                LanguageManager.translate("이미지 이동 중 오류가 발생했습니다.")
+            )
+
+    def handle_canvas_to_folder_drop(self, folder_index):
+        """캔버스에서 폴더로 드래그 앤 드롭 처리"""
+        try:
+            # 1. Zoom Fit 상태 확인
+            if self.zoom_mode != "Fit":
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("알림"),
+                    LanguageManager.translate("Zoom Fit 모드에서만 드래그 앤 드롭이 가능합니다.")
+                )
+                return False
+            
+            # 2. 이미지 로드 상태 확인
+            if not self.image_files or self.current_image_index < 0 or self.current_image_index >= len(self.image_files):
+                self.show_themed_message_box(
+                    QMessageBox.Warning,
+                    LanguageManager.translate("경고"),
+                    LanguageManager.translate("이동할 이미지가 없습니다.")
+                )
+                return False
+            
+            # 3. 폴더 유효성 확인
+            if (folder_index < 0 or 
+                folder_index >= len(self.target_folders) or 
+                not self.target_folders[folder_index] or 
+                not os.path.isdir(self.target_folders[folder_index])):
+                
+                self.show_themed_message_box(
+                    QMessageBox.Warning,
+                    LanguageManager.translate("경고"),
+                    LanguageManager.translate("유효하지 않은 폴더입니다.")
+                )
+                return False
+            
+            # 4. Grid Off/Grid 모드에 따른 처리
+            if self.grid_mode == "Off":
+                # Grid Off 모드: move_current_image_to_folder 사용
+                logging.info(f"Grid Off 모드: 현재 이미지 ({self.current_image_index}) 폴더 {folder_index}로 이동")
+                self.move_current_image_to_folder(folder_index)
+                return True
+                
+            elif self.grid_mode in ["2x2", "3x3"]:
+                # Grid 모드: move_grid_image 사용
+                logging.info(f"Grid 모드: 현재 그리드 이미지 폴더 {folder_index}로 이동")
+                
+                # 현재 그리드에서 선택된 이미지가 있는지 확인
+                if hasattr(self, 'current_grid_index') and self.current_grid_index >= 0:
+                    # 단일 선택 상태로 설정
+                    if hasattr(self, 'selected_grid_indices'):
+                        self.selected_grid_indices.clear()
+                    
+                    self.move_grid_image(folder_index)
+                    return True
+                else:
+                    self.show_themed_message_box(
+                        QMessageBox.Warning,
+                        LanguageManager.translate("경고"),
+                        LanguageManager.translate("선택된 그리드 이미지가 없습니다.")
+                    )
+                    return False
+            else:
+                logging.error(f"알 수 없는 그리드 모드: {self.grid_mode}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"handle_canvas_to_folder_drop 오류: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical,
+                LanguageManager.translate("오류"),
+                LanguageManager.translate("이미지 이동 중 오류가 발생했습니다.")
+            )
+            return False
+
     def setup_folder_selection_ui(self):
-        """분류 폴더 설정 UI 구성"""
+        """분류 폴더 설정 UI를 동적으로 구성하고 컨테이너 위젯을 반환합니다."""
+        # 1. UI 요소 리스트 초기화 (재생성 시 이전 위젯 참조 제거)
         self.folder_buttons = []
         self.folder_path_labels = []
         self.folder_delete_buttons = []
 
-        # ========== UIScaleManager 값 가져오기 ==========
+        # 2. 모든 폴더 행을 담을 메인 컨테이너 위젯 생성
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
+
+        # UIScaleManager 값 미리 가져오기
         button_padding = UIScaleManager.get("button_padding")
         button_min_height = UIScaleManager.get("button_min_height")
         folder_label_padding = UIScaleManager.get("folder_label_padding")
         delete_button_width = UIScaleManager.get("delete_button_width")
         folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
 
-        # FolderPathLabel 높이 계산 (한 번만 계산)
-        # FolderPathLabel에 설정될 폰트 기준 (여기서는 기본값 Arial 10 사용 가정)
-        # 만약 FolderPathLabel의 폰트가 다르다면 해당 폰트로 QFontMetrics 생성해야 함
-        temp_label_font = QFont("Arial", 10) # FolderPathLabel의 폰트와 동일해야 함
+        temp_label_font = QFont("Arial", UIScaleManager.get("font_size"))
         fm_label = QFontMetrics(temp_label_font)
         label_line_height = fm_label.height()
         label_fixed_height = (label_line_height * 2) + folder_label_padding
 
-        for i in range(3):
+        # 3. self.folder_count 만큼 루프를 돌며 각 폴더 행 UI 생성
+        for i in range(self.folder_count):
             folder_container = QWidget()
             folder_layout = QHBoxLayout(folder_container)
             folder_layout.setContentsMargins(0, 0, 0, 0)
-            # ========== UIScaleManager 적용 ==========
             folder_layout.setSpacing(folder_container_spacing)
 
+            # 폴더 버튼 생성
             folder_button = QPushButton(f"{i+1}")
-            folder_button.setFont(self.font()) # 애플리케이션 기본 폰트 사용
-            # ========== UIScaleManager 적용 ==========
             folder_button.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {ThemeManager.get_color('bg_secondary')};
@@ -6529,14 +8920,11 @@ class PhotoSortApp(QMainWindow):
                 QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
             """)
             folder_button.clicked.connect(lambda checked=False, idx=i: self.select_category_folder(idx))
-            # ========== UIScaleManager 적용 ==========
-            # 너비는 delete 버튼과 맞추거나, 필요시 별도 키 정의
             folder_button.setFixedWidth(delete_button_width)
-            folder_button.setFixedHeight(label_fixed_height) # 레이블 높이와 동일하게
+            folder_button.setFixedHeight(label_fixed_height)
 
+            # 삭제 버튼 생성
             delete_button = QPushButton("X")
-            delete_button.setFont(self.font()) # 애플리케이션 기본 폰트 사용
-            # ========== UIScaleManager 적용 ==========
             delete_button.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {ThemeManager.get_color('bg_secondary')};
@@ -6551,41 +8939,52 @@ class PhotoSortApp(QMainWindow):
                 QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; }}
             """)
             delete_button.clicked.connect(lambda checked=False, idx=i: self.clear_category_folder(idx))
-            # ========== UIScaleManager 적용 ==========
             delete_button.setFixedWidth(delete_button_width)
-            delete_button.setFixedHeight(label_fixed_height) # 레이블 높이와 동일하게
+            delete_button.setFixedHeight(label_fixed_height)
 
-            # ========== UIScaleManager 적용 ==========
-            folder_path_label = FolderPathLabel(LanguageManager.translate("폴더 경로"), fixed_height_padding=folder_label_padding)
-            folder_path_label.setWordWrap(True)
-            folder_path_label.setEnabled(False)
+            # 폴더 경로 레이블 생성
+            folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
+            display_text = folder_path if folder_path else LanguageManager.translate("폴더 경로")
+            
+            folder_path_label = FolderPathLabel(display_text, fixed_height_padding=folder_label_padding)
+            
+            # === 드롭 기능 설정 ===
+            folder_path_label.set_folder_index(i)  # 폴더 인덱스 설정
+            folder_path_label.imageDropped.connect(self.on_folder_image_dropped)  # 드롭 시그널 연결
+            
             folder_path_label.doubleClicked.connect(lambda full_path_emitted, idx=i: self.open_category_folder(idx, full_path_emitted))
 
             folder_layout.addWidget(folder_button)
             folder_layout.addWidget(folder_path_label, 1)
             folder_layout.addWidget(delete_button)
 
-            self.control_layout.addWidget(folder_container)
-            # ========== UIScaleManager 적용 ==========
-            # 각 폴더 컨테이너 사이의 간격
-            self.control_layout.addSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
+            # 4. 생성된 한 줄의 폴더 UI를 메인 레이아웃에 추가
+            main_layout.addWidget(folder_container)
 
             self.folder_buttons.append(folder_button)
             self.folder_path_labels.append(folder_path_label)
             self.folder_delete_buttons.append(delete_button)
 
-        self.folder_count = 3
-        self.update_folder_buttons()
+        # 5. 최종 컨테이너 위젯 반환
+        return main_container
     
     def update_folder_buttons(self):
         """폴더 설정 상태에 따라 UI 업데이트"""
+        # 안전한 범위 검사 추가
+        if not hasattr(self, 'folder_buttons') or not self.folder_buttons:
+            return  # 버튼이 아직 생성되지 않았으면 건너뛰기
+        
+        # 실제 생성된 버튼 개수와 설정된 폴더 개수 중 작은 값 사용
+        actual_button_count = len(self.folder_buttons)
+        target_count = min(self.folder_count, actual_button_count)
+        
         # 모든 폴더 버튼은 항상 활성화
-        for i in range(3):
+        for i in range(target_count):
             # 폴더 버튼 항상 활성화
             self.folder_buttons[i].setEnabled(True)
             
             # 폴더 경로 레이블 및 X 버튼 상태 설정
-            has_folder = bool(self.target_folders[i] and os.path.isdir(self.target_folders[i]))
+            has_folder = bool(i < len(self.target_folders) and self.target_folders[i] and os.path.isdir(self.target_folders[i]))
             
             # 폴더 경로 레이블 상태 설정
             self.folder_path_labels[i].setEnabled(has_folder)
@@ -6622,7 +9021,17 @@ class PhotoSortApp(QMainWindow):
         
         if folder_path:
             self.target_folders[index] = folder_path
-            self.folder_path_labels[index].setText(folder_path, max_length=28, prefix_length=15, suffix_length=12) # 분류폴더 경로 레이블 글자수 설정
+            # 16:10 이하 해상도에서는 더 긴 값을 사용
+            if UIScaleManager.is_16_10_or_less():
+                self.folder_path_labels[index].setText(
+                    folder_path,
+                    max_length=20, prefix_length=2, suffix_length=12
+                )
+            else:
+                self.folder_path_labels[index].setText(
+                    folder_path,
+                    max_length=60, prefix_length=20, suffix_length=25
+                )
             # 폴더 설정 후 UI 업데이트
             self.update_folder_buttons()
             self.save_state() # <<< 저장
@@ -6676,6 +9085,9 @@ class PhotoSortApp(QMainWindow):
         # 페이지 이동
         self.grid_page_start_index = new_page * num_cells
         self.current_grid_index = 0  # 새 페이지의 첫 셀 선택
+
+        # 페이지 전환 시 선택 상태 초기화
+        self.clear_grid_selection()
 
         # 그리드 뷰 업데이트
         self.update_grid_view()
@@ -6819,6 +9231,7 @@ class PhotoSortApp(QMainWindow):
             self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {str(e)}")
             # 만약 파일 이동 중 예외 발생 시, 히스토리 추가는 되지 않음
 
+    # 파일 이동 안정성 강화(재시도 로직). 파일 이동(shutil.move) 시 PermissionError (주로 Windows에서 다른 프로세스가 파일을 사용 중일 때 발생)가 발생하면, 즉시 실패하는 대신 짧은 시간 대기 후 최대 20번까지 재시도합니다.
     def move_file(self, source_path, target_folder):
         """파일을 대상 폴더로 이동하고, 이동된 최종 경로를 반환"""
         if not source_path or not target_folder:
@@ -6849,6 +9262,39 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
 
         # 파일 이동
+        delay = 0.1 # <<< 재시도 대기 시간
+        for attempt in range(20): # 최대 20번 재시도 (초 단위 2초 대기)
+        # 재시도 로직 추가
+            try: # <<< 파일 이동 시 오류 처리 추가
+                shutil.move(str(source_path), str(target_path))
+                logging.info(f"파일 이동: {source_path} -> {target_path}")
+                return target_path # <<< 이동 성공 시 최종 target_path 반환
+            except PermissionError as e:
+                if hasattr(e, 'winerror') and e.winerror == 32:
+                    print(f"[{attempt+1}] 파일 점유 중 (WinError 32), 재시도 대기: {source_path}")
+                    time.sleep(delay)
+                else:
+                    print(f"[{attempt+1}] PermissionError: {e}")
+                    return None # <<< 권한 오류 발생 시 None 반환
+            except Exception as e:
+                logging.error(f"파일 이동 실패: {source_path} -> {target_path}, 오류: {e}")
+                return None # <<< 이동 실패 시 None 반환
+
+        # 대상 경로 생성
+        target_path = target_dir / source_path.name
+
+        # 이미 같은 이름의 파일이 있는지 확인
+        if target_path.exists():
+            # 파일명 중복 처리
+            counter = 1
+            while target_path.exists():
+                # 새 파일명 형식: 원본파일명_1.확장자
+                new_name = f"{source_path.stem}_{counter}{source_path.suffix}"
+                target_path = target_dir / new_name
+                counter += 1
+            logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
+
+        # 파일 이동
         try: # <<< 파일 이동 시 오류 처리 추가
             shutil.move(str(source_path), str(target_path))
             logging.info(f"파일 이동: {source_path} -> {target_path}")
@@ -6863,32 +9309,62 @@ class PhotoSortApp(QMainWindow):
         zoom_label = QLabel("Zoom")
         zoom_label.setAlignment(Qt.AlignCenter) # --- 가운데 정렬 추가 ---
         zoom_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        # --- 폰트 수정 시작 (새 QFont 객체 생성) ---
         font = QFont(self.font()) # <<< 현재 위젯(PhotoSortApp)의 폰트를 가져와서 복사
         # font.setBold(True) # 이 새 폰트 객체에만 볼드 적용
-        font.setPointSize(UIScaleManager.get("font_size")) # 이 새 폰트 객체에만 크기 적용
+        font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 이 새 폰트 객체에만 크기 적용
         zoom_label.setFont(font) # 수정된 새 폰트를 레이블에 적용
-        # --- 폰트 수정 끝 ---
         self.control_layout.addWidget(zoom_label)
         self.control_layout.addSpacing(UIScaleManager.get("title_spacing"))
 
         # 확대 옵션 컨테이너 (가로 배치)
         zoom_container = QWidget()
         zoom_layout = QHBoxLayout(zoom_container)
-        zoom_layout.setContentsMargins(0, 5, 0, 5)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
         zoom_layout.setSpacing(UIScaleManager.get("group_box_spacing"))
         
         # 라디오 버튼 생성
         self.fit_radio = QRadioButton("Fit")
         self.zoom_100_radio = QRadioButton("100%")
-        self.zoom_200_radio = QRadioButton("200%")
+        self.zoom_spin_btn = QRadioButton()
         
         # 버튼 그룹에 추가
         self.zoom_group = QButtonGroup(self)
         self.zoom_group.addButton(self.fit_radio, 0)
         self.zoom_group.addButton(self.zoom_100_radio, 1)
-        self.zoom_group.addButton(self.zoom_200_radio, 2)
-        
+        self.zoom_group.addButton(self.zoom_spin_btn, 2) # ID: 2 (기존 200 자리)
+
+        # 동적 줌 SpinBox 설정
+        self.zoom_spin = QSpinBox()
+        self.zoom_spin.setRange(10, 500)
+        self.zoom_spin.setValue(int(self.zoom_spin_value * 100)) # 2.0 -> 200
+        self.zoom_spin.setSuffix("%")
+        self.zoom_spin.setSingleStep(10)
+        self.zoom_spin.setFixedWidth(85)
+        self.zoom_spin.lineEdit().setReadOnly(True)
+        self.zoom_spin.setContextMenuPolicy(Qt.NoContextMenu)
+        self.zoom_spin.valueChanged.connect(self.on_zoom_spinbox_value_changed)
+        self.zoom_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: 1px;
+                padding: 2px;
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                width: 16px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+            }}
+            QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                image: none;
+                width: 0px;
+                height: 0px;
+            }}
+        """)
         # 기본값: Fit
         self.fit_radio.setChecked(True)
         
@@ -6918,7 +9394,7 @@ class PhotoSortApp(QMainWindow):
         """
         self.fit_radio.setStyleSheet(radio_style)
         self.zoom_100_radio.setStyleSheet(radio_style)
-        self.zoom_200_radio.setStyleSheet(radio_style)
+        self.zoom_spin_btn.setStyleSheet(radio_style)
         
         # 이벤트 연결
         self.zoom_group.buttonClicked.connect(self.on_zoom_changed)
@@ -6927,7 +9403,16 @@ class PhotoSortApp(QMainWindow):
         zoom_layout.addStretch()
         zoom_layout.addWidget(self.fit_radio)
         zoom_layout.addWidget(self.zoom_100_radio)
-        zoom_layout.addWidget(self.zoom_200_radio)
+        # <<<--- 중첩 레이아웃으로 Spin UI 묶기 ---<<<
+        spin_widget_container = QWidget()
+        spin_layout = QHBoxLayout(spin_widget_container)
+        spin_layout.setContentsMargins(0,0,0,0)
+        spin_layout.setSpacing(0) # 라디오 버튼과 스핀박스 사이 간격
+        spin_layout.addWidget(self.zoom_spin_btn)
+        spin_layout.addWidget(self.zoom_spin)
+
+        zoom_layout.addWidget(spin_widget_container) # 묶인 위젯을 한 번에 추가
+        # <<<----중첩 레이아웃으로 Spin UI 묶기 끝 ----<<<
         zoom_layout.addStretch()
         
         self.control_layout.addWidget(zoom_container)
@@ -6963,7 +9448,7 @@ class PhotoSortApp(QMainWindow):
         # 미니맵 토글을 중앙에 배치
         minimap_container = QWidget()
         minimap_layout = QHBoxLayout(minimap_container)
-        minimap_layout.setContentsMargins(0, 5, 0, 5)
+        minimap_layout.setContentsMargins(0, 10, 0, 0)
         minimap_layout.addStretch()
         minimap_layout.addWidget(self.minimap_toggle)
         minimap_layout.addStretch()
@@ -6972,72 +9457,102 @@ class PhotoSortApp(QMainWindow):
 
 
     def on_zoom_changed(self, button):
-        old_zoom_mode = self.zoom_mode 
+        old_zoom_mode = self.zoom_mode
         new_zoom_mode = ""
-        if button == self.fit_radio: new_zoom_mode = "Fit"
-        elif button == self.zoom_100_radio: new_zoom_mode = "100%"
-        elif button == self.zoom_200_radio: new_zoom_mode = "200%"
-        else: return
+        if button == self.fit_radio:
+            new_zoom_mode = "Fit"
+        elif button == self.zoom_100_radio:
+            new_zoom_mode = "100%"
+        elif button == self.zoom_spin_btn:
+            new_zoom_mode = "Spin"
+        else:
+            return
 
-        if old_zoom_mode == new_zoom_mode: return # 변경 없으면 아무것도 안 함
+        if old_zoom_mode == new_zoom_mode:
+            return
 
-        current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
-        current_orientation = self.current_image_orientation # 이미 로드된 이미지의 방향
+        # [수정] Fit이 아닌 모드로 변경될 때, 그 모드를 last_active_zoom_mode로 저장
+        if new_zoom_mode != "Fit":
+            self.last_active_zoom_mode = new_zoom_mode
+            logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
 
-        # 1. 변경 "전" 상태가 100% 또는 200% 였다면, 현재 "활성" 포커스를 "방향 타입"의 고유 포커스로 저장
-        if old_zoom_mode in ["100%", "200%"] and current_orientation and current_image_path_str:
-            # self.current_active_rel_center 와 old_zoom_mode (self.current_active_zoom_level과 같아야 함) 사용
+        current_orientation = self.current_image_orientation
+        
+        # 디버깅: 현재 상태 로그
+        logging.debug(f"줌 모드 변경: {old_zoom_mode} -> {new_zoom_mode}, 방향: {current_orientation}")
+
+        # 현재 뷰포트 포커스 저장 (100%/Spin -> Fit 전환 시)
+        if old_zoom_mode in ["100%", "Spin"] and current_orientation:
+            # 중요: zoom_mode를 변경하기 전에 현재 뷰포트 위치를 계산해야 함
+            current_rel_center = self._get_current_view_relative_center()
+            logging.debug(f"뷰포트 위치 저장: {current_orientation} -> {current_rel_center} (줌: {old_zoom_mode})")
+            
+            # 현재 활성 포커스 업데이트
+            self.current_active_rel_center = current_rel_center
+            self.current_active_zoom_level = old_zoom_mode
+            
+            # 방향별 포커스 저장
             self._save_orientation_viewport_focus(
                 current_orientation,
-                self.current_active_rel_center, 
-                old_zoom_mode # 변경 전 줌 모드
+                current_rel_center,
+                old_zoom_mode
             )
-            
-        self.zoom_mode = new_zoom_mode # 새 줌 모드 설정
 
-        # 2. 새 줌 모드에 따른 "활성" 포커스 설정
+        # 줌 모드 변경
+        self.zoom_mode = new_zoom_mode
+
         if self.zoom_mode == "Fit":
             self.current_active_rel_center = QPointF(0.5, 0.5)
             self.current_active_zoom_level = "Fit"
-        else: # 100% 또는 200%
-            # 새 목표 줌 레벨에 대해 "방향 타입"에 저장된 고유 포커스 가져오기
-            # _get_orientation_viewport_focus는 (rel_center, zoom_level) 튜플 반환
-            # 여기서 zoom_level은 요청한 new_zoom_mode가 됨.
-            self.current_active_rel_center, self.current_active_zoom_level = \
-                self._get_orientation_viewport_focus(current_orientation, self.zoom_mode)
-            # 이 정보는 apply_zoom_to_image에서 사용 후, 다시 _save_orientation_viewport_focus를 통해
-            # 해당 방향 타입의 고유 정보로 (주로 zoom_level이 업데이트되어) 저장됨.
-            
-        self.zoom_change_trigger = "radio_button" 
+            logging.debug("Fit 모드로 전환: 중앙 포커스 설정")
+        else:
+            # 저장된 뷰포트 포커스 복구 (Fit -> 100%/Spin 전환 시)
+            if current_orientation:
+                saved_rel_center, saved_zoom_level = self._get_orientation_viewport_focus(current_orientation, self.zoom_mode)
+                self.current_active_rel_center = saved_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                logging.debug(f"뷰포트 포커스 복구: {current_orientation} -> 중심={saved_rel_center}, 줌={self.zoom_mode}")
+            else:
+                # orientation 정보가 없으면 중앙 사용
+                self.current_active_rel_center = QPointF(0.5, 0.5)
+                self.current_active_zoom_level = self.zoom_mode
+                logging.debug(f"orientation 정보 없음: 중앙 사용")
 
-        # Grid Off로 강제 전환 로직 (100%/200% 줌 시)
+        self.zoom_change_trigger = "radio_button"
+
+        # 그리드 모드 관련 처리
         if self.zoom_mode != "Fit" and self.grid_mode != "Off":
             if self.image_files and 0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files):
-                 self.current_image_index = self.grid_page_start_index + self.current_grid_index
-            else: 
-                 self.current_image_index = 0 if self.image_files else -1 # 이미지가 있다면 첫번째, 없다면 -1
+                self.current_image_index = self.grid_page_start_index + self.current_grid_index
+            else:
+                self.current_image_index = 0 if self.image_files else -1
             
-            self.grid_mode = "Off"; self.grid_off_radio.setChecked(True) # 라디오 버튼 UI 업데이트
-            self.update_grid_view() # Grid 뷰 끄고 단일 이미지 뷰로 전환
-            self.update_zoom_radio_buttons_state() # 줌 버튼 상태 업데이트
-            self.update_counter_layout() # 카운터 레이아웃 업데이트
+            self.grid_mode = "Off"
+            self.grid_off_radio.setChecked(True)
+            self.update_grid_view()
+            self.update_zoom_radio_buttons_state()
+            self.update_counter_layout()
             
-            # original_pixmap이 아직 로드 안 된 상태일 수 있음 (Grid -> Off 전환 시)
-            if self.original_pixmap is None and self.current_image_index != -1 :
+            if self.original_pixmap is None and self.current_image_index != -1:
                 logging.debug("on_zoom_changed: Grid에서 Off로 전환, original_pixmap 로드 위해 display_current_image 호출")
-                self.display_current_image() # 여기서 original_pixmap 로드 후 apply_zoom_to_image 호출됨
-                # display_current_image 내부의 _on_image_loaded_for_display에서 apply_zoom_to_image 호출 시
-                # self.zoom_mode 와 self.current_active_... 값들이 이미 올바르게 설정되어 있어야 함.
-                # 위에서 이미 설정했으므로 괜찮음.
-                return # display_current_image가 알아서 apply_zoom_to_image 호출하므로 여기서 종료
+                self.display_current_image()
+                return
         
-        # original_pixmap이 이미 있거나, display_current_image가 호출되지 않는 경우
+        # 이미지 적용
         if self.original_pixmap:
             logging.debug(f"on_zoom_changed: apply_zoom_to_image 호출 (줌: {self.zoom_mode}, 활성중심: {self.current_active_rel_center})")
             self.apply_zoom_to_image()
-        # else: original_pixmap이 없고 이미지도 없는 경우 등은 아무것도 안 함
 
         self.toggle_minimap(self.minimap_toggle.isChecked())
+
+    def on_zoom_spinbox_value_changed(self, value):
+        """줌 스핀박스 값 변경 시 호출"""
+        self.zoom_spin_value = value / 100.0  # 300 -> 3.0
+        if self.zoom_mode == "Spin":
+            # 현재 모드가 Spin일 때만 즉시 이미지에 반영
+            self.image_processing = True
+            self.apply_zoom_to_image()
+            self.image_processing = False
 
     def toggle_minimap(self, show=None):
         """미니맵 표시 여부 토글"""
@@ -7177,8 +9692,8 @@ class PhotoSortApp(QMainWindow):
             # 확대 비율
             if zoom_level == "100%":
                 zoom_percent = 1.0
-            elif zoom_level == "200%":
-                zoom_percent = 2.0
+            elif zoom_level == "Spin":
+                zoom_percent = self.zoom_spin_value
             else:
                 return
             
@@ -7435,7 +9950,7 @@ class PhotoSortApp(QMainWindow):
         # --- 폰트 설정 시작 (Zoom과 동일하게) ---
         font = QFont(self.font()) # 기본 폰트 속성 복사
         # font.setBold(True) # 볼드 적용
-        font.setPointSize(UIScaleManager.get("font_size")) # 크기 적용
+        font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 크기 적용
         grid_title.setFont(font) # 새 폰트 적용
         # --- 폰트 설정 끝 ---
         self.control_layout.addWidget(grid_title)
@@ -7444,7 +9959,7 @@ class PhotoSortApp(QMainWindow):
         # Grid 옵션 컨테이너 (가로 배치)
         grid_container = QWidget()
         grid_layout_h = QHBoxLayout(grid_container)
-        grid_layout_h.setContentsMargins(0, 5, 0, 5)
+        grid_layout_h.setContentsMargins(0, 0, 0, 0)
         grid_layout_h.setSpacing(UIScaleManager.get("group_box_spacing")) 
 
         # 라디오 버튼 생성
@@ -7535,7 +10050,7 @@ class PhotoSortApp(QMainWindow):
         # 파일명 토글을 중앙에 배치하기 위한 컨테이너
         filename_toggle_container = QWidget()
         filename_toggle_layout = QHBoxLayout(filename_toggle_container)
-        filename_toggle_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백 약간 추가
+        filename_toggle_layout.setContentsMargins(0, 10, 0, 0)
         filename_toggle_layout.addStretch()
         filename_toggle_layout.addWidget(self.filename_toggle_grid)
         filename_toggle_layout.addStretch()
@@ -7570,6 +10085,7 @@ class PhotoSortApp(QMainWindow):
         # --- 모드가 실제로 변경되었을 때만 주요 로직 수행 ---
         if previous_grid_mode != new_grid_mode:
             logging.debug(f"Grid mode changed: {previous_grid_mode} -> {new_grid_mode}")
+            self.clear_grid_selection()
             self.grid_mode = new_grid_mode
 
             if new_grid_mode == "Off":
@@ -7631,9 +10147,9 @@ class PhotoSortApp(QMainWindow):
     def update_zoom_radio_buttons_state(self):
         """그리드 모드에 따라 줌 라디오 버튼 활성화/비활성화"""
         if self.grid_mode != "Off":
-            # 그리드 모드에서 100%, 200% 비활성화
+            # 그리드 모드에서 100%, spin 비활성화
             self.zoom_100_radio.setEnabled(False)
-            self.zoom_200_radio.setEnabled(False)
+            self.zoom_spin_btn.setEnabled(False)
             # 비활성화 스타일 적용
             disabled_radio_style = f"""
                 QRadioButton {{
@@ -7656,11 +10172,37 @@ class PhotoSortApp(QMainWindow):
                 }}
             """
             self.zoom_100_radio.setStyleSheet(disabled_radio_style)
-            self.zoom_200_radio.setStyleSheet(disabled_radio_style)
+            self.zoom_spin_btn.setStyleSheet(disabled_radio_style)
+            
+            # SpinBox 비활성화 스타일 적용
+            disabled_spinbox_style = f"""
+                QSpinBox {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    color: {ThemeManager.get_color('text_disabled')};
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    border-radius: 1px;
+                    padding: 2px;
+                }}
+                QSpinBox::up-button, QSpinBox::down-button {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    width: 16px;
+                }}
+                QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                }}
+                QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                    image: none;
+                    width: 0px;
+                    height: 0px;
+                }}
+            """
+            self.zoom_spin.setStyleSheet(disabled_spinbox_style)
+            
         else:
             # 그리드 모드가 아닐 때 모든 버튼 활성화
             self.zoom_100_radio.setEnabled(True)
-            self.zoom_200_radio.setEnabled(True)
+            self.zoom_spin_btn.setEnabled(True)
             # 활성화 스타일 복원
             radio_style = f"""
                 QRadioButton {{
@@ -7686,8 +10228,126 @@ class PhotoSortApp(QMainWindow):
                 }}
             """
             self.zoom_100_radio.setStyleSheet(radio_style)
-            self.zoom_200_radio.setStyleSheet(radio_style)
-    
+            self.zoom_spin_btn.setStyleSheet(radio_style)
+            
+            # SpinBox 활성화 스타일 복원
+            active_spinbox_style = f"""
+                QSpinBox {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    color: {ThemeManager.get_color('text')};
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    border-radius: 1px;
+                    padding: 2px;
+                }}
+                QSpinBox::up-button, QSpinBox::down-button {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    width: 16px;
+                }}
+                QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                }}
+                QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                    image: none;
+                    width: 0px;
+                    height: 0px;
+                }}
+            """
+            self.zoom_spin.setStyleSheet(active_spinbox_style)
+
+
+    def grid_cell_mouse_press_event(self, event, widget, index):
+        """Grid 셀 마우스 프레스 이벤트 - 드래그와 클릭을 함께 처리"""
+        try:
+            # === 우클릭 컨텍스트 메뉴 처리 ===
+            if event.button() == Qt.RightButton and self.image_files:
+                # 해당 셀에 이미지가 있는지 확인
+                global_index = self.grid_page_start_index + index
+                if 0 <= global_index < len(self.image_files):
+                    # 우클릭한 셀이 이미 선택된 셀들 중 하나인지 확인
+                    if index not in self.selected_grid_indices:
+                        # 선택되지 않은 셀을 우클릭한 경우: 해당 셀만 선택
+                        self.selected_grid_indices.clear()
+                        self.selected_grid_indices.add(index)
+                        self.primary_selected_index = global_index
+                        self.current_grid_index = index
+                        self.update_grid_selection_border()
+                    # 이미 선택된 셀을 우클릭한 경우: 기존 선택 유지 (아무것도 하지 않음)
+                    
+                    # 컨텍스트 메뉴 표시
+                    context_menu = self.create_context_menu(event.position().toPoint())
+                    if context_menu:
+                        context_menu.exec_(widget.mapToGlobal(event.position().toPoint()))
+                return
+            
+            # === Fit 모드에서 드래그 앤 드롭 시작 준비 ===
+            if (event.button() == Qt.LeftButton and 
+                self.zoom_mode == "Fit" and 
+                self.image_files and 
+                0 <= self.current_image_index < len(self.image_files)):
+                
+                # 드래그 시작 준비
+                widget.drag_start_pos = event.position().toPoint()
+                widget.is_potential_drag = True
+                logging.debug(f"Grid 셀에서 드래그 시작 준비: index {index}")
+            
+            # 기존 클릭 처리는 드래그가 시작되지 않으면 mouseReleaseEvent에서 처리
+            widget._click_widget = widget
+            widget._click_index = index
+            widget._click_event = event
+            
+        except Exception as e:
+            logging.error(f"grid_cell_mouse_press_event 오류: {e}")
+
+    def grid_cell_mouse_move_event(self, event, widget, index):
+        """Grid 셀 마우스 이동 이벤트 - 드래그 시작 감지"""
+        try:
+            # === Fit 모드에서 드래그 시작 감지 ===
+            if (hasattr(widget, 'is_potential_drag') and 
+                widget.is_potential_drag and 
+                self.zoom_mode == "Fit" and 
+                self.image_files and 
+                0 <= self.current_image_index < len(self.image_files)):
+                
+                current_pos = event.position().toPoint()
+                move_distance = (current_pos - widget.drag_start_pos).manhattanLength()
+                
+                if move_distance > getattr(widget, 'drag_threshold', 10):
+                    # 드래그 시작 - 드래그된 셀의 인덱스 전달
+                    self.start_image_drag(dragged_grid_index=index)
+                    widget.is_potential_drag = False
+                    logging.debug(f"Grid 셀에서 드래그 시작됨: index {index}")
+                    return
+            
+        except Exception as e:
+            logging.error(f"grid_cell_mouse_move_event 오류: {e}")
+
+    def grid_cell_mouse_release_event(self, event, widget, index):
+        """Grid 셀 마우스 릴리스 이벤트 - 드래그 상태 초기화 및 클릭 처리"""
+        try:
+            # 드래그 상태 초기화
+            if hasattr(widget, 'is_potential_drag') and widget.is_potential_drag:
+                widget.is_potential_drag = False
+                
+                # 드래그가 시작되지 않았으면 클릭으로 처리
+                if (hasattr(widget, '_click_widget') and 
+                    hasattr(widget, '_click_index') and 
+                    hasattr(widget, '_click_event')):
+                    
+                    # 기존 클릭 처리 로직 호출
+                    self.on_grid_cell_clicked(widget._click_widget, widget._click_index)
+                    
+                    # 임시 변수 정리
+                    delattr(widget, '_click_widget')
+                    delattr(widget, '_click_index')
+                    delattr(widget, '_click_event')
+                
+                logging.debug(f"Grid 셀에서 드래그 시작 준비 상태 해제: index {index}")
+            
+        except Exception as e:
+            logging.error(f"grid_cell_mouse_release_event 오류: {e}")
+
+
     def update_grid_view(self):
         """Grid 모드에 따라 이미지 뷰 업데이트"""
         current_widget = self.scroll_area.widget()
@@ -7748,11 +10408,12 @@ class PhotoSortApp(QMainWindow):
 
             # GridCellWidget 사용
             cell_widget = GridCellWidget()
-            # 클릭/더블클릭 이벤트를 PhotoSortApp에서 처리하기 위해 인덱스 정보 등을 연결
-            # GridCellWidget 자체에 시그널을 만들거나, PhotoSortApp에서 위젯을 직접 참조
-            cell_widget.mousePressEvent = lambda event, widget=cell_widget, index=i: self.on_grid_cell_clicked(widget, index)
+            
+            # 드래그 앤 드롭과 클릭을 함께 처리하는 통합 이벤트 핸들러 설정
+            cell_widget.mousePressEvent = lambda event, widget=cell_widget, index=i: self.grid_cell_mouse_press_event(event, widget, index)
+            cell_widget.mouseMoveEvent = lambda event, widget=cell_widget, index=i: self.grid_cell_mouse_move_event(event, widget, index)
+            cell_widget.mouseReleaseEvent = lambda event, widget=cell_widget, index=i: self.grid_cell_mouse_release_event(event, widget, index)
             cell_widget.mouseDoubleClickEvent = lambda event, widget=cell_widget, index=i: self.on_grid_cell_double_clicked(widget, index)
-            # cell_widget.setProperty("cell_index", i) # PhotoSortApp에서 식별하기 위한 정보
 
             current_image_path = None
             filename_text = ""
@@ -7905,37 +10566,126 @@ class PhotoSortApp(QMainWindow):
         self.update_grid_selection_border() # 테두리 업데이트는 별도
 
     def update_grid_selection_border(self):
-            """현재 선택된 그리드 셀의 테두리 업데이트"""
-            if not self.grid_labels or self.grid_mode == "Off":
-                return
+        """선택된 그리드 셀들의 테두리 업데이트 (다중 선택 지원)"""
+        if not self.grid_labels or self.grid_mode == "Off":
+            return
 
-            for i, cell_widget in enumerate(self.grid_labels): # 이제 GridCellWidget
-                if i == self.current_grid_index:
-                    cell_widget.setSelected(True)
-                else:
-                    cell_widget.setSelected(False)
+        for i, cell_widget in enumerate(self.grid_labels): # 이제 GridCellWidget
+            if i in self.selected_grid_indices:
+                cell_widget.setSelected(True)
+            else:
+                cell_widget.setSelected(False)
+
+    def get_primary_grid_cell_index(self):
+        """primary 선택의 페이지 내 인덱스를 반환 (기존 current_grid_index 호환성용)"""
+        if self.primary_selected_index != -1:
+            return self.primary_selected_index - self.grid_page_start_index
+        return 0
+
+    def clear_grid_selection(self, preserve_current_index=False):
+        """그리드 선택 상태 초기화"""
+        self.selected_grid_indices.clear()
+        self.primary_selected_index = -1
+        
+        # preserve_current_index가 True이면 현재 인덱스 유지
+        if not preserve_current_index:
+            self.current_grid_index = 0
+        
+        # 현재 위치를 단일 선택으로 설정 (빈 폴더가 아닌 경우)
+        if (self.grid_mode != "Off" and self.image_files and 
+            0 <= self.grid_page_start_index + self.current_grid_index < len(self.image_files)):
+            self.selected_grid_indices.add(self.current_grid_index)
+            self.primary_selected_index = self.grid_page_start_index + self.current_grid_index
+        
+        self.update_grid_selection_border()
+        self.update_window_title_with_selection()
+
+    def toggle_select_all_in_page(self):
+        """현재 페이지의 모든 이미지 선택/해제 토글"""
+        if self.grid_mode == "Off" or not self.image_files:
+            return
+        
+        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+        num_cells = rows * cols
+        
+        # 현재 페이지에 실제로 있는 이미지 수 계산
+        current_page_image_count = min(num_cells, len(self.image_files) - self.grid_page_start_index)
+        
+        if current_page_image_count <= 0:
+            return
+        
+        # 현재 페이지의 모든 셀이 선택되어 있는지 확인
+        all_selected = True
+        for i in range(current_page_image_count):
+            if i not in self.selected_grid_indices:
+                all_selected = False
+                break
+        
+        if all_selected:
+            # 모두 선택되어 있으면 모두 해제
+            self.selected_grid_indices.clear()
+            self.primary_selected_index = -1
+            logging.info("전체 선택 해제")
+        else:
+            # 일부만 선택되어 있거나 선택이 없으면 모두 선택
+            self.selected_grid_indices.clear()
+            for i in range(current_page_image_count):
+                self.selected_grid_indices.add(i)
+            
+            # 첫 번째 이미지를 primary로 설정
+            self.primary_selected_index = self.grid_page_start_index
+            logging.info(f"전체 선택: {current_page_image_count}개 이미지")
+        
+        # UI 업데이트
+        self.update_grid_selection_border()
+        self.update_window_title_with_selection()
+        
+        # 파일 정보 업데이트
+        if self.primary_selected_index != -1 and 0 <= self.primary_selected_index < len(self.image_files):
+            selected_image_path = str(self.image_files[self.primary_selected_index])
+            self.update_file_info_display(selected_image_path)
+        else:
+            self.update_file_info_display(None)
 
     def update_window_title_with_selection(self):
-        """Grid 모드에서 창 제목 업데이트 ("PhotoSort - 파일명" 형식)"""
+        """그리드 모드에서 창 제목 업데이트 (다중/단일 선택 모두 지원)"""
         if self.grid_mode == "Off":
              # Grid Off 모드에서는 display_current_image에서 처리
              return
 
         total_images = len(self.image_files)
-        selected_filename = ""
-        selected_image_list_index = self.grid_page_start_index + self.current_grid_index
-
-        if 0 <= selected_image_list_index < total_images:
-            selected_filename = self.image_files[selected_image_list_index].name
-            title = f"PhotoSort - {selected_filename}" # 새 형식 적용
+        
+        # 다중 선택 상태 확인
+        if hasattr(self, 'selected_grid_indices') and self.selected_grid_indices:
+            selected_count = len(self.selected_grid_indices)
+            if selected_count > 1:
+                # 다중 선택: 개수 표시
+                if hasattr(self, 'original_title'):
+                    title = f"{self.original_title} - 선택됨: {selected_count}개"
+                else:
+                    self.original_title = "PhotoSort"
+                    title = f"{self.original_title} - 선택됨: {selected_count}개"
+            else:
+                # 단일 선택: 파일명 표시
+                if self.primary_selected_index != -1 and 0 <= self.primary_selected_index < total_images:
+                    selected_filename = self.image_files[self.primary_selected_index].name
+                    title = f"PhotoSort - {selected_filename}"
+                else:
+                    title = "PhotoSort"
         else:
-            # 이미지가 없거나 유효한 선택이 아닐 때
-            title = "PhotoSort"
+            # 기존 단일 선택 방식 (호환성)
+            selected_image_list_index = self.grid_page_start_index + self.current_grid_index
+            if 0 <= selected_image_list_index < total_images:
+                selected_filename = self.image_files[selected_image_list_index].name
+                title = f"PhotoSort - {selected_filename}"
+            else:
+                title = "PhotoSort"
 
         self.setWindowTitle(title)
 
+
     def navigate_grid(self, delta):
-        """Grid 셀 간 이동 및 페이지 전환 처리 (좌우 끝에서만 순환, 상하 페이지 이동 없음)"""
+        """Grid 셀 간 이동 및 페이지 전환 처리 (다중 선택 시 단일 선택으로 변경)"""
         if not self.image_files or self.grid_mode == "Off":
             return
 
@@ -7947,9 +10697,7 @@ class PhotoSortApp(QMainWindow):
 
         # 현재 페이지의 셀 개수 계산 (마지막 페이지는 다를 수 있음)
         current_page_first_image_index = self.grid_page_start_index
-        # 현재 페이지에 실제로 표시될 수 있는 이미지의 마지막 인덱스
         current_page_last_possible_image_index = min(current_page_first_image_index + num_cells - 1, total_images - 1)
-        # 현재 페이지에 실제로 존재하는 셀(이미지)의 개수
         current_page_cell_count = current_page_last_possible_image_index - current_page_first_image_index + 1
 
         # 현재 선택된 셀의 전체 목록에서의 인덱스
@@ -8009,6 +10757,14 @@ class PhotoSortApp(QMainWindow):
         # 3. 페이지 내 이동 결과 적용 (페이지 변경이나 순환이 아닐 경우)
         if not page_changed and new_grid_index != self.current_grid_index:
             self.current_grid_index = new_grid_index
+            
+            # 키보드 네비게이션 시 다중 선택을 단일 선택으로 변경
+            if hasattr(self, 'selected_grid_indices'):
+                self.selected_grid_indices.clear()
+                self.selected_grid_indices.add(new_grid_index)
+                self.primary_selected_index = self.grid_page_start_index + new_grid_index
+                logging.debug(f"키보드 네비게이션: 단일 선택으로 변경 - index {new_grid_index}")
+            
             # 페이지 내 이동 시 UI 업데이트
             self.update_grid_selection_border()
             self.update_window_title_with_selection()
@@ -8024,95 +10780,200 @@ class PhotoSortApp(QMainWindow):
 
         # 4. 페이지 변경 또는 순환 발생 시 UI 업데이트
         elif page_changed:
+            # 페이지 변경 시에도 다중 선택을 단일 선택으로 변경
+            if hasattr(self, 'selected_grid_indices'):
+                self.selected_grid_indices.clear()
+                self.selected_grid_indices.add(self.current_grid_index)
+                self.primary_selected_index = self.grid_page_start_index + self.current_grid_index
+                logging.debug(f"페이지 변경: 단일 선택으로 변경 - index {self.current_grid_index}")
+            
             # 페이지 변경/순환 시에는 update_grid_view가 모든 UI 업데이트를 처리
             self.update_grid_view()
             logging.debug(f"Navigating grid: Page changed to start index {self.grid_page_start_index}, grid index {self.current_grid_index}") # 디버깅 로그
 
+
+
     def move_grid_image(self, folder_index):
-        """Grid 모드에서 현재 선택된 이미지를 지정된 폴더로 이동"""
+        """Grid 모드에서 선택된 이미지(들)를 지정된 폴더로 이동 (다중 선택 지원)"""
         if self.grid_mode == "Off" or not self.grid_labels:
             return
 
-        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-        num_cells = rows * cols
-
-        image_list_index = self.grid_page_start_index + self.current_grid_index # 이동 전 인덱스
-
-        if not (0 <= image_list_index < len(self.image_files)):
-            logging.warning("선택된 셀에 이동할 이미지가 없습니다.")
-            return
+        # 다중 선택된 이미지들 수집
+        if hasattr(self, 'selected_grid_indices') and self.selected_grid_indices:
+            # 다중 선택된 이미지들의 전역 인덱스 계산
+            selected_global_indices = []
+            for grid_index in self.selected_grid_indices:
+                global_index = self.grid_page_start_index + grid_index
+                if 0 <= global_index < len(self.image_files):
+                    selected_global_indices.append(global_index)
+            
+            if not selected_global_indices:
+                logging.warning("선택된 이미지가 없습니다.")
+                return
+                
+            logging.info(f"다중 이미지 이동 시작: {len(selected_global_indices)}개 파일")
+        else:
+            # 기존 단일 선택 방식 (호환성)
+            image_list_index = self.grid_page_start_index + self.current_grid_index
+            if not (0 <= image_list_index < len(self.image_files)):
+                logging.warning("선택된 셀에 이동할 이미지가 없습니다.")
+                return
+            selected_global_indices = [image_list_index]
+            logging.info(f"단일 이미지 이동: index {image_list_index}")
 
         target_folder = self.target_folders[folder_index]
         if not target_folder or not os.path.isdir(target_folder):
             return
 
-        current_image_path = self.image_files[image_list_index]
-
-        # ======================================================================== #
-        # ========== UNDO/REDO VARIABLES START ==========
-        moved_jpg_path = None
-        moved_raw_path = None
-        raw_path_before_move = None
-        # ========== UNDO/REDO VARIABLES END ==========
-        # ======================================================================== #
+        # 이동할 이미지들을 역순으로 정렬 (리스트에서 제거할 때 인덱스 변화 방지)
+        selected_global_indices.sort(reverse=True)
+        
+        # 대량 이동 시 진행 상황 표시 (2개 이상일 때)
+        show_progress = len(selected_global_indices) >= 2
+        progress_dialog = None
+        if show_progress:
+            progress_dialog = QProgressDialog(
+                LanguageManager.translate("이미지 이동 중..."),
+                "",  # 취소 버튼 텍스트를 빈 문자열로 설정
+                0, len(selected_global_indices), self
+            )
+            progress_dialog.setCancelButton(None)  # 취소 버튼 완전히 제거
+            progress_dialog.setWindowModality(Qt.WindowModal)
+            progress_dialog.setMinimumDuration(0)
+            progress_dialog.show()
+            QApplication.processEvents()  # 즉시 표시
+        
+        # 이동 결과 추적
+        successful_moves = []
+        failed_moves = []
+        move_history_entries = []
+        user_canceled = False
 
         try:
-            # --- JPG 파일 이동 ---
-            moved_jpg_path = self.move_file(current_image_path, target_folder) # <<< 반환값 저장
+            for idx, global_index in enumerate(selected_global_indices):
+                # 진행 상황 업데이트
+                if show_progress and progress_dialog:
+                    progress_dialog.setValue(idx)
+                    if progress_dialog.wasCanceled():
+                        logging.info("사용자가 이동 작업을 취소했습니다.")
+                        user_canceled = True
+                        break
+                    QApplication.processEvents()  # UI 업데이트
+                
+                if global_index >= len(self.image_files):
+                    # 이전 이동으로 인해 인덱스가 변경된 경우 건너뛰기
+                    continue
+                    
+                current_image_path = self.image_files[global_index]
+                
+                # ======================================================================== #
+                # ========== UNDO/REDO VARIABLES START ==========
+                moved_jpg_path = None
+                moved_raw_path = None
+                raw_path_before_move = None
+                # ========== UNDO/REDO VARIABLES END ==========
+                # ======================================================================== #
 
-            # --- 이동 실패 시 처리 ---
-            if moved_jpg_path is None:
-                self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {current_image_path.name}")
-                return
+                try:
+                    # --- JPG 파일 이동 ---
+                    moved_jpg_path = self.move_file(current_image_path, target_folder)
 
-            # --- RAW 파일 이동 ---
-            raw_moved_successfully = True
-            if self.move_raw_files:
-                base_name = current_image_path.stem
-                if base_name in self.raw_files:
-                    raw_path_before_move = self.raw_files[base_name]
-                    moved_raw_path = self.move_file(raw_path_before_move, target_folder) # <<< 반환값 저장
-                    if moved_raw_path is None:
-                        self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), f"RAW 파일 이동 실패: {raw_path_before_move.name}")
-                        raw_moved_successfully = False
-                    else:
-                        del self.raw_files[base_name]
+                    # --- 이동 실패 시 처리 ---
+                    if moved_jpg_path is None:
+                        failed_moves.append(current_image_path.name)
+                        logging.error(f"파일 이동 실패: {current_image_path.name}")
+                        continue
 
-            # --- 이미지 목록에서 제거 ---
-            self.image_files.pop(image_list_index)
+                    # --- RAW 파일 이동 ---
+                    raw_moved_successfully = True
+                    if self.move_raw_files:
+                        base_name = current_image_path.stem
+                        if base_name in self.raw_files:
+                            raw_path_before_move = self.raw_files[base_name]
+                            moved_raw_path = self.move_file(raw_path_before_move, target_folder)
+                            if moved_raw_path is None:
+                                logging.warning(f"RAW 파일 이동 실패: {raw_path_before_move.name}")
+                                raw_moved_successfully = False
+                            else:
+                                del self.raw_files[base_name]
 
-            # ======================================================================== #
-            # ========== UNDO/REDO HISTORY ADDITION START ==========
-            if moved_jpg_path:
-                history_entry = {
-                    "jpg_source": str(current_image_path),
-                    "jpg_target": str(moved_jpg_path),
-                    "raw_source": str(raw_path_before_move) if raw_path_before_move else None,
-                    "raw_target": str(moved_raw_path) if moved_raw_path and raw_moved_successfully else None,
-                    "index_before_move": image_list_index,
-                    "mode": self.grid_mode # 이동 당시 모드 기록
-                }
-                self.add_move_history(history_entry)
-            # ========== UNDO/REDO HISTORY ADDITION END ==========
-            # ======================================================================== #
+                    # --- 이미지 목록에서 제거 ---
+                    self.image_files.pop(global_index)
+                    successful_moves.append(moved_jpg_path.name)
 
+                    # ======================================================================== #
+                    # ========== UNDO/REDO HISTORY ADDITION START ==========
+                    if moved_jpg_path:
+                        history_entry = {
+                            "jpg_source": str(current_image_path),
+                            "jpg_target": str(moved_jpg_path),
+                            "raw_source": str(raw_path_before_move) if raw_path_before_move else None,
+                            "raw_target": str(moved_raw_path) if moved_raw_path and raw_moved_successfully else None,
+                            "index_before_move": global_index,
+                            "mode": self.grid_mode # 이동 당시 모드 기록
+                        }
+                        move_history_entries.append(history_entry)
+                    # ========== UNDO/REDO HISTORY ADDITION END ==========
+                    # ======================================================================== #
 
-            # --- 그리드 뷰 업데이트 로직 (기존 코드 유지) ---
+                except Exception as e:
+                    failed_moves.append(current_image_path.name)
+                    logging.error(f"이미지 이동 중 오류 발생 ({current_image_path.name}): {str(e)}")
+
+            # 진행 상황 다이얼로그 닫기
+            if show_progress and progress_dialog:
+                progress_dialog.close()
+                progress_dialog = None
+
+            # 중복 히스토리 추가 코드 제거 (10766-10770라인)
+            # 아래 배치 처리 코드에서 통합 처리하므로 이 부분 삭제
+            
+            # 결과 메시지 표시
+            if user_canceled:
+                if successful_moves:
+                    message = f"작업 취소됨.\n성공: {len(successful_moves)}개, 실패: {len(failed_moves)}개"
+                    self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
+                else:
+                    logging.info("사용자 취소로 인해 이동된 파일 없음")
+            elif successful_moves and failed_moves:
+                # 일부 성공, 일부 실패
+                message = f"성공: {len(successful_moves)}개\n실패: {len(failed_moves)}개"
+                self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
+            elif failed_moves:
+                # 모두 실패
+                message = f"모든 파일 이동 실패: {len(failed_moves)}개"
+                self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), message)
+            else:
+                # 모두 성공 (로그만, 메시지 박스 없음)
+                logging.info(f"다중 이미지 이동 완료: {len(successful_moves)}개 파일")
+
+            # --- 그리드 뷰 업데이트 로직 ---
+            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+            num_cells = rows * cols
+            
+            # 선택 상태 초기화
+            if hasattr(self, 'selected_grid_indices'):
+                self.clear_grid_selection(preserve_current_index=True)
+            
+            # 현재 페이지 검증 및 조정
             current_page_image_count = min(num_cells, len(self.image_files) - self.grid_page_start_index)
             if self.current_grid_index >= current_page_image_count and current_page_image_count > 0:
                 self.current_grid_index = current_page_image_count - 1
 
             if current_page_image_count == 0 and len(self.image_files) > 0:
-                 self.grid_page_start_index = max(0, self.grid_page_start_index - num_cells)
-                 self.current_grid_index = 0
+                self.grid_page_start_index = max(0, self.grid_page_start_index - num_cells)
+                # 이전 페이지의 유효한 셀로 이동 (마지막 셀이 더 적절)
+                new_page_image_count = min(num_cells, len(self.image_files) - self.grid_page_start_index)
+                self.current_grid_index = max(0, new_page_image_count - 1)
 
             self.update_grid_view()
 
+            # 모든 이미지가 이동된 경우
             if not self.image_files:
                 self.grid_mode = "Off"
                 self.grid_off_radio.setChecked(True)
                 self.update_grid_view()
-                # 미니맵 숨기기 추가
+                # 미니맵 숨기기
                 if self.minimap_visible:
                     self.minimap_widget.hide()
                     self.minimap_visible = False
@@ -8125,8 +10986,23 @@ class PhotoSortApp(QMainWindow):
             self.update_counters()
 
         except Exception as e:
+            # 예외 발생 시 진행 상황 다이얼로그 닫기
+            if show_progress and progress_dialog:
+                progress_dialog.close()
             self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {str(e)}")
-    
+
+        # 히스토리에 이동 기록 추가 (성공한 것들만) - 단일 처리로 통합
+        if move_history_entries:
+            if len(move_history_entries) == 1:
+                # 단일 이동은 기존 방식으로
+                self.add_move_history(move_history_entries[0])
+                logging.info(f"단일 이동 히스토리 추가: 1개 항목")
+            else:
+                # 다중 이동은 배치 작업으로
+                self.add_batch_move_history(move_history_entries)
+                logging.info(f"배치 이동 히스토리 추가: {len(move_history_entries)}개 항목")
+
+
     def on_grid_cell_double_clicked(self, clicked_widget, clicked_index): # 파라미터 이름을 clicked_widget으로
         """그리드 셀 더블클릭 시 Grid Off 모드로 전환"""
         if self.grid_mode == "Off" or not self.grid_labels:
@@ -8208,53 +11084,78 @@ class PhotoSortApp(QMainWindow):
             current_orientation = self.current_image_orientation
 
             if self.zoom_mode == "Fit":
-                # Fit -> 100% (더블클릭)
                 self.double_click_pos = event.position().toPoint()
                 
                 scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-                view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
-                fit_img_width = scaled_fit_pixmap.width(); fit_img_height = scaled_fit_pixmap.height()
+                view_width = self.scroll_area.width()
+                view_height = self.scroll_area.height()
+                fit_img_width = scaled_fit_pixmap.width()
+                fit_img_height = scaled_fit_pixmap.height()
                 fit_img_rect_in_view = QRect(
                     (view_width - fit_img_width) // 2, (view_height - fit_img_height) // 2,
                     fit_img_width, fit_img_height
                 )
-                click_x_vp = self.double_click_pos.x(); click_y_vp = self.double_click_pos.y()
+                click_x_vp = self.double_click_pos.x()
+                click_y_vp = self.double_click_pos.y()
 
                 if fit_img_rect_in_view.contains(int(click_x_vp), int(click_y_vp)):
-                    logging.debug("더블클릭: Fit -> 100% 요청")
-                    self.zoom_change_trigger = "double_click" # apply_zoom_to_image에서 이 트리거 사용
+                    # [수정] 마지막 활성 줌 모드로 전환
+                    target_zoom_mode = self.last_active_zoom_mode
+                    logging.debug(f"더블클릭: Fit -> {target_zoom_mode} 요청")
                     
-                    # 이전 상태(Fit)의 포커스를 저장할 필요는 없음 (항상 0.5, 0.5, "Fit")
-                    self.zoom_mode = "100%" # 목표 줌 설정
-                    self.zoom_100_radio.setChecked(True)
+                    # 현재 방향 정보 확인
+                    current_orientation = self.current_image_orientation
+                    if current_orientation:
+                        # 저장된 뷰포트 포커스 복구
+                        saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
+                        self.current_active_rel_center = saved_rel_center
+                        self.current_active_zoom_level = target_zoom_mode
+                        logging.debug(f"더블클릭 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
+                    else:
+                        self.current_active_rel_center = QPointF(0.5, 0.5)
+                        self.current_active_zoom_level = target_zoom_mode
                     
-                    # current_active_...는 apply_zoom_to_image("double_click") 내부에서
-                    # 더블클릭 위치 기준으로 계산되고 설정된 후, 고유 포커스로 저장될 것임.
+                    self.zoom_change_trigger = "double_click"
+                    self.zoom_mode = target_zoom_mode
+                    
+                    if target_zoom_mode == "100%":
+                        self.zoom_100_radio.setChecked(True)
+                    elif target_zoom_mode == "Spin":
+                        self.zoom_spin_btn.setChecked(True)
+
                     self.apply_zoom_to_image() 
                     self.toggle_minimap(self.minimap_toggle.isChecked())
                 else:
                     logging.debug("더블클릭 위치가 이미지 바깥입니다 (Fit 모드).")
 
-            elif self.zoom_mode in ["100%", "200%"]:
-                # 100%/200% -> Fit (더블클릭)
+            elif self.zoom_mode in ["100%", "Spin"]:
                 logging.debug(f"더블클릭: {self.zoom_mode} -> Fit 요청")
-                # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
-                if current_orientation and current_image_path_str:
+                
+                # 현재 뷰포트 위치 저장
+                current_orientation = self.current_image_orientation
+                if current_orientation:
+                    current_rel_center = self._get_current_view_relative_center()
+                    logging.debug(f"더블클릭 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
+                    
+                    self.current_active_rel_center = current_rel_center
+                    self.current_active_zoom_level = self.zoom_mode
+                    
                     self._save_orientation_viewport_focus(
                         current_orientation,
-                        self.current_active_rel_center,
-                        self.current_active_zoom_level
+                        current_rel_center,
+                        self.zoom_mode
                     )
+                
+                # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
+                self.last_active_zoom_mode = self.zoom_mode
+                logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
                 
                 self.zoom_mode = "Fit"
                 self.current_active_rel_center = QPointF(0.5, 0.5)
                 self.current_active_zoom_level = "Fit"
                 
-                # self.zoom_change_trigger = "double_click_to_fit" # 또는 그냥 None
-                
                 self.fit_radio.setChecked(True)
                 self.apply_zoom_to_image()
-
 
 
     def reset_program_state(self):
@@ -8306,9 +11207,10 @@ class PhotoSortApp(QMainWindow):
             self.current_image_index = -1
             self.is_raw_only_mode = False # <--- 명시적으로 RAW 모드 해제
             self.move_raw_files = True
-            self.target_folders = ["", "", ""]
-            self.folder_count = 3  # 항상 3개 폴더 사용
+            self.target_folders = [""] * self.folder_count  # 기존 folder_count 설정 유지
+            # self.folder_count = 3  # <<<< 제거: 사용자 설정 유지
             self.zoom_mode = "Fit" # Zoom 모드 초기화
+            self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 값 초기화 (200%)
             self.grid_mode = "Off" # Grid 모드 초기화
             self.update_counter_layout() # 레이아웃 업데이트 호출
             self.grid_page_start_index = 0
@@ -8333,7 +11235,7 @@ class PhotoSortApp(QMainWindow):
             # --- UI 컨트롤 상태 설정 ---
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            for i in range(3):
+            for i in range(self.folder_count):
                 self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
 
             self.update_folder_buttons() # 분류 폴더 UI 업데이트
@@ -8342,6 +11244,10 @@ class PhotoSortApp(QMainWindow):
 
             # Zoom 라디오 버튼
             self.fit_radio.setChecked(True)
+
+            # 동적 줌 SpinBox 초기화
+            if hasattr(self, 'zoom_spin'):
+                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))  # 200% 설정
 
             # Grid 라디오 버튼
             self.grid_off_radio.setChecked(True)
@@ -8381,11 +11287,18 @@ class PhotoSortApp(QMainWindow):
         self.info_filename_label.doubleClicked.connect(self.open_current_file_in_explorer)
         self.control_layout.addWidget(self.info_filename_label)
 
+        # 정보 레이블들을 담을 하나의 컨테이너
+        info_container = QWidget()
+        info_container.setFixedWidth(300)  # 고정 너비 설정으로 가운데 정렬 효과
+        info_layout = QVBoxLayout(info_container)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
+
         # 정보 표시를 위한 레이블들 (왼쪽 정렬)
         # ========== UIScaleManager 적용 ==========
         info_padding = UIScaleManager.get("info_label_padding")
         info_label_style = f"color: #A8A8A8; padding-left: {info_padding}px;"
-        info_font = QFont("Arial", UIScaleManager.get("font_size")) # 전역 폰트 크기 사용
+        info_font = QFont("Arial", UIScaleManager.get("font_size"))
 
         # 정보 레이블 공통 설정 함수
         def configure_info_label(label):
@@ -8408,21 +11321,41 @@ class PhotoSortApp(QMainWindow):
         # 정보 레이블 생성 및 설정 적용
         self.info_datetime_label = QLabel("-")
         configure_info_label(self.info_datetime_label)
+        info_layout.addWidget(self.info_datetime_label)
 
         self.info_resolution_label = QLabel("-")
         configure_info_label(self.info_resolution_label)
+        info_layout.addWidget(self.info_resolution_label)
 
         self.info_camera_label = QLabel("-")
         configure_info_label(self.info_camera_label)
+        info_layout.addWidget(self.info_camera_label)
+
+        self.info_exposure_label = QLabel("-")
+        configure_info_label(self.info_exposure_label)
+        info_layout.addWidget(self.info_exposure_label)
 
         self.info_focal_label = QLabel("-")
         configure_info_label(self.info_focal_label)
+        info_layout.addWidget(self.info_focal_label)
 
-        # 레이아웃에 위젯 추가 (요청된 순서대로)
-        self.control_layout.addWidget(self.info_datetime_label)    # 1. 촬영 날짜
-        self.control_layout.addWidget(self.info_resolution_label)  # 2. 해상도
-        self.control_layout.addWidget(self.info_camera_label)      # 3. 카메라
-        self.control_layout.addWidget(self.info_focal_label)       # 4. 초점거리
+        self.info_aperture_label = QLabel("-")
+        configure_info_label(self.info_aperture_label)
+        info_layout.addWidget(self.info_aperture_label)
+
+        self.info_iso_label = QLabel("-")
+        configure_info_label(self.info_iso_label)
+        info_layout.addWidget(self.info_iso_label)
+
+        # 컨테이너를 가운데 정렬하여 메인 레이아웃에 추가
+        container_wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(container_wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.addStretch()
+        wrapper_layout.addWidget(info_container)
+        wrapper_layout.addStretch()
+        
+        self.control_layout.addWidget(container_wrapper)
 
     def update_file_info_display(self, image_path):
         """파일 정보 표시 - 비동기 버전, RAW 연결 아이콘 추가"""
@@ -8432,7 +11365,10 @@ class PhotoSortApp(QMainWindow):
             self.info_resolution_label.setText("-")
             self.info_camera_label.setText("-")
             self.info_datetime_label.setText("-")
+            self.info_exposure_label.setText("-")
             self.info_focal_label.setText("-")
+            self.info_aperture_label.setText("-")
+            self.info_iso_label.setText("-")
             self.current_exif_path = None
             return
         
@@ -8454,7 +11390,10 @@ class PhotoSortApp(QMainWindow):
         self.info_resolution_label.setText(loading_text)
         self.info_camera_label.setText(loading_text)
         self.info_datetime_label.setText(loading_text)
+        self.info_exposure_label.setText(loading_text)
         self.info_focal_label.setText(loading_text)
+        self.info_aperture_label.setText(loading_text)
+        self.info_iso_label.setText(loading_text)
         
         if image_path in self.exif_cache:
             self.update_info_ui_from_exif(self.exif_cache[image_path], image_path)
@@ -8483,7 +11422,10 @@ class PhotoSortApp(QMainWindow):
             self.info_resolution_label.setText(error_text)
             self.info_camera_label.setText(error_text)
             self.info_datetime_label.setText(error_text)
+            self.info_exposure_label.setText(error_text)
             self.info_focal_label.setText(error_text)
+            self.info_aperture_label.setText(error_text)
+            self.info_iso_label.setText(error_text)
 
     def update_info_ui_from_exif(self, exif_data, image_path):
         """EXIF 데이터로 UI 레이블 업데이트"""
@@ -8516,11 +11458,11 @@ class PhotoSortApp(QMainWindow):
                 self.info_resolution_label.setText(resolution_text)
             else:
                 self.info_resolution_label.setText("▪ -")
-            
+
             # 카메라 정보 설정
             make = exif_data["exif_make"]
             model = exif_data["exif_model"]
-            camera_info = f"▪ {make} {model}".strip()
+            camera_info = f"▪ {format_camera_name(make, model)}"
             self.info_camera_label.setText(camera_info if len(camera_info) > 2 else "▪ -")
             
             # 날짜 정보 설정
@@ -8533,6 +11475,28 @@ class PhotoSortApp(QMainWindow):
                     self.info_datetime_label.setText(f"▪ {datetime_str}")
             else:
                 self.info_datetime_label.setText("▪ -")
+
+            # 노출 시간 정보 설정
+            exposure_str = "▪ "
+            if exif_data["exif_exposure_time"] is not None:
+                exposure_val = exif_data["exif_exposure_time"]
+                try:
+                    if isinstance(exposure_val, (int, float)):
+                        if exposure_val >= 1:
+                            exposure_str += f"{exposure_val:.1f}s"
+                        else:
+                            # 1초 미만일 때는 분수로 표시
+                            fraction = 1 / exposure_val
+                            exposure_str += f"1/{fraction:.0f}s"
+                    else:
+                        exposure_str += str(exposure_val)
+                        if not str(exposure_val).endswith('s'):
+                            exposure_str += "s"
+                except (ValueError, TypeError, ZeroDivisionError):
+                    exposure_str += str(exposure_val)
+                self.info_exposure_label.setText(exposure_str)
+            else:
+                self.info_exposure_label.setText("▪ -")
             
             # 초점 거리 정보 설정
             focal_str = "▪ "
@@ -8541,21 +11505,21 @@ class PhotoSortApp(QMainWindow):
             # 초점 거리
             if exif_data["exif_focal_mm"] is not None:
                 if isinstance(exif_data["exif_focal_mm"], (int, float)):
-                    focal_parts.append(f"{exif_data['exif_focal_mm']:.0f} mm")
+                    focal_parts.append(f"{exif_data['exif_focal_mm']:.0f}mm")
                 else:
                     focal_parts.append(exif_data["exif_focal_mm"])
                     if "mm" not in str(exif_data["exif_focal_mm"]).lower():
-                        focal_parts[-1] += " mm"
+                        focal_parts[-1] += "mm"
             
             # 35mm 환산 초점 거리
             if exif_data["exif_focal_35mm"] is not None:
                 focal_conversion = f"({LanguageManager.translate('환산')}: "
                 if isinstance(exif_data["exif_focal_35mm"], (int, float)):
-                    focal_conversion += f"{exif_data['exif_focal_35mm']:.0f} mm"
+                    focal_conversion += f"{exif_data['exif_focal_35mm']:.0f}mm"
                 else:
                     focal_conversion += str(exif_data["exif_focal_35mm"])
                     if "mm" not in str(exif_data["exif_focal_35mm"]).lower():
-                        focal_conversion += " mm"
+                        focal_conversion += "mm"
                 focal_conversion += ")"
                 focal_parts.append(focal_conversion)
             
@@ -8565,13 +11529,46 @@ class PhotoSortApp(QMainWindow):
             else:
                 self.info_focal_label.setText("▪ -")
 
+            # 조리개 정보 설정
+            aperture_str = "▪ "
+            if exif_data["exif_fnumber"] is not None:
+                fnumber_val = exif_data["exif_fnumber"]
+                try:
+                    if isinstance(fnumber_val, (int, float)):
+                        aperture_str += f"F{fnumber_val:.1f}"
+                    else:
+                        aperture_str += f"F{fnumber_val}"
+                except (ValueError, TypeError):
+                    aperture_str += str(fnumber_val)
+                self.info_aperture_label.setText(aperture_str)
+            else:
+                self.info_aperture_label.setText("▪ -")
+            
+            # ISO 정보 설정
+            iso_str = "▪ "
+            if exif_data["exif_iso"] is not None:
+                iso_val = exif_data["exif_iso"]
+                try:
+                    if isinstance(iso_val, (int, float)):
+                        iso_str += f"ISO {int(iso_val)}"
+                    else:
+                        iso_str += f"ISO {iso_val}"
+                except (ValueError, TypeError):
+                    iso_str += str(iso_val)
+                self.info_iso_label.setText(iso_str)
+            else:
+                self.info_iso_label.setText("▪ -")
+
         except Exception as e:
             logging.error(f"EXIF 정보 UI 업데이트 오류: {e}")
             # 에러가 발생해도 기본 정보는 표시 시도
             self.info_resolution_label.setText("▪ -")
             self.info_camera_label.setText("▪ -")
             self.info_datetime_label.setText("▪ -")
+            self.info_exposure_label.setText("▪ -")
             self.info_focal_label.setText("▪ -")
+            self.info_aperture_label.setText("▪ -")
+            self.info_iso_label.setText("▪ -")
 
 
     def open_current_file_in_explorer(self, filename):
@@ -8662,7 +11659,7 @@ class PhotoSortApp(QMainWindow):
                     if is_photo_actually_changed:
                         prev_zoom_for_decision = getattr(self, 'previous_zoom_mode_for_carry_over', "Fit")
                         prev_rel_center_for_decision = getattr(self, 'previous_active_rel_center_for_carry_over', QPointF(0.5, 0.5))
-                        if prev_zoom_for_decision in ["100%", "200%"] and prev_orientation_for_decision == new_orientation:
+                        if prev_zoom_for_decision in ["100%", "Spin"] and prev_orientation_for_decision == new_orientation:
                             self.zoom_mode = prev_zoom_for_decision
                             self.current_active_rel_center = prev_rel_center_for_decision
                             self.current_active_zoom_level = self.zoom_mode
@@ -8676,7 +11673,7 @@ class PhotoSortApp(QMainWindow):
                     # 라디오 버튼 UI 동기화
                     if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
                     elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-                    elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+                    elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
 
                     self.current_image_orientation = new_orientation
                     self.original_pixmap = cached_pixmap
@@ -8883,7 +11880,7 @@ class PhotoSortApp(QMainWindow):
                                      self.previous_image_path_for_focus_carry_over != image_path_str_loaded)
         
         if is_photo_actually_changed:
-            if prev_zoom in ["100%", "200%"] and prev_orientation == new_image_orientation:
+            if prev_zoom in ["100%", "Spin"] and prev_orientation == new_image_orientation:
                 # 방향 동일 & 이전 줌: 이전 "활성" 포커스 이어받기
                 self.zoom_mode = prev_zoom
                 self.current_active_rel_center = prev_rel_center
@@ -8902,7 +11899,7 @@ class PhotoSortApp(QMainWindow):
         # ... (이전 답변의 _on_image_loaded_for_display 나머지 부분과 유사하게 진행) ...
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-        elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+        elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
         
         # self.previous_image_orientation = self.current_image_orientation # 이제 _prepare_for_photo_change에서 관리
         self.current_image_orientation = new_image_orientation # 새 이미지의 방향으로 업데이트
@@ -9169,8 +12166,8 @@ class PhotoSortApp(QMainWindow):
             requested_images.add(img_path)
 
 
-    def on_grid_cell_clicked(self, clicked_widget, clicked_index): # 파라미터 이름을 clicked_widget으로 명확히
-        """그리드 셀 클릭 이벤트 핸들러"""
+    def on_grid_cell_clicked(self, clicked_widget, clicked_index):
+        """그리드 셀 클릭 이벤트 핸들러 (다중 선택 지원, Shift+클릭 범위 선택 추가)"""
         if self.grid_mode == "Off" or not self.grid_labels:
             return
 
@@ -9180,48 +12177,91 @@ class PhotoSortApp(QMainWindow):
 
             # 클릭된 인덱스가 유효한 범위 내에 있고, 해당 인덱스에 해당하는 이미지가 실제로 존재하는지 확인
             if 0 <= clicked_index < current_page_image_count:
-                # clicked_widget은 GridCellWidget 인스턴스여야 합니다.
-                # GridCellWidget에 'image_path' 속성이 있고, 그 경로가 유효한지,
-                # 그리고 setPixmap으로 인해 pixmap이 설정되었는지 (null이 아닌지) 확인합니다.
-                # GridCellWidget의 pixmap() 메서드를 사용하거나, 내부 _pixmap 변수를 직접 확인 (캡슐화 위배 가능성)
-                # 여기서는 GridCellWidget에 pixmap() 메서드가 있다고 가정합니다.
-                
-                # 가장 확실한 방법은 해당 셀에 연결된 image_path가 있는지 확인하는 것입니다.
                 image_path_property = clicked_widget.property("image_path")
 
-                if image_path_property: # 이미지 경로가 있다면 유효한 셀로 간주
-                    self.current_grid_index = clicked_index
+                if image_path_property:
+                    # 키 상태 확인
+                    modifiers = QApplication.keyboardModifiers()
+                    ctrl_pressed = bool(modifiers & Qt.ControlModifier)
+                    shift_pressed = bool(modifiers & Qt.ShiftModifier)
+                    
+                    if shift_pressed and self.last_single_click_index != -1:
+                        # Shift+클릭: 범위 선택
+                        start_index = min(self.last_single_click_index, clicked_index)
+                        end_index = max(self.last_single_click_index, clicked_index)
+                        
+                        # 범위 내의 모든 유효한 셀 선택
+                        self.selected_grid_indices.clear()
+                        for i in range(start_index, end_index + 1):
+                            if i < current_page_image_count:
+                                # 해당 인덱스에 실제 이미지가 있는지 확인
+                                if i < len(self.grid_labels):
+                                    cell_widget = self.grid_labels[i]
+                                    if cell_widget.property("image_path"):
+                                        self.selected_grid_indices.add(i)
+                        
+                        # Primary 선택을 범위의 첫 번째로 설정
+                        if self.selected_grid_indices:
+                            self.primary_selected_index = self.grid_page_start_index + start_index
+                            self.current_grid_index = start_index
+                        
+                        logging.debug(f"Shift+클릭 범위 선택: {start_index}~{end_index} ({len(self.selected_grid_indices)}개 선택)")
+                        
+                    elif ctrl_pressed:
+                        # Ctrl+클릭: 다중 선택 토글 (기존 코드)
+                        if clicked_index in self.selected_grid_indices:
+                            self.selected_grid_indices.remove(clicked_index)
+                            logging.debug(f"셀 선택 해제: index {clicked_index}")
+                            
+                            if self.primary_selected_index == self.grid_page_start_index + clicked_index:
+                                if self.selected_grid_indices:
+                                    first_selected = min(self.selected_grid_indices)
+                                    self.primary_selected_index = self.grid_page_start_index + first_selected
+                                else:
+                                    self.primary_selected_index = -1
+                        else:
+                            self.selected_grid_indices.add(clicked_index)
+                            logging.debug(f"셀 선택 추가: index {clicked_index}")
+                            
+                            if self.primary_selected_index == -1:
+                                self.primary_selected_index = self.grid_page_start_index + clicked_index
+                    else:
+                        # 일반 클릭: 기존 선택 모두 해제하고 새로 선택
+                        self.selected_grid_indices.clear()
+                        self.selected_grid_indices.add(clicked_index)
+                        self.primary_selected_index = self.grid_page_start_index + clicked_index
+                        self.current_grid_index = clicked_index
+                        self.last_single_click_index = clicked_index  # 마지막 단일 클릭 인덱스 저장
+                        logging.debug(f"단일 셀 선택: index {clicked_index}")
+
+                    # UI 업데이트
                     self.update_grid_selection_border()
                     self.update_window_title_with_selection()
 
-                    # 선택된 셀의 이미지 정보 업데이트
-                    image_list_index = self.grid_page_start_index + self.current_grid_index
-                    if 0 <= image_list_index < len(self.image_files):
-                        selected_image_path = str(self.image_files[image_list_index])
+                    # 파일 정보는 primary 선택 이미지로 표시
+                    if self.primary_selected_index != -1 and 0 <= self.primary_selected_index < len(self.image_files):
+                        selected_image_path = str(self.image_files[self.primary_selected_index])
                         self.update_file_info_display(selected_image_path)
                     else:
-                        self.update_file_info_display(None) # 유효하지 않으면 초기화
+                        self.update_file_info_display(None)
+                        
+                    # 선택이 있으면 타이머 시작
+                    if self.selected_grid_indices:
+                        self.state_save_timer.start()
+                        logging.debug(f"on_grid_cell_clicked: Index save timer (re)started for grid cells {self.selected_grid_indices}")
+
+                    # 카운터 업데이트 추가
+                    self.update_counters()
+
                 else:
-                    # 이미지 경로 속성이 없는 경우 (예: 마지막 페이지의 완전히 빈 셀)
                     logging.debug(f"빈 셀 클릭됨 (이미지 경로 없음): index {clicked_index}")
                     self.update_file_info_display(None)
-                
-                if clicked_widget.property("image_path"): # 유효한 이미지 셀 클릭 시
-                    self.current_grid_index = clicked_index
-                    # ... (UI 업데이트) ...
-                    self.state_save_timer.start() # <<< 타이머 (재)시작
-                    logging.debug(f"on_grid_cell_clicked: Index save timer (re)started for grid cell {self.current_grid_index}")
-
             else:
-                # 클릭된 인덱스가 현재 페이지의 유효한 이미지 범위를 벗어난 경우
-                logging.debug(f"유효하지 않은 셀 클릭됨 (인덱스 범위 초과): index {clicked_index}, page_img_count {current_page_image_count}")
+                logging.debug(f"유효하지 않은 셀 클릭됨: index {clicked_index}")
                 self.update_file_info_display(None)
-                
-            self.update_counters()
-
         except Exception as e:
-             logging.error(f"셀 클릭 처리 중 오류 발생: {e}")
-             self.update_file_info_display(None)
+            logging.error(f"on_grid_cell_clicked 오류: {e}")
+            self.update_file_info_display(None)
              
 
     def update_image_count_label(self):
@@ -9269,6 +12309,11 @@ class PhotoSortApp(QMainWindow):
 
     def save_state(self):
         """현재 애플리케이션 상태를 JSON 파일에 저장"""
+
+        #첫 실행 중에는 상태를 저장하지 않음
+        if hasattr(self, 'is_first_run') and self.is_first_run:
+            logging.debug("save_state: 첫 실행 중이므로 상태 저장을 건너뜀")
+            return
         
         # --- 현재 실제로 선택/표시된 이미지의 '전체 리스트' 인덱스 계산 ---
         actual_current_image_list_index = -1
@@ -9287,6 +12332,7 @@ class PhotoSortApp(QMainWindow):
             "move_raw_files": self.move_raw_files,
             "target_folders": [str(f) if f else "" for f in self.target_folders],
             "zoom_mode": self.zoom_mode,
+            "zoom_spin_value": self.zoom_spin_value,
             "minimap_visible": self.minimap_toggle.isChecked(),
             "grid_mode": self.grid_mode,
             # "current_image_index": self.current_image_index, # 이전 방식
@@ -9303,6 +12349,9 @@ class PhotoSortApp(QMainWindow):
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
             "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
+            "mouse_wheel_action": getattr(self, 'mouse_wheel_action', 'photo_navigation'),  # 마우스 휠 동작
+            "folder_count": self.folder_count,
+            "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
         }
 
@@ -9340,8 +12389,10 @@ class PhotoSortApp(QMainWindow):
             self.raw_files = {}
             self.is_raw_only_mode = False
             self.move_raw_files = True
-            self.target_folders = ["", "", ""]
+            self.folder_count = 3
+            self.target_folders = [""] * self.folder_count
             self.zoom_mode = "Fit"
+            self.zoom_spin_value = 2.0
             self.grid_mode = "Off"
             self.current_image_index = -1
             self.current_grid_index = 0
@@ -9356,16 +12407,12 @@ class PhotoSortApp(QMainWindow):
 
             self.update_all_ui_after_load_failure_or_first_run() # UI를 기본 상태로
 
-            accepted_first_run = self.show_first_run_settings_popup() # <<< 반환 값 받기
-
-            if not accepted_first_run: # 사용자가 확인 안 누르고 닫았다면
-                logging.info("PhotoSortApp.load_state: 첫 실행 설정이 완료되지 않아 앱을 시작하지 않습니다.")
-                return False # <<< 앱 시작 안 함을 알림
+            # 첫 실행 플래그 설정 (팝업은 메인 윈도우 표시 후에 표시)
+            self.is_first_run = True
             
-            # accepted_first_run이 True이면 (즉, 확인 누르고 save_state 실행됨) 계속 진행
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-            return True # <<< 앱 정상 시작을 알림
+            return True # 앱 정상 시작을 알림
 
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
@@ -9389,11 +12436,23 @@ class PhotoSortApp(QMainWindow):
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
             self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
             
-            self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도 추가, 기본값 5
+            self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
+
+            self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")  # 추가
+            logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
 
             self.saved_sessions = loaded_data.get("saved_sessions", {}) # <<< 추가, 없으면 빈 딕셔너리
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
+
+            # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
+            default_extensions = {'.jpg', '.jpeg'}
+            loaded_extensions = loaded_data.get("supported_image_extensions", list(default_extensions))
+            self.supported_image_extensions = set(loaded_extensions)
+
+            self.folder_count = loaded_data.get("folder_count", 3)
+            loaded_folders = loaded_data.get("target_folders", [])
+            self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
 
             # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
             if hasattr(self, 'language_group'):
@@ -9422,14 +12481,27 @@ class PhotoSortApp(QMainWindow):
                 idx = self.viewport_speed_combo.findData(self.viewport_move_speed)
                 if idx >= 0:
                     self.viewport_speed_combo.setCurrentIndex(idx)
+
+            # 마우스 휠 라디오 버튼 UI 업데이트 (설정창이 생성된 후)
+            if hasattr(self, 'mouse_wheel_photo_radio') and hasattr(self, 'mouse_wheel_none_radio'):
+                if self.mouse_wheel_action == 'photo_navigation':
+                    self.mouse_wheel_photo_radio.setChecked(True)
+                else:
+                    self.mouse_wheel_none_radio.setChecked(True)
             
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
 
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
+            self.zoom_spin_value = loaded_data.get("zoom_spin_value", 2.0)
             if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
             elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
-            elif self.zoom_mode == "200%": self.zoom_200_radio.setChecked(True)
+            elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
+
+            # SpinBox UI 업데이트 추가
+            if hasattr(self, 'zoom_spin'):
+                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
+                logging.info(f"PhotoSortApp.load_state: 동적 줌 SpinBox 값 복원: {int(self.zoom_spin_value * 100)}%")
             
             self.minimap_toggle.setChecked(loaded_data.get("minimap_visible", True))
 
@@ -9438,7 +12510,9 @@ class PhotoSortApp(QMainWindow):
             self.raw_folder = loaded_data.get("raw_folder", "")
             raw_files_str = loaded_data.get("raw_files", {})
             self.raw_files = {k: Path(v) for k, v in raw_files_str.items() if v and Path(v).exists()} # 경로 유효성 검사 후
-            self.target_folders = [str(f) if f else "" for f in loaded_data.get("target_folders", ["", "", ""])]
+            self.folder_count = loaded_data.get("folder_count", 3)
+            loaded_folders = loaded_data.get("target_folders", []) # 없으면 빈 리스트
+            self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
             self.is_raw_only_mode = loaded_data.get("is_raw_only_mode", False)
             self.previous_grid_mode = loaded_data.get("previous_grid_mode", None)
 
@@ -9455,13 +12529,6 @@ class PhotoSortApp(QMainWindow):
                 self.raw_folder = ""
                 self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
             
-            for i, folder_path_str in enumerate(self.target_folders):
-                if folder_path_str and Path(folder_path_str).is_dir():
-                    self.folder_path_labels[i].setText(folder_path_str)
-                else:
-                    self.target_folders[i] = "" # 유효하지 않으면 상태 변수도 비움
-                    self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
-            # ===> 경로 레이블 반영 끝 <===
 
             # ===> 앱 재시작 시 마지막 사용된 RAW 처리 방식 로드 <===
             # 이 값은 이미지 목록 로드 후, 실제 display_current_image/update_grid_view 전에 ImageLoader에 설정됨
@@ -9507,8 +12574,8 @@ class PhotoSortApp(QMainWindow):
             # --- 로드 후 폴더 관련 UI '상태'(활성화, 버튼 텍스트 등) 최종 업데이트 ---
             self.update_jpg_folder_ui_state() # JPG 폴더 레이블 스타일/X버튼, JPG 로드 버튼 상태
             self.update_raw_folder_ui_state() # RAW 폴더 레이블 스타일/X버튼, RAW 이동 토글 상태
-            self.update_folder_buttons()      # 분류 폴더 레이블 스타일/X버튼
             self.update_match_raw_button_state()# RAW 관련 버튼 텍스트/상태
+            self._rebuild_folder_selection_ui()
 
             # ===> ImageLoader 전략 설정 (이미지 목록 로드 성공 후, 뷰 업데이트 전) <===
             if images_loaded_successfully and self.image_files:
@@ -9629,10 +12696,13 @@ class PhotoSortApp(QMainWindow):
         self.raw_files = {}
         self.is_raw_only_mode = False
         self.move_raw_files = True # RAW 이동 기본값
-        self.target_folders = ["", "", ""]
+        self.folder_count = 3
+        self.target_folders = [""] * self.folder_count
+
         
         # 뷰 관련 상태
         self.zoom_mode = "Fit"
+        self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 기본값 추가
         self.grid_mode = "Off"
         self.current_image_index = -1
         self.current_grid_index = 0
@@ -9677,6 +12747,10 @@ class PhotoSortApp(QMainWindow):
         self.update_match_raw_button_state()
         self.grid_mode = "Off"; self.grid_off_radio.setChecked(True)
         self.zoom_mode = "Fit"; self.fit_radio.setChecked(True)
+        self.zoom_spin_value = 2.0
+        # SpinBox UI 업데이트 추가
+        if hasattr(self, 'zoom_spin'):
+            self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
         self.update_zoom_radio_buttons_state()
         self.display_current_image() # 빈 화면 표시
         self.update_counter_layout()
@@ -9709,7 +12783,7 @@ class PhotoSortApp(QMainWindow):
             return False # 실패
 
     def add_move_history(self, move_info):
-        """ 파일 이동 기록을 히스토리에 추가하고 포인터 업데이트 """
+        """ 파일 이동 기록을 히스토리에 추가하고 포인터 업데이트 (배치 작업 지원) """
         logging.debug(f"Adding to history: {move_info}") # 디버깅 로그
 
         # 현재 포인터 이후의 기록(Redo 가능한 기록)은 삭제
@@ -9728,8 +12802,23 @@ class PhotoSortApp(QMainWindow):
         logging.debug(f"History pointer updated to: {self.history_pointer}") # 디버깅 로그
         logging.debug(f"Current history length: {len(self.move_history)}") # 디버깅 로그
 
+    def add_batch_move_history(self, move_entries):
+        """ 배치 파일 이동 기록을 히스토리에 추가 """
+        if not move_entries:
+            return
+            
+        # 배치 작업을 하나의 히스토리 엔트리로 묶음
+        batch_entry = {
+            "type": "batch",
+            "entries": move_entries,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logging.debug(f"Adding batch to history: {len(move_entries)} entries")
+        self.add_move_history(batch_entry)
+
     def undo_move(self):
-        """ 마지막 파일 이동 작업을 취소 (Undo) """
+        """ 마지막 파일 이동 작업을 취소 (Undo) - 배치 작업 지원 """
         if self.history_pointer < 0:
             logging.warning("Undo: 히스토리 없음")
             return # 실행 취소할 작업 없음
@@ -9738,224 +12827,351 @@ class PhotoSortApp(QMainWindow):
         move_info = self.move_history[self.history_pointer]
         logging.debug(f"Undoing: {move_info}") # 디버깅 로그
 
+        # 배치 작업인지 확인
+        if isinstance(move_info, dict) and move_info.get("type") == "batch":
+            # 배치 작업 Undo
+            self.undo_batch_move(move_info["entries"])
+        else:
+            # 단일 작업 Undo (기존 로직)
+            self.undo_single_move(move_info)
+
+        # 히스토리 포인터 이동
+        self.history_pointer -= 1
+        logging.debug(f"Undo complete. History pointer: {self.history_pointer}")
+
+    def undo_batch_move(self, batch_entries):
+        """ 배치 이동 작업을 취소 """
+        try:
+            # 배치 엔트리들을 역순으로 처리 (이동 순서와 반대로)
+            for move_info in reversed(batch_entries):
+                self.undo_single_move_internal(move_info)
+            
+            # UI 업데이트는 마지막에 한 번만
+            self.update_ui_after_undo_batch(batch_entries)
+            
+        except Exception as e:
+            logging.error(f"배치 Undo 중 오류 발생: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical, 
+                LanguageManager.translate("에러"), 
+                f"{LanguageManager.translate('실행 취소 중 오류 발생')}: {str(e)}"
+            )
+
+    def undo_single_move_internal(self, move_info):
+        """ 단일 이동 작업을 취소 (UI 업데이트 없음) """
         jpg_source_path = Path(move_info["jpg_source"])
         jpg_target_path = Path(move_info["jpg_target"])
         raw_source_path = Path(move_info["raw_source"]) if move_info["raw_source"] else None
         raw_target_path = Path(move_info["raw_target"]) if move_info["raw_target"] else None
         index_before_move = move_info["index_before_move"]
-        mode_before_move = move_info.get("mode", "Off") # 이전 모드 가져오기 (없으면 Off)
 
-        try:
-            # 1. JPG 파일 원래 위치로 이동
-            #    이동 전 경로에 파일이 이미 있는지 확인 (덮어쓰기 방지 또는 다른 처리 필요 시)
-            if jpg_source_path.exists():
-                logging.warning(f"경고: Undo 대상 위치에 이미 파일 존재: {jpg_source_path}")
-                # 필요시 파일명 변경 로직 추가
-                # 여기서는 일단 덮어쓰도록 진행 (shutil.move는 기본적으로 덮어씀)
-                # 또는 사용자에게 확인 요청
+        # 1. JPG 파일 원래 위치로 이동
+        if jpg_target_path.exists():
+            shutil.move(str(jpg_target_path), str(jpg_source_path))
+            logging.debug(f"Undo: Moved {jpg_target_path} -> {jpg_source_path}")
 
-            # 대상 폴더(이동되었던 곳)에 파일이 있는지 확인 후 이동
-            if jpg_target_path.exists():
-                shutil.move(str(jpg_target_path), str(jpg_source_path))
-                logging.debug(f"Undo: Moved {jpg_target_path} -> {jpg_source_path}")
-            else:
-                logging.warning(f"경고: Undo할 파일이 대상 위치에 없음: {jpg_target_path}")
-                # 파일이 없다면 히스토리 포인터만 이동하고 종료할 수 있음
-                # self.history_pointer -= 1
-                # return
+        # 2. RAW 파일 원래 위치로 이동
+        if raw_source_path and raw_target_path and raw_target_path.exists():
+            shutil.move(str(raw_target_path), str(raw_source_path))
+            logging.debug(f"Undo: Moved RAW {raw_target_path} -> {raw_source_path}")
 
-            # 2. RAW 파일 원래 위치로 이동 (존재하고, 이동되었었다면)
-            if raw_source_path and raw_target_path:
-                if raw_source_path.exists():
-                    logging.warning(f"경고: Undo RAW 대상 위치에 이미 파일 존재: {raw_source_path}")
-                    
-                if raw_target_path.exists():
-                    shutil.move(str(raw_target_path), str(raw_source_path))
-                    logging.debug(f"Undo: Moved RAW {raw_target_path} -> {raw_source_path}")
-                else:
-                    logging.warning(f"경고: Undo할 RAW 파일이 대상 위치에 없음: {raw_target_path}")
-
-            # 3. 파일 목록 복원 (self.image_files)
-            #    인덱스 유효성 검사 후 삽입
+        # 3. 파일 목록 복원 (중복 검사 추가)
+        if jpg_source_path not in self.image_files:
             if 0 <= index_before_move <= len(self.image_files):
                 self.image_files.insert(index_before_move, jpg_source_path)
+                logging.debug(f"Undo: Inserted {jpg_source_path.name} at index {index_before_move}")
             else:
-                # 인덱스가 잘못된 경우 맨 끝에 추가하거나 오류 처리
-                logging.warning(f"경고: Undo 시 잘못된 인덱스({index_before_move}), 파일 목록 끝에 추가합니다.")
                 self.image_files.append(jpg_source_path)
-                index_before_move = len(self.image_files) - 1  # 추가된 위치를 새 인덱스로 사용
+                logging.debug(f"Undo: Appended {jpg_source_path.name} to end of list")
+        else:
+            logging.warning(f"Undo: Skipped duplicate file insertion for {jpg_source_path.name}")
 
-            # 4. RAW 파일 딕셔너리 복원 (self.raw_files)
-            if raw_source_path: # RAW 파일이 원래 있었다면
+        # 4. RAW 파일 딕셔너리 복원 (중복 검사 추가)
+        if raw_source_path:
+            if jpg_source_path.stem not in self.raw_files:
                 self.raw_files[jpg_source_path.stem] = raw_source_path
+                logging.debug(f"Undo: Restored RAW file mapping for {jpg_source_path.stem}")
+            else:
+                logging.warning(f"Undo: Skipped duplicate RAW file mapping for {jpg_source_path.stem}")
 
-            # 5. 히스토리 포인터 이동
-            self.history_pointer -= 1
-            logging.debug(f"Undo complete. History pointer: {self.history_pointer}") # 디버깅 로그
-
-            # 6. UI 업데이트
-            #    복원된 이미지를 선택 및 표시하도록 변경
-            if mode_before_move == "Off":
-                # 복원된 이미지 위치로 이동하도록 인덱스 설정
-                self.current_image_index = index_before_move  # 원래 인덱스로 복원
+    def undo_single_move(self, move_info):
+        """ 단일 이동 작업을 취소 (기존 로직) """
+        self.undo_single_move_internal(move_info)
+        
+        # UI 업데이트
+        mode_before_move = move_info.get("mode", "Off")
+        index_before_move = move_info["index_before_move"]
+        
+        # 강제 새로고침 플래그 설정
+        self.force_refresh = True
+        
+        if mode_before_move == "Off":
+            self.current_image_index = index_before_move
+            if self.grid_mode != "Off":
+                self.grid_mode = "Off"
+                self.grid_off_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+                self.update_counter_layout()
+            
+            if self.zoom_mode == "Fit":
+                self.last_fit_size = (0, 0)
+                self.fit_pixmap_cache.clear()
                 
-                # Grid 모드일 경우 Grid Off로 전환
+            self.display_current_image()
+        else:
+            # Grid 모드
+            rows, cols = (2, 2) if mode_before_move == '2x2' else (3, 3)
+            num_cells = rows * cols
+            self.grid_page_start_index = (index_before_move // num_cells) * num_cells
+            self.current_grid_index = index_before_move % num_cells
+            
+            if self.grid_mode != mode_before_move:
+                self.grid_mode = mode_before_move
+                if mode_before_move == "2x2":
+                    self.grid_2x2_radio.setChecked(True)
+                elif mode_before_move == "3x3":
+                    self.grid_3x3_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+                self.update_counter_layout()
+            
+            self.update_grid_view()
+        
+        self.update_counters()
+
+    def update_ui_after_undo_batch(self, batch_entries):
+        """ 배치 Undo 후 UI 업데이트 """
+        if not batch_entries:
+            return
+            
+        # 첫 번째 엔트리의 모드를 기준으로 UI 업데이트
+        first_entry = batch_entries[0]
+        mode_before_move = first_entry.get("mode", "Off")
+        
+        # 첫 번째 복원된 이미지의 인덱스로 이동
+        first_index = first_entry["index_before_move"]
+        
+        # 강제 새로고침 플래그 설정
+        self.force_refresh = True
+        
+        if mode_before_move == "Off":
+            self.current_image_index = first_index
+            if self.grid_mode != "Off":
+                self.grid_mode = "Off"
+                self.grid_off_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+                self.update_counter_layout()
+            
+            if self.zoom_mode == "Fit":
+                self.last_fit_size = (0, 0)
+                self.fit_pixmap_cache.clear()
+                
+            self.display_current_image()
+        else:
+            # Grid 모드
+            rows, cols = (2, 2) if mode_before_move == '2x2' else (3, 3)
+            num_cells = rows * cols
+            self.grid_page_start_index = (first_index // num_cells) * num_cells
+            self.current_grid_index = first_index % num_cells
+            
+            if self.grid_mode != mode_before_move:
+                self.grid_mode = mode_before_move
+                if mode_before_move == "2x2":
+                    self.grid_2x2_radio.setChecked(True)
+                elif mode_before_move == "3x3":
+                    self.grid_3x3_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+                self.update_counter_layout()
+            
+            self.update_grid_view()
+        
+        self.update_counters()
+
+    def redo_move(self):
+        """ 취소된 파일 이동 작업을 다시 실행 (Redo) - 배치 작업 지원 """
+        if self.history_pointer >= len(self.move_history) - 1:
+            logging.warning("Redo: 히스토리 없음")
+            return # 다시 실행할 작업 없음
+
+        # 다음 포인터로 이동하고 해당 기록 가져오기
+        self.history_pointer += 1
+        move_info = self.move_history[self.history_pointer]
+        logging.debug(f"Redoing: {move_info}")
+
+        # 배치 작업인지 확인
+        if isinstance(move_info, dict) and move_info.get("type") == "batch":
+            # 배치 작업 Redo
+            self.redo_batch_move(move_info["entries"])
+        else:
+            # 단일 작업 Redo (기존 로직)
+            self.redo_single_move(move_info)
+
+        logging.debug(f"Redo complete. History pointer: {self.history_pointer}")
+
+    def redo_batch_move(self, batch_entries):
+        """ 배치 이동 작업을 다시 실행 """
+        try:
+            # 배치 엔트리들을 순서대로 처리
+            for move_info in batch_entries:
+                self.redo_single_move_internal(move_info)
+            
+            # UI 업데이트는 마지막에 한 번만
+            self.update_ui_after_redo_batch(batch_entries)
+            
+        except Exception as e:
+            logging.error(f"배치 Redo 중 오류 발생: {e}")
+            self.show_themed_message_box(
+                QMessageBox.Critical, 
+                LanguageManager.translate("에러"), 
+                f"{LanguageManager.translate('다시 실행 중 오류 발생')}: {str(e)}"
+            )
+
+    def redo_single_move_internal(self, move_info):
+        """ 단일 이동 작업을 다시 실행 (UI 업데이트 없음) """
+        jpg_source_path = Path(move_info["jpg_source"])
+        jpg_target_path = Path(move_info["jpg_target"])
+        raw_source_path = Path(move_info["raw_source"]) if move_info["raw_source"] else None
+        raw_target_path = Path(move_info["raw_target"]) if move_info["raw_target"] else None
+
+        # 1. JPG 파일 다시 대상 위치로 이동
+        if jpg_target_path.exists():
+            logging.warning(f"경고: Redo 대상 위치에 이미 파일 존재: {jpg_target_path}")
+
+        if jpg_source_path.exists():
+            shutil.move(str(jpg_source_path), str(jpg_target_path))
+            logging.debug(f"Redo: Moved {jpg_source_path} -> {jpg_target_path}")
+
+        # 2. RAW 파일 다시 대상 위치로 이동
+        if raw_source_path and raw_target_path:
+            if raw_target_path.exists():
+                logging.warning(f"경고: Redo 대상 RAW 위치에 이미 파일 존재: {raw_target_path}")
+            if raw_source_path.exists():
+                shutil.move(str(raw_source_path), str(raw_target_path))
+                logging.debug(f"Redo: Moved RAW {raw_source_path} -> {raw_target_path}")
+
+        # 3. 파일 목록 업데이트
+        try:
+            self.image_files.remove(jpg_source_path)
+        except ValueError:
+            logging.warning(f"경고: Redo 시 파일 목록에서 경로를 찾지 못함: {jpg_source_path}")
+
+        # 4. RAW 파일 딕셔너리 업데이트
+        if raw_source_path and jpg_source_path.stem in self.raw_files:
+            del self.raw_files[jpg_source_path.stem]
+
+    def update_ui_after_redo_batch(self, batch_entries):
+        """ 배치 Redo 후 UI 업데이트 """
+        if not batch_entries:
+            return
+            
+        # 첫 번째 엔트리의 모드를 기준으로 UI 업데이트
+        first_entry = batch_entries[0]
+        mode_at_move = first_entry.get("mode", "Off")
+        
+        # 강제 새로고침 플래그 설정
+        self.force_refresh = True
+        
+        if self.image_files:
+            # 첫 번째 제거된 이미지의 인덱스를 기준으로 새 인덱스 계산
+            first_removed_index = first_entry["index_before_move"]
+            new_index = min(first_removed_index, len(self.image_files) - 1)
+            if new_index < 0:
+                new_index = 0
+            
+            if mode_at_move == "Off":
+                self.current_image_index = new_index
                 if self.grid_mode != "Off":
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True)
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
-                    
-                # 이미지 강제 새로고침 설정
-                self.force_refresh = True
                 
-                # Fit 모드인 경우 기존 캐시 무효화 추가
                 if self.zoom_mode == "Fit":
                     self.last_fit_size = (0, 0)
                     self.fit_pixmap_cache.clear()
                     
-                self.display_current_image()  # 복원된 이미지 표시
-                
-            else:  # Grid 모드에서 이동했었다면
-                rows, cols = (2, 2) if mode_before_move == '2x2' else (3, 3)
+                self.display_current_image()
+            else:
+                # Grid 모드
+                rows, cols = (2, 2) if mode_at_move == '2x2' else (3, 3)
                 num_cells = rows * cols
-                self.grid_page_start_index = (index_before_move // num_cells) * num_cells
-                self.current_grid_index = index_before_move % num_cells
+                self.grid_page_start_index = (new_index // num_cells) * num_cells
+                self.current_grid_index = new_index % num_cells
                 
-                # 현재 Grid 모드가 이전과 다르다면 변경
-                if self.grid_mode != mode_before_move:
-                    self.grid_mode = mode_before_move
-                    if mode_before_move == "2x2":
+                if self.grid_mode != mode_at_move:
+                    self.grid_mode = mode_at_move
+                    if mode_at_move == "2x2":
                         self.grid_2x2_radio.setChecked(True)
-                    elif mode_before_move == "3x3":
+                    elif mode_at_move == "3x3":
                         self.grid_3x3_radio.setChecked(True)
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
+                
+                self.update_grid_view()
+        else:
+            # 모든 파일이 이동된 경우
+            self.current_image_index = -1
+            if self.grid_mode != "Off":
+                self.grid_mode = "Off"
+                self.grid_off_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+            self.display_current_image()
+        
+        self.update_counters()
+
+    def redo_single_move(self, move_info):
+        """ 단일 이동 작업을 다시 실행 (기존 로직) """
+        self.redo_single_move_internal(move_info)
+        
+        # UI 업데이트
+        mode_at_move = move_info.get("mode", "Off")
+        
+        if self.image_files:
+            redo_removed_index = move_info["index_before_move"]
+            new_index = min(redo_removed_index, len(self.image_files) - 1)
+            if new_index < 0:
+                new_index = 0
+            
+            # 강제 새로고침 플래그 설정
+            self.force_refresh = True
+
+            if mode_at_move == "Off":
+                self.current_image_index = new_index
+                if self.grid_mode != "Off":
+                    self.grid_mode = "Off"
+                    self.grid_off_radio.setChecked(True)
+                    self.update_zoom_radio_buttons_state()
+                
+                if self.zoom_mode == "Fit":
+                    self.last_fit_size = (0, 0)
+                    self.fit_pixmap_cache.clear()
                     
-                # 강제 새로고침 플래그 설정
-                self.force_refresh = True
-                    
-                self.update_grid_view()  # 그리드 뷰 업데이트 및 복원된 이미지 선택
-
-            self.update_counters()  # 카운터 업데이트
-
-        except Exception as e:
-            self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('실행 취소 중 오류 발생')}: {str(e)}")
-            # 오류 발생 시 히스토리 포인터는 그대로 두거나, 사용자에게 알림
-
-    def redo_move(self):
-            """ 취소된 파일 이동 작업을 다시 실행 (Redo) """
-            if self.history_pointer >= len(self.move_history) - 1:
-                print("Redo: 히스토리 없음")
-                return # 다시 실행할 작업 없음
-
-            # 다음 포인터로 이동하고 해당 기록 가져오기
-            self.history_pointer += 1
-            move_info = self.move_history[self.history_pointer]
-            logging.debug(f"Redoing: {move_info}") # 디버깅 로그
-
-            jpg_source_path = Path(move_info["jpg_source"])
-            jpg_target_path = Path(move_info["jpg_target"])
-            raw_source_path = Path(move_info["raw_source"]) if move_info["raw_source"] else None
-            raw_target_path = Path(move_info["raw_target"]) if move_info["raw_target"] else None
-            # index_before_move = move_info["index_before_move"] # Redo 시에는 이 인덱스를 직접 사용하지 않음
-            mode_at_move = move_info.get("mode", "Off") # 이동이 발생했던 모드
-
-            try:
-                # 1. JPG 파일 다시 대상 위치로 이동
-                #    대상 위치에 파일 존재 여부 확인 (덮어쓰기 또는 처리)
-                if jpg_target_path.exists():
-                    logging.warning(f"경고: Redo 대상 위치에 이미 파일 존재: {jpg_target_path}")
-                    # 처리 로직 추가 또는 덮어쓰기 진행
-
-                # 소스 위치에 파일이 있는지 확인 후 이동
-                if jpg_source_path.exists():
-                    shutil.move(str(jpg_source_path), str(jpg_target_path))
-                    logging.debug(f"Redo: Moved {jpg_source_path} -> {jpg_target_path}")
-                else:
-                    logging.warning(f"경고: Redo할 원본 파일이 없음: {jpg_source_path}")
-                    # 파일이 없다면 히스토리 포인터 되돌리고 종료
-                    # self.history_pointer -= 1
-                    # return
-
-                # 2. RAW 파일 다시 대상 위치로 이동 (존재하고, 이동되었었다면)
-                if raw_source_path and raw_target_path:
-                    if raw_target_path.exists():
-                        logging.warning(f"경고: Redo 대상 RAW 위치에 이미 파일 존재: {raw_target_path}")
-                        # 처리 로직 추가 또는 덮어쓰기 진행
-                    if raw_source_path.exists():
-                        shutil.move(str(raw_source_path), str(raw_target_path))
-                        logging.debug(f"Redo: Moved RAW {raw_source_path} -> {raw_target_path}")
+                self.display_current_image()
+            else:
+                # Grid 모드
+                rows, cols = (2, 2) if mode_at_move == '2x2' else (3, 3)
+                num_cells = rows * cols
+                self.grid_page_start_index = (new_index // num_cells) * num_cells
+                self.current_grid_index = new_index % num_cells
+                
+                if self.grid_mode != mode_at_move:
+                    self.grid_mode = mode_at_move
+                    if mode_at_move == '2x2':
+                        self.grid_2x2_radio.setChecked(True)
                     else:
-                        logging.warning(f"경고: Redo할 원본 RAW 파일이 없음: {raw_source_path}")
+                        self.grid_3x3_radio.setChecked(True)
+                    self.update_zoom_radio_buttons_state()
+                
+                self.update_grid_view()
+        else:
+            # 모든 파일이 이동된 경우
+            self.current_image_index = -1
+            if self.grid_mode != "Off":
+                self.grid_mode = "Off"
+                self.grid_off_radio.setChecked(True)
+                self.update_zoom_radio_buttons_state()
+            self.display_current_image()
 
-                # 3. 파일 목록 업데이트 (self.image_files)
-                #    경로 기반으로 제거 시도
-                try:
-                    self.image_files.remove(jpg_source_path)
-                except ValueError:
-                    logging.warning(f"경고: Redo 시 파일 목록에서 경로를 찾지 못함: {jpg_source_path}")
-                    # 필요 시 다른 방법으로 목록 갱신
-
-                # 4. RAW 파일 딕셔너리 업데이트 (self.raw_files)
-                if raw_source_path: # RAW 파일이 원래 있었다면
-                    if jpg_source_path.stem in self.raw_files:
-                        # Redo 시에는 이동되었으므로 raw_files 딕셔너리에서 제거
-                        del self.raw_files[jpg_source_path.stem]
-
-                logging.debug(f"Redo complete. History pointer: {self.history_pointer}") # 디버깅 로그
-
-                # 5. UI 업데이트
-                #    Redo 후의 상태에 맞게 업데이트 (이동 후 로직과 유사)
-                if self.image_files:
-                    # 현재 인덱스를 Redo된 파일이 제거된 후의 유효한 위치로 조정
-                    # 간단하게는, 제거된 인덱스 또는 그 이전 인덱스를 가리키도록 함
-                    redo_removed_index = move_info["index_before_move"]
-                    new_index = min(redo_removed_index, len(self.image_files) - 1)
-                    if new_index < 0: new_index = 0 # 이미지가 하나라도 있으면 0 이상
-                    
-                    # 강제 새로고침 플래그 설정 (중요: 이미지 변경 확실히 반영)
-                    self.force_refresh = True
-
-                    if mode_at_move == "Off":
-                        self.current_image_index = new_index
-                        if self.grid_mode != "Off": # 현재 Grid 모드면 Off로
-                            self.grid_mode = "Off"
-                            self.grid_off_radio.setChecked(True)
-                            self.update_zoom_radio_buttons_state()
-                        
-                        # Fit 모드일 경우 캐시 무효화 추가
-                        if self.zoom_mode == "Fit":
-                            self.last_fit_size = (0, 0)
-                            self.fit_pixmap_cache.clear()
-                            
-                        self.display_current_image()
-                    else: # Grid 모드였다면
-                        rows, cols = (2, 2) if mode_at_move == '2x2' else (3, 3)
-                        num_cells = rows * cols
-                        self.grid_page_start_index = (new_index // num_cells) * num_cells
-                        self.current_grid_index = new_index % num_cells
-                        if self.grid_mode == "Off": # 현재 Off 모드면 이전 Grid 모드로
-                            self.grid_mode = mode_at_move
-                            if mode_at_move == '2x2': self.grid_2x2_radio.setChecked(True)
-                            else: self.grid_3x3_radio.setChecked(True)
-                            self.update_zoom_radio_buttons_state()
-                        self.update_grid_view()
-                else:
-                    # 모든 파일이 이동된 경우
-                    self.current_image_index = -1
-                    if self.grid_mode != "Off":
-                        self.grid_mode = "Off"
-                        self.grid_off_radio.setChecked(True)
-                        self.update_zoom_radio_buttons_state()
-                    self.display_current_image() # 빈 화면 표시
-
-                self.update_counters() # 카운터 업데이트
-
-            except Exception as e:
-                self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('다시 실행 중 오류 발생')}: {str(e)}")
-                # 오류 발생 시 히스토리 포인터를 이전 상태로 되돌릴 수 있음
-                # self.history_pointer -= 1
+        self.update_counters()
 
     def closeEvent(self, event):
         """창 닫기 이벤트 처리 시 상태 저장 및 스레드 종료"""
@@ -10066,272 +13282,373 @@ class PhotoSortApp(QMainWindow):
         self.activateWindow()
         self.setFocus()
 
+    def highlight_folder_label(self, folder_index, highlight):
+        """폴더 레이블 하이라이트 처리"""
+        if folder_index < 0 or folder_index >= len(self.folder_path_labels):
+            return
+        
+        try:
+            label = self.folder_path_labels[folder_index]
+            
+            # 폴더 경로 유효성 검사 - 유효하지 않으면 스타일 변경 안함
+            has_folder = bool(folder_index < len(self.target_folders) and 
+                            self.target_folders[folder_index] and 
+                            os.path.isdir(self.target_folders[folder_index]))
+            
+            if not has_folder:
+                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 변경 안함
+                return
+                
+            if highlight:
+                # accent 색으로 변경 (유효한 폴더만)
+                label._apply_drop_hover_style()
+            else:
+                # 원본 스타일 복원 (유효한 폴더만)
+                label._restore_original_style()
+        except Exception as e:
+            logging.error(f"highlight_folder_label 오류: {e}")
+
+    def center_viewport(self):
+        """뷰포트를 이미지 중앙으로 이동 (Zoom 100% 또는 Spin 모드에서만)"""
+        try:
+            # 전제 조건 확인
+            if (self.grid_mode != "Off" or 
+                self.zoom_mode not in ["100%", "Spin"] or 
+                not self.original_pixmap):
+                logging.debug("center_viewport: 조건 불만족 (Grid Off, Zoom 100%/Spin, 이미지 필요)")
+                return False
+            
+            # 뷰포트 크기 가져오기
+            view_width = self.scroll_area.width()
+            view_height = self.scroll_area.height()
+            
+            # 이미지 크기 계산
+            if self.zoom_mode == "100%":
+                img_width = self.original_pixmap.width()
+                img_height = self.original_pixmap.height()
+            else:  # Spin 모드
+                img_width = self.original_pixmap.width() * self.zoom_spin_value
+                img_height = self.original_pixmap.height() * self.zoom_spin_value
+            
+            # 중앙 정렬 위치 계산
+            if img_width <= view_width:
+                # 이미지가 뷰포트보다 작으면 중앙 정렬
+                new_x = (view_width - img_width) // 2
+            else:
+                # 이미지가 뷰포트보다 크면 이미지 중앙이 뷰포트 중앙에 오도록
+                new_x = (view_width - img_width) // 2
+            
+            if img_height <= view_height:
+                # 이미지가 뷰포트보다 작으면 중앙 정렬
+                new_y = (view_height - img_height) // 2
+            else:
+                # 이미지가 뷰포트보다 크면 이미지 중앙이 뷰포트 중앙에 오도록
+                new_y = (view_height - img_height) // 2
+            
+            # 위치 제한 (패닝 범위 계산과 동일한 로직)
+            if img_width <= view_width:
+                x_min = x_max = (view_width - img_width) // 2
+            else:
+                x_min = min(0, view_width - img_width)
+                x_max = 0
+            
+            if img_height <= view_height:
+                y_min = y_max = (view_height - img_height) // 2
+            else:
+                y_min = min(0, view_height - img_height)
+                y_max = 0
+            
+            # 범위 내로 제한
+            new_x = max(x_min, min(x_max, new_x))
+            new_y = max(y_min, min(y_max, new_y))
+            
+            # 이미지 위치 업데이트
+            self.image_label.move(int(new_x), int(new_y))
+            
+            # 뷰포트 포커스 정보 업데이트
+            if self.current_image_orientation:
+                current_rel_center = self._get_current_view_relative_center()
+                self.current_active_rel_center = current_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                
+                # 방향별 뷰포트 포커스 저장
+                self._save_orientation_viewport_focus(
+                    self.current_image_orientation, 
+                    current_rel_center, 
+                    self.zoom_mode
+                )
+            
+            # 미니맵 업데이트
+            if self.minimap_visible and self.minimap_widget.isVisible():
+                self.update_minimap()
+            
+            logging.info(f"뷰포트 중앙 이동 완료: {self.zoom_mode} 모드, 위치: ({new_x}, {new_y})")
+            return True
+            
+        except Exception as e:
+            logging.error(f"center_viewport 오류: {e}")
+            return False
+
 
     def eventFilter(self, obj, event):
-        """애플리케이션 레벨 이벤트 필터 - 키 이벤트 처리"""
         if event.type() == QEvent.KeyPress:
             if self.is_input_dialog_active:
-                # QInputDialog가 키 이벤트를 완전히 처리하도록 기본 동작에 맡김
-                # PhotoSortApp의 커스텀 키 처리 로직을 모두 건너뜀
-                logging.debug(f"Input dialog active, deferring KeyPress event: {QKeySequence(event.key()).toString()}")
-                return super().eventFilter(obj, event) # QInputDialog가 처리하도록 이벤트 전달
+                return super().eventFilter(obj, event)
 
-            # --- 입력 다이얼로그가 활성화되지 않은 경우에만 PhotoSortApp의 단축키 처리 ---
             key = event.key()
             modifiers = event.modifiers()
-            is_auto_repeat = event.isAutoRepeat() # 자동 반복 여부
+            is_auto_repeat = event.isAutoRepeat()
 
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
 
-            # --- 1. 최우선 처리: Undo, Redo, Enter, F-Keys, Delete, ESC, Space ---
-            # (이 부분은 이전과 동일하므로 간략히 표시)
             if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
             elif modifiers == ctrl_modifier and key == Qt.Key_Y: self.redo_move(); return True
             elif (modifiers & ctrl_modifier) and (modifiers & Qt.ShiftModifier) and key == Qt.Key_Z: self.redo_move(); return True
+            
             if key == Qt.Key_Return or key == Qt.Key_Enter:
-                # ... (Enter 키 로직 - 기존과 동일) ...
-                if self.file_list_dialog is None or not self.file_list_dialog.isVisible(): # 중복 실행 방지
+                if self.file_list_dialog is None or not self.file_list_dialog.isVisible():
                     if self.image_files:
                         current_selected_index = -1
-                        if self.grid_mode == "Off": current_selected_index = self.current_image_index
+                        if self.grid_mode == "Off":
+                            current_selected_index = self.current_image_index
                         else:
                             potential_index = self.grid_page_start_index + self.current_grid_index
-                            if 0 <= potential_index < len(self.image_files): current_selected_index = potential_index
+                            if 0 <= potential_index < len(self.image_files):
+                                current_selected_index = potential_index
                         if current_selected_index != -1:
                             self.file_list_dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
                             self.file_list_dialog.finished.connect(self.on_file_list_dialog_closed)
                             self.file_list_dialog.show()
-                        else: logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
-                    else: logging.debug("Enter 키: 로드된 이미지가 없습니다.")
+                        else:
+                            logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
+                    else:
+                        logging.debug("Enter 키: 로드된 이미지가 없습니다.")
                 else:
-                    self.file_list_dialog.activateWindow(); self.file_list_dialog.raise_()
+                    self.file_list_dialog.activateWindow()
+                    self.file_list_dialog.raise_()
                 return True
+                
             if key == Qt.Key_F1: self.force_refresh=True; self.space_pressed = False; self.grid_off_radio.setChecked(True); self.on_grid_changed(self.grid_off_radio); return True
             elif key == Qt.Key_F2: self.force_refresh=True; self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio); return True
             elif key == Qt.Key_F3: self.force_refresh=True; self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio); return True
             elif key == Qt.Key_Delete: self.reset_program_state(); return True
+            
             if key == Qt.Key_Escape:
-                # ... (ESC 키 로직 - 기존과 동일) ...
                 if self.file_list_dialog and self.file_list_dialog.isVisible(): self.file_list_dialog.reject(); return True
-                if self.zoom_mode != "Fit": self.fit_radio.setChecked(True); self.on_zoom_changed(self.fit_radio); return True
+                if self.zoom_mode != "Fit":
+                    self.last_active_zoom_mode = self.zoom_mode # [추가] ESC로 Fit 전환 시에도 마지막 줌 모드 저장
+                    self.fit_radio.setChecked(True)
+                    self.on_zoom_changed(self.fit_radio)
+                    return True
                 elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
                     if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
-            if key == Qt.Key_Space:
-                if self.grid_mode == "Off": # Grid Off 모드에서만 작동
-                    current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
-                    current_orientation = self.current_image_orientation
 
+            # R 키: 뷰포트 중앙 이동 (Zoom 100% 또는 Spin 모드에서만)
+            if key == Qt.Key_R:
+                if (self.grid_mode == "Off" and 
+                    self.zoom_mode in ["100%", "Spin"] and 
+                    self.original_pixmap):
+                    self.center_viewport()
+                    return True
+
+            if key == Qt.Key_Space:
+                if self.grid_mode == "Off":
+                    # 기존 Grid Off 모드에서의 줌 전환 로직
                     if self.zoom_mode == "Fit":
-                        # Fit -> 100% (Space 키)
                         if self.original_pixmap:
-                            logging.debug("Space 키: Fit -> 100% 요청")
-                            # 이전 상태가 Fit이었으므로 "활성" 포커스 저장할 필요 없음 (이미 Fit 기본값)
+                            # [수정] 마지막 활성 줌 모드로 전환
+                            target_zoom_mode = self.last_active_zoom_mode
+                            logging.debug(f"Space 키: Fit -> {target_zoom_mode} 요청")
                             
-                            self.zoom_mode = "100%" # 새 줌 모드 설정
-                            # 새 활성 포커스: 현재 이미지 방향 타입에 저장된 고유 포커스 사용, 없으면 중앙
-                            self.current_active_rel_center, self.current_active_zoom_level = \
-                                self._get_orientation_viewport_focus(current_orientation, "100%")
+                            # 현재 방향 정보 확인
+                            current_orientation = self.current_image_orientation
+                            if current_orientation:
+                                # 저장된 뷰포트 포커스 복구
+                                saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
+                                self.current_active_rel_center = saved_rel_center
+                                self.current_active_zoom_level = target_zoom_mode
+                                logging.debug(f"Space 키 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
+                            else:
+                                self.current_active_rel_center = QPointF(0.5, 0.5)
+                                self.current_active_zoom_level = target_zoom_mode
                             
-                            self.zoom_change_trigger = "space_key_to_zoom" 
+                            self.zoom_change_trigger = "space_key_to_zoom"
+                            self.zoom_mode = target_zoom_mode
                             
-                            self.zoom_100_radio.setChecked(True)
-                            self.apply_zoom_to_image() # 내부에서 고유 포커스도 업데이트 (주로 zoom_level)
-                    
-                    elif self.zoom_mode in ["100%", "200%"]:
-                        # 100%/200% -> Fit (Space 키)
+                            if target_zoom_mode == "100%":
+                                self.zoom_100_radio.setChecked(True)
+                            elif target_zoom_mode == "Spin":
+                                self.zoom_spin_btn.setChecked(True)
+                            
+                            self.apply_zoom_to_image()
+                    elif self.zoom_mode in ["100%", "Spin"]:
                         logging.debug(f"Space 키: {self.zoom_mode} -> Fit 요청")
-                        # Fit으로 가기 전에 현재 활성 100%/200% 포커스를 "방향 타입" 고유 포커스로 저장
-                        if current_orientation and current_image_path_str: # 방향과 경로가 있어야 저장 가능
+                        
+                        # 현재 뷰포트 위치 저장
+                        current_orientation = self.current_image_orientation
+                        if current_orientation:
+                            current_rel_center = self._get_current_view_relative_center()
+                            logging.debug(f"Space 키 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
+                            
+                            self.current_active_rel_center = current_rel_center
+                            self.current_active_zoom_level = self.zoom_mode
+                            
                             self._save_orientation_viewport_focus(
                                 current_orientation,
-                                self.current_active_rel_center,
-                                self.current_active_zoom_level # self.zoom_mode와 같음
+                                current_rel_center,
+                                self.zoom_mode
                             )
                         
+                        # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
+                        self.last_active_zoom_mode = self.zoom_mode
+                        logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
+                        
                         self.zoom_mode = "Fit"
-                        self.current_active_rel_center = QPointF(0.5, 0.5)
-                        self.current_active_zoom_level = "Fit"
-                        
-                        # self.zoom_change_trigger = "space_key_to_fit" # 또는 그냥 None
-                        
                         self.fit_radio.setChecked(True)
                         self.apply_zoom_to_image()
-                    return True # 스페이스바 이벤트 소비
+                    return True
                 
-                else: # Grid On 모드에서 Space 키
-                    # ... (Grid On 모드 Space 키 로직 - 이전 답변과 동일하게 유지) ...
+                else:  # Grid On 모드에서 Space 키 - 누락된 부분 복원
+                    # Grid 모드에서 선택된 이미지로 전환하고 Grid Off 모드로 변경
                     current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
                     if 0 <= current_selected_grid_index < len(self.image_files):
                         self.current_image_index = current_selected_grid_index
-                        self.force_refresh = True # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
+                        self.force_refresh = True  # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
                     
-                    # Grid Off로 전환하기 전에 현재 Grid에서 선택된 이미지의 방향을 알아내서
-                    # self.current_image_orientation에 설정해두면 좋음.
-                    # (display_current_image가 호출될 때 어차피 설정되긴 함)
-                    
-                    self.previous_grid_mode = self.grid_mode # 이전 그리드 모드 저장 (ESC 복귀용)
+                    # Grid Off로 전환하기 전에 현재 Grid 모드 저장 (ESC 복귀용)
+                    self.previous_grid_mode = self.grid_mode
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True)
-                    self.space_pressed = True # on_grid_changed에서 이전 모드 초기화 방지용
+                    self.space_pressed = True  # on_grid_changed에서 이전 모드 초기화 방지용
                     
-                    # Grid Off로 전환 시, 뷰는 Fit으로 시작하거나,
-                    # 아니면 해당 이미지의 저장된 100% 포커스를 불러올지 정책 결정 필요.
-                    # 여기서는 on_grid_changed -> update_grid_view -> display_current_image 호출 시
-                    # Fit으로 시작하고, display_current_image 내부의 _on_image_loaded_for_display에서
-                    # photo_change_to_fit 트리거를 타게 됨 (저장된 포커스 사용 안 함).
-                    # 만약 Space로 Grid -> Off 시 100% 줌 + 저장된 포커스를 원한다면 추가 로직 필요.
-                    # 현재는 Grid에서 Off로 갈 때 항상 Fit으로 시작.
-                    
-                    self.update_grid_view() # Grid Off로 전환 및 display_current_image 호출 유도
+                    # Grid Off로 전환 및 UI 업데이트
+                    self.update_grid_view()  # Grid Off로 전환 및 display_current_image 호출 유도
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
                     return True
-            # --- 2. 뷰포트 이동 키 처리 (Grid Off & Zoom 100%/200% 시) ---
-             # --- 뷰포트 이동 키 KeyPress 처리 ---
+
             is_viewport_move_condition = (self.grid_mode == "Off" and
-                                          self.zoom_mode in ["100%", "200%"] and
-                                          self.original_pixmap)
+                                        self.zoom_mode in ["100%", "Spin"] and
+                                        self.original_pixmap)
             
             key_to_add_for_viewport = None
-
             if is_viewport_move_condition:
-                if modifiers & Qt.ShiftModifier: # Shift 키와 함께 눌린 경우
+                if modifiers & Qt.ShiftModifier:
                     if key == Qt.Key_A: key_to_add_for_viewport = Qt.Key_Left
                     elif key == Qt.Key_D: key_to_add_for_viewport = Qt.Key_Right
                     elif key == Qt.Key_W: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_S: key_to_add_for_viewport = Qt.Key_Down
-                elif not (modifiers & Qt.ShiftModifier): # Shift 키 없이 눌린 경우 (일반 방향키)
+                elif not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_Left: key_to_add_for_viewport = Qt.Key_Left
                     elif key == Qt.Key_Right: key_to_add_for_viewport = Qt.Key_Right
                     elif key == Qt.Key_Up: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_Down: key_to_add_for_viewport = Qt.Key_Down
             
             if key_to_add_for_viewport:
-                if not is_auto_repeat: # 처음 눌렸을 때만
+                if not is_auto_repeat:
                     if key_to_add_for_viewport not in self.pressed_keys_for_viewport:
                         self.pressed_keys_for_viewport.add(key_to_add_for_viewport)
-                        logging.debug(f"KeyPress: Added {QKeySequence(key_to_add_for_viewport).toString()} for viewport. Pressed: {self.pressed_keys_for_viewport}")
-                    
                     if not self.viewport_move_timer.isActive():
                         self.viewport_move_timer.start()
-                        logging.debug("KeyPress: Viewport move timer started.")
-                return True # 뷰포트 이동 관련 키 이벤트 소비
+                return True
 
-            # --- 3. Grid 모드 네비게이션 또는 Grid Off 사진 넘기기 ---
-            # (뷰포트 이동 조건이 아니거나, 뷰포트 이동 키 조합이 아닐 때 이리로 넘어옴)
-
-            # --- 사진 넘기기 (WASD, 또는 Fit 모드 방향키) 및 폴더 이동(숫자키) 처리 ---
-            # (이 부분은 뷰포트 이동 조건이 아닐 때 또는 뷰포트 이동키가 아닐 때 실행됨)
             if self.grid_mode == "Off":
-                if not (modifiers & Qt.ShiftModifier): # Shift 없이 눌린 WASD는 사진 넘기기
+                if not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_A: self.show_previous_image(); return True
                     elif key == Qt.Key_D: self.show_next_image(); return True
-                    # W, S는 사진 넘기기 기능 없음
-
-                if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier): # Fit 모드 + Shift 없는 방향키
+                if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_Left: self.show_previous_image(); return True
                     elif key == Qt.Key_Right: self.show_next_image(); return True
-            
-            elif self.grid_mode != "Off": # Grid On 모드
+            elif self.grid_mode != "Off":
                 rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-                if modifiers & Qt.ShiftModifier: # Shift + (A/D/Left/Right) -> 페이지 넘기기
-                    if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_to_adjacent_page(-1); return True
+                if modifiers & Qt.ShiftModifier:
+                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): 
+                        self.navigate_to_adjacent_page(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_to_adjacent_page(1); return True
-                else: # Shift 없음: WASD 또는 Arrow Keys -> 셀 이동
-                    if key == Qt.Key_A or key == Qt.Key_Left: self.navigate_grid(-1); return True
+                else:
+                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): 
+                        self.navigate_grid(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
                     elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
 
-            if Qt.Key_1 <= key <= Qt.Key_3:
+            if Qt.Key_1 <= key <= (Qt.Key_1 + self.folder_count - 1):
+                # 키 반복 이벤트 무시 (3번 문제 해결)
+                if event.isAutoRepeat():
+                    return True
+                    
+                if self.image_processing:
+                    return True
                 folder_index = key - Qt.Key_1
-                if self.grid_mode != "Off": self.move_grid_image(folder_index)
-                else: self.move_current_image_to_folder(folder_index)
+                
+                # 폴더 레이블 하이라이트 (2번 문제 해결)
+                self.highlight_folder_label(folder_index, True)
+                
+                self.image_processing = True
+                if self.grid_mode != "Off":
+                    self.move_grid_image(folder_index)
+                else:
+                    self.move_current_image_to_folder(folder_index)
+                self.image_processing = False
                 return True
 
-            return False # 그 외 처리 안 된 KeyPress
+            # Ctrl+A: 전체 선택/해제
+            if key == Qt.Key_A and (modifiers & Qt.ControlModifier):
+                if self.grid_mode != "Off" and self.image_files:
+                    self.toggle_select_all_in_page()
+                return True
+
+            return False
 
         elif event.type() == QEvent.KeyRelease:
-            # --- 입력 다이얼로그가 활성화된 경우 ---
             if self.is_input_dialog_active:
-                # QInputDialog가 키 이벤트를 완전히 처리하도록 기본 동작에 맡김
-                logging.debug(f"Input dialog active, deferring KeyRelease event: {QKeySequence(event.key()).toString()}")
-                return super().eventFilter(obj, event) # QInputDialog가 처리하도록 이벤트 전달
-            # --- 입력 다이얼로그가 활성화되지 않은 경우에만 PhotoSortApp의 키 릴리즈 처리 ---
+                return super().eventFilter(obj, event)
 
             key = event.key()
-            # modifiers_on_release = event.modifiers() # 키 뗄 때 Shift 상태는 여기서 중요하지 않음
-            is_auto_repeat = event.isAutoRepeat()
+            if event.isAutoRepeat():
+                return super().eventFilter(obj, event)
 
-            if is_auto_repeat: return super().eventFilter(obj, event)
-
-            logging.debug(f"KeyRelease: Key={QKeySequence(key).toString()}, PressedBefore={self.pressed_keys_for_viewport}")
+            # 숫자키 릴리스 처리 추가
+            if Qt.Key_1 <= key <= Qt.Key_9:
+                folder_index = key - Qt.Key_1
+                self.highlight_folder_label(folder_index, False)
+                return True
 
             key_to_remove_from_viewport = None
-
             if key == Qt.Key_Shift:
-                # Shift 키가 떨어지면, "모든" 뷰포트 이동을 중지하고 포커스를 저장합니다.
-                # 이것은 Shift+WASD 중 WASD가 아직 눌려있더라도 이동을 멈추게 합니다.
                 if self.pressed_keys_for_viewport:
-                    logging.debug(f"  Shift released, clearing all pressed_keys: {self.pressed_keys_for_viewport}")
-                    self.pressed_keys_for_viewport.clear() # 모든 방향키 상태 제거
-                # 타이머 중지 및 포커스 저장은 아래 공통 로직에서 처리
+                    self.pressed_keys_for_viewport.clear()
             elif key == Qt.Key_Left: key_to_remove_from_viewport = Qt.Key_Left
             elif key == Qt.Key_Right: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_Up: key_to_remove_from_viewport = Qt.Key_Up
             elif key == Qt.Key_Down: key_to_remove_from_viewport = Qt.Key_Down
-            elif key == Qt.Key_A: key_to_remove_from_viewport = Qt.Key_Left  # Shift+A 의 결과
-            elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right # Shift+D 의 결과
-            elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up    # Shift+W 의 결과
-            elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down  # Shift+S 의 결과
+            elif key == Qt.Key_A: key_to_remove_from_viewport = Qt.Key_Left
+            elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right
+            elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up
+            elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down
 
             action_taken = False
             if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
                 self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
-                logging.debug(f"  Removed {QKeySequence(key_to_remove_from_viewport).toString()} from pressed_keys. Remaining: {self.pressed_keys_for_viewport}")
                 action_taken = True
             
-            if key == Qt.Key_Shift and not self.pressed_keys_for_viewport: # Shift만 떨어졌고 다른 이동키가 없으면
-                if self.viewport_move_timer.isActive():
-                    self.viewport_move_timer.stop()
-                    logging.debug("  Shift released (and no other viewport keys), timer stopped.")
-                    # 포커스 저장 (뷰포트 이동이 실제로 발생했다면)
-                    if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
-                       self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                        # ... (포커스 저장 로직 - 이전 답변과 동일) ...
-                        current_image_path_str = str(self.image_files[self.current_image_index])
-                        final_rel_center = self._get_current_view_relative_center()
-                        final_zoom_level = self.zoom_mode
-                        self.current_active_rel_center = final_rel_center
-                        self.current_active_zoom_level = final_zoom_level
-                        self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
-                        logging.debug(f"  Shift released, saved focus for {Path(current_image_path_str).name}")
-
-                return True # Shift 릴리즈는 항상 소비 (뷰포트 이동과 관련 없더라도)
-
-
             if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
-                # 다른 키가 떨어져서 pressed_keys가 비었거나, Shift 릴리즈로 비워진 경우
                 self.viewport_move_timer.stop()
-                logging.debug("  All viewport keys are now released, timer stopped.")
-                if self.grid_mode == "Off" and self.zoom_mode in ["100%", "200%"] and \
-                   self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
-                    # ... (포커스 저장 로직 - 이전 답변과 동일) ...
+                if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap:
                     current_image_path_str = str(self.image_files[self.current_image_index])
                     final_rel_center = self._get_current_view_relative_center()
                     final_zoom_level = self.zoom_mode
                     self.current_active_rel_center = final_rel_center
                     self.current_active_zoom_level = final_zoom_level
-                    self._save_orientation_viewport_focus(current_image_path_str, final_rel_center, final_zoom_level)
-                    logging.debug(f"  All viewport keys released, saved focus for {Path(current_image_path_str).name}")
+                    self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, final_zoom_level)
 
-            if action_taken or key == Qt.Key_Shift : # 뷰포트 관련 키거나 Shift면 이벤트 소비
-                 return True
+            if action_taken or key == Qt.Key_Shift:
+                return True
             
-            return False # 그 외 처리되지 않은 KeyRelease
+            return False
 
         return super().eventFilter(obj, event)
 
@@ -10670,95 +13987,49 @@ class PhotoSortApp(QMainWindow):
     def update_ui_texts(self):
         """UI의 모든 텍스트를 현재 언어로 업데이트"""
         # 버튼 텍스트 업데이트
-        self.load_button.setText(LanguageManager.translate("JPG 불러오기"))
-        # 직접 설정하던 부분 제거: self.match_raw_button.setText(LanguageManager.translate("JPG - RAW 연결"))
-        self.update_match_raw_button_state()  # 대신 상태에 맞는 버튼 텍스트를 설정하는 메서드 호출
+        self.load_button.setText(LanguageManager.translate("이미지 불러오기"))
+        self.update_match_raw_button_state()
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
 
-        # "파일명" 토글 체크박스 텍스트 업데이트 추가 
-        if hasattr(self, 'filename_toggle_grid'): # 위젯이 생성되었는지 확인
+        # "파일명" 토글 체크박스 텍스트 업데이트
+        if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
         
-        # 폴더 경로 레이블 업데이트 - 조건 수정
+        # 폴더 경로 레이블 업데이트
         if self.folder_path_label.text() == "폴더 경로" or self.folder_path_label.text() == "Folder Path":
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         if self.raw_folder_path_label.text() == "폴더 경로" or self.raw_folder_path_label.text() == "Folder Path":
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
             
-        # 분류 폴더 경로 레이블 업데이트 - 조건 수정
+        # 분류 폴더 경로 레이블 업데이트
         for label in self.folder_path_labels:
             if label.text() == "폴더 경로" or label.text() == "Folder Path":
                 label.setText(LanguageManager.translate("폴더 경로"))
         
-        # 파일 정보 레이블 업데이트 (현재 선택된 이미지 경로 가져오기)
+        # 파일 정보 레이블 업데이트
         self.update_file_info_display(self.get_current_image_path())
         
         # 창 제목 업데이트
         self.update_window_title_with_selection()
         
-        # settings_popup 객체가 존재하고 현재 화면에 보이는 경우에만 업데이트 시도
+        # 🎯 설정 창 처리 - 모든 텍스트 업데이트를 update_settings_labels_texts()로 위임
         if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
-            print("설정 팝업 텍스트 업데이트 중...") # 확인용 로그
+            print("설정 팝업 텍스트 업데이트 중...")
             # 팝업 창 제목 업데이트
             popup_title_key = "초기 설정" if self.settings_popup.windowTitle() in ["초기 설정", "Initial Setup"] else "설정 및 정보"
             self.settings_popup.setWindowTitle(LanguageManager.translate(popup_title_key))
 
             # 팝업 내부 위젯 텍스트 업데이트 (재귀 함수 호출)
             self.update_settings_labels_texts(self.settings_popup)
-            
 
             # '확인' 버튼 텍스트 업데이트 (첫 실행 팝업에만 존재)
             if hasattr(self.settings_popup, 'confirm_button'):
                 self.settings_popup.confirm_button.setText(LanguageManager.translate("확인"))
-
-            # 결제 서비스 이름 업데이트 추가
-            for qr_label in self.settings_popup.findChildren(QRLinkLabel):
-                # 현재 텍스트 확인
-                if qr_label.text() in ["네이버페이", "NaverPay", "NaverPay 🇰🇷"]:
-                    qr_label.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
-                elif qr_label.text() in ["카카오페이", "KakaoPay", "KakaoPay 🇰🇷"]:
-                    qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
-
-            # ========== 정보 텍스트 업데이트 코드 추가 ==========
-            # 정보 텍스트 레이블 찾기 - PhotoSort로 시작하는 텍스트를 가진 QLabel을 찾기
-            for info_label in self.settings_popup.findChildren(QLabel):
-                if info_label.text().strip().startswith("<h2>PhotoSort</h2>"):
-                    # 정보 텍스트 재생성 - 새로운 create_translated_info_text() 함수 사용
-                    updated_info_text = self.create_translated_info_text()
-                    info_label.setText(updated_info_text)
-                    print("정보 텍스트 업데이트 완료")
-                    break
-            # ========== 정보 텍스트 업데이트 코드 끝 ==========
-
-            # 카메라 RAW 설정 초기화 라벨 업데이트
-            raw_reset_label_widget = self.settings_popup.findChild(QLabel, "raw_reset_label")
-            if raw_reset_label_widget: # 위젯이 존재할 때만 텍스트 설정
-                raw_reset_label_widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
             
-            # 카메라 RAW 설정 초기화 버튼 텍스트 업데이트
-            # 버튼은 self.reset_camera_settings_button으로 직접 접근 가능하지만,
-            # 이 버튼도 일반 설정 팝업에만 있으므로 존재 여부 확인
-            if hasattr(self, 'reset_camera_settings_button') and \
-               self.reset_camera_settings_button and \
-               self.reset_camera_settings_button.isVisible() and \
-               self.reset_camera_settings_button.window() is self.settings_popup: # 현재 팝업 내의 버튼인지 확인
-                 self.reset_camera_settings_button.setText(LanguageManager.translate("초기화"))
-            # 뷰포트 이동 속도 라벨 업데이트
-            viewport_speed_label_widget = self.settings_popup.findChild(QLabel, "viewport_speed_label")
-            if viewport_speed_label_widget: # 위젯이 존재할 때만 텍스트 설정
-                viewport_speed_label_widget.setText(LanguageManager.translate("뷰포트 이동 속도"))
-
-            # 세션 관리 링크 라벨 업데이트 (일반 설정 팝업에만 존재)
-            if not self.settings_popup.property("is_first_run_popup"):
-                session_link_label_widget = self.settings_popup.findChild(QLabel, "session_management_link_label")
-                if session_link_label_widget:
-                    session_link_label_widget.setText(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
-
-        
             print("설정 팝업 텍스트 업데이트 완료.")
 
-        # 현재 파일 정보 다시 표시 (날짜 형식 등 반영 위해 필요)
+        # 현재 파일 정보 다시 표시
         self.update_file_info_display(self.get_current_image_path())
 
     def update_settings_labels_texts(self, widget):
@@ -10766,7 +14037,7 @@ class PhotoSortApp(QMainWindow):
         
         # 현재 위젯이 QLabel인 경우 확인
         if isinstance(widget, QLabel):
-            widget_object_name = widget.objectName() # 위젯의 ObjectName 가져오기
+            widget_object_name = widget.objectName()
 
             # 1. ObjectName으로 먼저 확인 (더 안정적인 방법)
             if widget_object_name == "first_run_welcome_label":
@@ -10774,42 +14045,59 @@ class PhotoSortApp(QMainWindow):
             elif widget_object_name == "shortcuts_title_label":
                 widget.setText(LanguageManager.translate("단축키"))
             elif widget_object_name == "shortcuts_content_label":
-                self._update_shortcut_label_text(widget) # 헬퍼 함수 사용
+                self._update_shortcut_label_text(widget)
             elif widget_object_name == "panel_pos_title_label":
-                 widget.setText(LanguageManager.translate("컨트롤 패널"))
-            elif widget_object_name == "language_title_label": # setup_settings_ui에서 설정 필요
-                 widget.setText(LanguageManager.translate("언어"))
-            elif widget_object_name == "date_format_title_label": # setup_settings_ui에서 설정 필요
-                 widget.setText(LanguageManager.translate("날짜 형식"))
-            elif widget_object_name == "theme_title_label": # setup_settings_ui에서 설정 필요
-                 widget.setText(LanguageManager.translate("테마"))
-            elif widget_object_name == "settings_shortcut_info_label":
-                widget.setText(LanguageManager.translate("단축키 확인 🖜")) # 라벨 텍스트 업데이트
-            # ===============================================================
-
-            # 2. ObjectName으로 찾지 못한 경우, 기존 방식대로 텍스트 내용으로 확인 (차선책)
-            #    주의: 이 방식은 라벨의 현재 텍스트가 한국어 또는 영어 원본과 일치해야 작동합니다.
-            #    ObjectName 방식이 구현되면 이 부분은 제거해도 됩니다.
-            elif widget.text() == "언어" or widget.text() == "Language":
+                widget.setText(LanguageManager.translate("컨트롤 패널"))
+            elif widget_object_name == "language_title_label":
                 widget.setText(LanguageManager.translate("언어"))
-            elif widget.text() == "날짜 형식" or widget.text() == "Date Format":
+            elif widget_object_name == "date_format_title_label":
                 widget.setText(LanguageManager.translate("날짜 형식"))
-            elif widget.text() == "테마" or widget.text() == "Theme":
+            elif widget_object_name == "theme_title_label":
                 widget.setText(LanguageManager.translate("테마"))
-            elif widget.text() == "컨트롤 패널" or widget.text() == "Control Panel Position": # 키 수정됨
-                widget.setText(LanguageManager.translate("컨트롤 패널")) # 키 수정됨
+            elif widget_object_name == "folder_count_title_label":
+                widget.setText(LanguageManager.translate("분류 폴더 개수"))
+            elif widget_object_name == "settings_shortcut_info_label":
+                widget.setText(LanguageManager.translate("단축키 확인 🖜"))
+            # 🎯 새로 추가: 기존 update_ui_texts()에서 처리되던 설정 창 텍스트들
+            elif widget_object_name == "ext_title_label":
+                widget.setText(LanguageManager.translate("불러올 이미지 형식"))
+            elif widget_object_name == "raw_reset_label":
+                widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
+            elif widget_object_name == "mouse_wheel_label":
+                widget.setText(LanguageManager.translate("마우스 휠 동작"))
+            elif widget_object_name == "viewport_speed_label":
+                widget.setText(LanguageManager.translate("뷰포트 이동 속도"))
+            elif widget_object_name == "session_management_link_label":
+                widget.setText(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
+            elif widget_object_name == "photosort_info_label":
+                widget.setText(self.create_translated_info_text())
 
         elif isinstance(widget, QRadioButton):
-            if widget.text() == "좌측" or widget.text() == "Left":
+            if widget.text() in ["사진 넘기기", "Photo Navigation"]:
+                widget.setText(LanguageManager.translate("사진 넘기기"))
+            elif widget.text() in ["없음", "None"]:
+                widget.setText(LanguageManager.translate("없음"))
+            elif widget.text() in ["좌측", "Left"]:
                 widget.setText(LanguageManager.translate("좌측"))
-            elif widget.text() == "우측" or widget.text() == "Right":
+            elif widget.text() in ["우측", "Right"]:
                 widget.setText(LanguageManager.translate("우측"))
+        
+        # 🎯 새로 추가: QPushButton 처리 (초기화 버튼)
+        elif isinstance(widget, QPushButton):
+            if hasattr(self, 'reset_camera_settings_button') and widget is self.reset_camera_settings_button:
+                widget.setText(LanguageManager.translate("초기화"))
+        
+        # 🎯 새로 추가: QRLinkLabel 처리 (결제 서비스 이름)
+        elif isinstance(widget, QRLinkLabel):
+            if widget.text() in ["네이버페이", "NaverPay", "NaverPay 🇰🇷"]:
+                widget.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
+            elif widget.text() in ["카카오페이", "KakaoPay", "KakaoPay 🇰🇷"]:
+                widget.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
         
         # 자식 위젯이 있는 경우 재귀적으로 검색
         for child in widget.findChildren(QObject):
             if isinstance(child, QWidget) and child is not widget:
-             # 자식 위젯의 objectName을 확인하여 불필요한 재귀 방지 가능 (선택적 최적화)
-             self.update_settings_labels_texts(child)
+                self.update_settings_labels_texts(child)
 
     def update_date_formats(self):
         """날짜 형식이 변경되었을 때 UI 업데이트"""
@@ -10914,6 +14202,14 @@ def main():
     # PyInstaller로 패키징된 실행 파일을 위한 멀티프로세싱 지원 추가
     freeze_support()  # 이 호출이 멀티프로세싱 무한 재귀 문제를 해결합니다
 
+    # <<<--- HEIC 플러그인 등록 코드를 여기로 이동 ---<<<
+    try:
+        pillow_heif.register_heif_opener()
+        logging.info("HEIF/HEIC 지원이 활성화되었습니다. (main에서 등록)")
+    except Exception as e:
+        logging.error(f"HEIF/HEIC 플러그인 등록 실패: {e}")
+    # <<<--------------------------------------------<<<
+
     # 로그 레벨 설정: 개발 환경에서는 DEBUG, 배포 환경에서는 INFO로 설정
     # 실제 환경에 따라 조정 가능
     is_dev_mode = getattr(sys, 'frozen', False) is False  # 스크립트 모드면 개발 환경
@@ -10929,7 +14225,7 @@ def main():
 
     # 번역 데이터 초기화
     translations = {
-        "JPG 불러오기": "Load JPG",
+        "이미지 불러오기": "Load Images",
         "RAW 불러오기": "Load RAW",
         "폴더 경로": "Folder Path",
         "JPG - RAW 연결": "Link JPG - RAW",
@@ -10940,7 +14236,7 @@ def main():
         "테마": "Theme",
         "설정 및 정보": "Settings and Info",
         "정보": "Info",
-        "JPG 파일이 있는 폴더 선택": "Select JPG Folder",
+        "이미지 파일이 있는 폴더 선택": "Select Image Folder",
         "경고": "Warning",
         "선택한 폴더에 JPG 파일이 없습니다.": "No JPG files found in the selected folder.",
         "선택한 폴더에 RAW 파일이 없습니다.": "No RAW files found in the selected folder.",
@@ -10984,34 +14280,35 @@ def main():
         "좌측": "Left",
         "우측": "Right",
         "닫기": "Close",
-        "▪ 1, 2, 3: 지정한 폴더로 사진 이동": "▪ 1, 2, 3: Move Photo to Assigned Folder",
+        "▪ 1~9: 지정한 폴더로 사진 이동": "▪ 1-9: Move photo to assigned folder",
         # --- 단축키 안내 (새로운 상세 버전) ---
         "단축키": "Keyboard Shortcuts", # 팝업창 제목
         "▪ WASD: 사진 넘기기": "▪ WASD: Navigate Photos", # Grid Off 시, Grid On 시 셀 이동은 별도 항목이나 통합 설명
         "▪ 방향키:": "▪ Arrow Keys:",
         "  - 사진 넘기기": "  - Navigate Photos (Fit mode)",
-        "  - Zoom 100%/200%: 뷰포트 이동": "  - Pan Viewport (Zoom 100%/200%)",
+        "  - Zoom 100% 이상: 뷰포트 이동": "  - Pan Viewport (Zoom 100% or higher)",
         # 또는 방향키 통합 설명
         "▪ Shift + WASD:": "▪ Shift + WASD:",
         "  - Grid On: 그리드 페이지 넘기기 (좌/우)": "  - Navigate Grid Page (Left/Right when Grid On)",
-        "  - Zoom 100%/200%: 뷰포트 이동": "  - Pan Viewport (Zoom 100%/200%)",
+        "  - Zoom 100% 이상: 뷰포트 이동": "  - Pan Viewport (Zoom 100% or higher)",
         # 또는 Shift + WASD 통합 설명
-        "▪ 1, 2, 3: 지정한 폴더로 이동": "▪ 1, 2, 3: Move to Assigned Folder", # 기존 유지
-        "▪ Space:": "▪ Spacebar:",
+        "▪ 스페이스바:": "▪ Spacebar:",
         "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)": "  - Grid Off: Toggle Zoom Mode (Fit ↔ 100%)",
         "  - Grid On: 선택한 이미지 확대 보기": "  - Grid On: Zoom into Selected Image (to Grid Off)",
         "▪ F1, F2, F3: 그리드 옵션 변경": "▪ F1, F2, F3: Change Grid Mode", # 기존 유지
         "▪ ESC:": "▪ ESC:",
-        "  - Zoom 100% / 200%: 이미지 축소(Fit)": "  - Zoom 100% / 200%: Zoom out to Fit",
+        "  - Zoom 100% 이상: 이미지 축소(Fit)": "  - Zoom 100% or higher: Zoom out to Fit",
         "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀": "  - When zoomed from Grid: Return to previous Grid view",
         "  - 파일 목록: 닫기": "  - File List Dialog: Close",
+        "▪ R: 뷰포트(확대 부분) 중앙으로 이동": "▪ R: Center Viewport (Zoomed Area)",
         "▪ Ctrl + Z: 파일 이동 취소": "▪ Ctrl + Z: Undo File Move", # 기존 유지
         "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행": "▪ Ctrl + Y or Ctrl + Shift + Z: Redo File Move", # 기존 유지
+        "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택": "▪ Ctrl + A: Select All Images in Grid Mode",
         "▪ Delete: 작업 상태 초기화": "▪ Delete: Reset Working State", # "프로그램 초기화"에서 변경
         "▪ Enter: 파일 목록 표시": "▪ Enter: Show File List",
         "단축키 확인 🖜": "View Shortcuts 🖜",
-        "조건 없이 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is completely free software with no restrictions — use it as you like.",
-        "제작자 정보를 바꿔서 배포하지만 말아주세요.": "Just please don't redistribute it under someone else's name.",
+        "개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is free software that you can use freely for personal purposes.",
+        "상업적 이용은 허용되지 않습니다.": "Commercial use is not permitted.",
         "이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.": "If you truly enjoy this app, consider supporting it with a cup of coffee!",
         "QR 코드": "QR Code",
         "후원 QR 코드": "Donation QR Code",
@@ -11019,7 +14316,6 @@ def main():
         "카카오페이": "KakaoPay",
         "피드백 및 업데이트 확인:": "Feedback & Updates:",
         "이미지 로드 중...": "Loading image...",
-        "▪ Space: 그리드 모드에서 사진 확대 / 줌 모드 전환 (Fit ↔ 100%)": "▪ Space: Enlarge photo in grid mode / Toggle zoom mode (Fit ↔ 100%)",
         "파일명": "Filename",
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
@@ -11063,6 +14359,22 @@ def main():
         "'{session_name}' 세션을 정말 삭제하시겠습니까?": "Are you sure you want to delete the session '{session_name}'?",
         "불러오기 완료": "Load Complete", # 이미 있을 수 있음
         "'{session_name}' 세션을 불러왔습니다.": "Session '{session_name}' has been loaded.",
+        "불러올 이미지 형식": "Loadable Image Formats",
+        "최소 하나 이상의 확장자는 선택되어야 합니다.": "At least one extension must be selected.",
+        "선택한 폴더에 지원하는 이미지 파일이 없습니다.": "No supported image files found in the selected folder.",
+        "폴더 불러오기": "Load Folder",
+        "폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?": "The folder contains both regular image files and RAW files. What would you like to load?",
+        "파일명이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기": "Match and load image files and RAW files with the same file names",
+        "일반 이미지 파일만 불러오기": "Load only regular image files",
+        "RAW 파일만 불러오기": "Load only RAW files",
+        "현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)": "Please finish current work and then load a new folder (Tip: X button next to folder path or Delete key)",
+        "선택한 폴더에 지원하는 파일이 없습니다.": "No supported files found in the selected folder.",
+        "분류 폴더 개수": "Number of Sorting Folders",
+        "마우스 휠 동작": "Mouse Wheel Action",
+        "사진 넘기기": "Photo Navigation", 
+        "없음": "None",
+        "이동 - 폴더 {0}": "Move to Folder {0}",
+        "이동 - 폴더 {0} [{1}]": "Move to Folder {0} [{1}]",
     }
     
     LanguageManager.initialize_translations(translations)
@@ -11081,7 +14393,12 @@ def main():
         sys.exit(0) # 또는 return, 어쨌든 app.exec()를 호출하지 않음
 
     window.show()
-    sys.exit(app.exec()) #수정
+
+    # 첫 실행이면 메인 윈도우 표시 후 설정 팝업 표시
+    if hasattr(window, 'is_first_run') and window.is_first_run:
+        QTimer.singleShot(100, window.show_first_run_settings_popup_delayed)
+
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
