@@ -5577,6 +5577,7 @@ class PhotoSortApp(QMainWindow):
             (0, "▪ ESC:"),
             (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
             (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
             (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ Ctrl + Z: 파일 이동 취소"),
             (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
@@ -5636,6 +5637,7 @@ class PhotoSortApp(QMainWindow):
             (0, "▪ ESC:"),
             (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
             (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
             (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
             (0, "▪ Ctrl + Z: 파일 이동 취소"),
             (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
@@ -7031,7 +7033,7 @@ class PhotoSortApp(QMainWindow):
         text_browser.setHtml(html_content)
         
         # 텍스트 브라우저의 최소/권장 크기 설정 (내용에 따라 조절)
-        text_browser.setMinimumHeight(880)
+        text_browser.setMinimumHeight(980)
         text_browser.setMinimumWidth(550)
 
         layout.addWidget(text_browser)
@@ -13306,6 +13308,87 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"highlight_folder_label 오류: {e}")
 
+    def center_viewport(self):
+        """뷰포트를 이미지 중앙으로 이동 (Zoom 100% 또는 Spin 모드에서만)"""
+        try:
+            # 전제 조건 확인
+            if (self.grid_mode != "Off" or 
+                self.zoom_mode not in ["100%", "Spin"] or 
+                not self.original_pixmap):
+                logging.debug("center_viewport: 조건 불만족 (Grid Off, Zoom 100%/Spin, 이미지 필요)")
+                return False
+            
+            # 뷰포트 크기 가져오기
+            view_width = self.scroll_area.width()
+            view_height = self.scroll_area.height()
+            
+            # 이미지 크기 계산
+            if self.zoom_mode == "100%":
+                img_width = self.original_pixmap.width()
+                img_height = self.original_pixmap.height()
+            else:  # Spin 모드
+                img_width = self.original_pixmap.width() * self.zoom_spin_value
+                img_height = self.original_pixmap.height() * self.zoom_spin_value
+            
+            # 중앙 정렬 위치 계산
+            if img_width <= view_width:
+                # 이미지가 뷰포트보다 작으면 중앙 정렬
+                new_x = (view_width - img_width) // 2
+            else:
+                # 이미지가 뷰포트보다 크면 이미지 중앙이 뷰포트 중앙에 오도록
+                new_x = (view_width - img_width) // 2
+            
+            if img_height <= view_height:
+                # 이미지가 뷰포트보다 작으면 중앙 정렬
+                new_y = (view_height - img_height) // 2
+            else:
+                # 이미지가 뷰포트보다 크면 이미지 중앙이 뷰포트 중앙에 오도록
+                new_y = (view_height - img_height) // 2
+            
+            # 위치 제한 (패닝 범위 계산과 동일한 로직)
+            if img_width <= view_width:
+                x_min = x_max = (view_width - img_width) // 2
+            else:
+                x_min = min(0, view_width - img_width)
+                x_max = 0
+            
+            if img_height <= view_height:
+                y_min = y_max = (view_height - img_height) // 2
+            else:
+                y_min = min(0, view_height - img_height)
+                y_max = 0
+            
+            # 범위 내로 제한
+            new_x = max(x_min, min(x_max, new_x))
+            new_y = max(y_min, min(y_max, new_y))
+            
+            # 이미지 위치 업데이트
+            self.image_label.move(int(new_x), int(new_y))
+            
+            # 뷰포트 포커스 정보 업데이트
+            if self.current_image_orientation:
+                current_rel_center = self._get_current_view_relative_center()
+                self.current_active_rel_center = current_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                
+                # 방향별 뷰포트 포커스 저장
+                self._save_orientation_viewport_focus(
+                    self.current_image_orientation, 
+                    current_rel_center, 
+                    self.zoom_mode
+                )
+            
+            # 미니맵 업데이트
+            if self.minimap_visible and self.minimap_widget.isVisible():
+                self.update_minimap()
+            
+            logging.info(f"뷰포트 중앙 이동 완료: {self.zoom_mode} 모드, 위치: ({new_x}, {new_y})")
+            return True
+            
+        except Exception as e:
+            logging.error(f"center_viewport 오류: {e}")
+            return False
+
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
@@ -13362,7 +13445,15 @@ class PhotoSortApp(QMainWindow):
                     if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
-                    
+
+            # R 키: 뷰포트 중앙 이동 (Zoom 100% 또는 Spin 모드에서만)
+            if key == Qt.Key_R:
+                if (self.grid_mode == "Off" and 
+                    self.zoom_mode in ["100%", "Spin"] and 
+                    self.original_pixmap):
+                    self.center_viewport()
+                    return True
+
             if key == Qt.Key_Space:
                 if self.grid_mode == "Off":
                     # 기존 Grid Off 모드에서의 줌 전환 로직
@@ -14209,6 +14300,7 @@ def main():
         "  - Zoom 100% 이상: 이미지 축소(Fit)": "  - Zoom 100% or higher: Zoom out to Fit",
         "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀": "  - When zoomed from Grid: Return to previous Grid view",
         "  - 파일 목록: 닫기": "  - File List Dialog: Close",
+        "▪ R: 뷰포트(확대 부분) 중앙으로 이동": "▪ R: Center Viewport (Zoomed Area)",
         "▪ Ctrl + Z: 파일 이동 취소": "▪ Ctrl + Z: Undo File Move", # 기존 유지
         "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행": "▪ Ctrl + Y or Ctrl + Shift + Z: Redo File Move", # 기존 유지
         "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택": "▪ Ctrl + A: Select All Images in Grid Mode",
