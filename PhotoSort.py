@@ -31,14 +31,15 @@ import pillow_heif
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
                            QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
-                           QMimeData)
+                           QMimeData, QAbstractListModel, QModelIndex, QSize)
 
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
-                          QImage, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
+                          QImage, QImageReader, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
                           QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence, QDrag)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QDialog, QFileDialog, QFrame, QGridLayout, 
                               QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+                              QListView, QStyledItemDelegate, QStyle,
                               QMainWindow, QMenu, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
                               QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit, 
@@ -97,25 +98,29 @@ class UIScaleManager:
 
     # 기본 UI 크기 설정
     NORMAL_SETTINGS = {
-        "control_panel_margins": (10, 15, 10, 15), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_panel_margins": (8, 9, 8, 9), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
         "control_layout_spacing": 8,               # 컨트롤 레이아웃 위젯 간 기본 간격
         "button_min_height": 30,                   # 일반 버튼 최소 높이
         "button_padding": 8,                       # 일반 버튼 내부 패딩
-        "delete_button_width": 45,                 # 삭제(X) 버튼 너비
+        "delete_button_width": 45,                 # 분류폴더 번호 및 삭제(X) 버튼 너비
         "JPG_RAW_spacing": 8,
         "section_spacing": 20,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
+        "group_box_spacing": 15,                   # 라디오 버튼 등 그룹 내 간격
         "title_spacing": 10,                       # Zoom, Grid 등 섹션 제목 아래 간격
         "settings_button_size": 35,                # 설정(톱니바퀴) 버튼 크기
         "filename_label_padding": 40,              # 파일명 레이블 상하 패딩
         "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
         "font_size": 10,                           # 기본 폰트 크기
         "zoom_grid_font_size": 11,                 # Zoom, Grid 등 섹션 제목 폰트 크기
+        "zoom_spinbox_width": 85,                 # Zoom Spinbox 너비
         "filename_font_size": 11,                  # 파일명 폰트 크기
-        "folder_container_spacing": 6,             # 버튼 - 레이블 - X버튼 간격
+        "folder_container_spacing": 6,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 13,                # 폴더 경로 레이블 높이 계산용 패딩
         "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
+        "info_container_width": 300,
         "combobox_padding": 4,
+        "settings_label_width": 250,               # 설정 창 라벨 최소 너비
+        "control_panel_min_width": 280,            # 컨트롤 패널 최소 너비
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
         "settings_popup_height": 1240,
@@ -128,29 +133,41 @@ class UIScaleManager:
         "info_paragraph_margin": 30,
         "info_bottom_margin": 30,
         "info_donation_spacing": 35,
+        # 썸네일 패널 관련 키 추가
+        "thumbnail_item_height": 180,          # 썸네일 아이템 높이
+        "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
+        "thumbnail_image_size": 140,           # 썸네일 이미지 크기
+        "thumbnail_text_height": 24,           # 파일명 텍스트 영역 높이
+        "thumbnail_padding": 6,                # 썸네일 내부 패딩
+        "thumbnail_border_width": 2,           # 선택 테두리 두께
+        "thumbnail_panel_min_width": 180,      # 썸네일 패널 최소 너비
     }
 
     # 컴팩트 모드 UI 크기 설정
     COMPACT_SETTINGS = {
-        "control_panel_margins": (10, 12, 10, 12), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
+        "control_panel_margins": (6, 6, 6, 6), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
         "control_layout_spacing": 6,               # 컨트롤 레이아웃 위젯 간 기본 간격
         "button_min_height": 20,                   # 일반 버튼 최소 높이
-        "button_padding": 8,                       # 일반 버튼 내부 패딩
-        "delete_button_width": 42,                 # 삭제(X) 버튼 너비
+        "button_padding": 6,                       # 일반 버튼 내부 패딩
+        "delete_button_width": 35,                 # 분류폴더 번호 및 삭제(X) 버튼 너비
         "JPG_RAW_spacing": 6, 
         "section_spacing": 12,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 40,                   # 라디오 버튼 등 그룹 내 간격
+        "group_box_spacing": 10,                   # 라디오 버튼 등 그룹 내 간격
         "title_spacing": 7,                        # Zoom, Grid 등 섹션 제목 아래 간격
         "settings_button_size": 30,                # 설정(톱니바퀴) 버튼 크기
         "filename_label_padding": 25,              # 파일명 레이블 상하 패딩
         "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
         "font_size": 9,                            # 기본 폰트 크기
         "zoom_grid_font_size": 10,                 # Zoom, Grid 등 섹션 제목 폰트 크기
+        "zoom_spinbox_width": 70,                 # Zoom Spinbox 너비
         "filename_font_size": 10,                  # 파일명 폰트 크기
-        "folder_container_spacing": 5,             # 버튼 - 레이블 - X버튼 간격
+        "folder_container_spacing": 4,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 10,                # 폴더 경로 레이블 높이 계산용 패딩
-        "category_folder_vertical_spacing": 7,     # 분류 폴더 UI 사이 간격
+        "category_folder_vertical_spacing": 6,     # 분류 폴더 UI 사이 간격
+        "info_container_width": 200,
         "combobox_padding": 3,
+        "settings_label_width": 180,               # 설정 창 라벨 최소 너비 (컴팩트 모드에서는 더 작게)
+        "control_panel_min_width": 220,            # 컨트롤 패널 최소 너비 (컴팩트 모드에서는 더 작게)
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
         "settings_popup_height": 940,
@@ -163,6 +180,14 @@ class UIScaleManager:
         "info_paragraph_margin": 20,
         "info_bottom_margin": 20,
         "info_donation_spacing": 25,
+        # 썸네일 패널 관련 설정 (컴팩트 모드에서는 더 작게)
+        "thumbnail_item_height": 160,          # 썸네일 아이템 높이
+        "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
+        "thumbnail_image_size": 120,           # 썸네일 이미지 크기
+        "thumbnail_text_height": 20,           # 파일명 텍스트 영역 높이
+        "thumbnail_padding": 5,                # 썸네일 내부 패딩
+        "thumbnail_border_width": 2,           # 선택 테두리 두께
+        "thumbnail_panel_min_width": 150,      # 썸네일 패널 최소 너비
     }
 
     _current_settings = NORMAL_SETTINGS # 초기값은 Normal로 설정
@@ -188,13 +213,13 @@ class UIScaleManager:
                 cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 logging.info(f"세로 해상도: {vertical_resolution}px / Normal UI 모드 활성")
 
-            # 화면 비율에 따른 group_box_spacing 조정
-            if cls.is_16_10_or_less():
-                cls._current_settings["group_box_spacing"] = 15
-                logging.info("화면 비율 16:10 이하: group_box_spacing = 15")
-            else:
-                cls._current_settings["group_box_spacing"] = 40
-                logging.info("화면 비율 16:10 초과: group_box_spacing = 40")
+            # # 화면 비율에 따른 group_box_spacing 조정
+            # if cls.is_16_10_or_less():
+            #     cls._current_settings["group_box_spacing"] = 15
+            #     logging.info("화면 비율 16:10 이하: group_box_spacing = 15")
+            # else:
+            #     cls._current_settings["group_box_spacing"] = 15
+            #     logging.info("화면 비율 16:10 초과: group_box_spacing = 40")
 
         except Exception as e:
             logging.error(f"Error initializing UIScaleManager: {e}. Using default UI scale.")
@@ -1644,45 +1669,51 @@ class PriorityThreadPoolExecutor(ThreadPoolExecutor):
     def _process_priority_queues(self):
         """우선순위 큐를 처리하는 스레드 함수"""
         while not self.shutdown_flag:
-            # 높은 우선순위부터 처리
-            processed = False
+            task_info = None
             
-            # 높은 우선순위 작업 처리
             try:
-                task = self.task_queues['high'].get_nowait()
-                super().submit(task[0], *task[1], **task[2])
-                processed = True
+                # 1. 높은 우선순위 큐 먼저 확인
+                task_info = self.task_queues['high'].get_nowait()
             except queue.Empty:
-                # 높은 우선순위 큐가 비어있으면 다음으로
-                pass
-            
-            # 중간 우선순위 작업 처리
-            if not processed:
                 try:
-                    task = self.task_queues['medium'].get_nowait()
-                    super().submit(task[0], *task[1], **task[2])
-                    processed = True
+                    # 2. 중간 우선순위 큐 확인
+                    task_info = self.task_queues['medium'].get_nowait()
                 except queue.Empty:
-                    # 중간 우선순위 큐가 비어있으면 다음으로
-                    pass
-            
-            # 낮은 우선순위 작업 처리
-            if not processed:
+                    try:
+                        # 3. 낮은 우선순위 큐 확인
+                        task_info = self.task_queues['low'].get_nowait()
+                    except queue.Empty:
+                        # 모든 큐가 비어있으면 잠시 대기
+                        time.sleep(0.05)
+                        continue  # 루프의 처음으로 돌아가 다시 확인
+
+            # task_info가 성공적으로 가져와졌다면 작업 제출
+            if task_info:
+                # task_info는 (wrapper_function, args, kwargs) 튜플
                 try:
-                    task = self.task_queues['low'].get_nowait()
-                    super().submit(task[0], *task[1], **task[2])
-                    processed = True
-                except queue.Empty:
-                    # 모든 큐가 비어있으면 잠시 대기
-                    time.sleep(0.05)
+                    super().submit(task_info[0], *task_info[1], **task_info[2])
+                except Exception as e:
+                    logging.error(f"작업 제출 실패: {e}")
     
     def submit_with_priority(self, priority, fn, *args, **kwargs):
         """우선순위와 함께 작업 제출"""
         if priority not in self.task_queues:
             priority = 'low'  # 기본값
         
-        # 큐에 작업 추가
-        self.task_queues[priority].put((fn, args, kwargs))
+        from concurrent.futures import Future
+        future = Future()
+
+        # 실제 실행될 함수를 래핑하여 future 결과를 설정하도록 함
+        def wrapper():
+            try:
+                result = fn(*args, **kwargs)
+                future.set_result(result)
+            except Exception as e:
+                future.set_exception(e)
+
+        # 큐에 (래핑된 함수, 빈 인자, 빈 키워드 인자, future 객체)를 추가
+        self.task_queues[priority].put((wrapper, (), {}))
+        return future
     
     def shutdown(self, wait=True, cancel_futures=False):
         """스레드 풀 종료"""
@@ -2019,11 +2050,16 @@ class ResourceManager:
             
         # 우선순위 스레드 풀에 작업 제출
         if isinstance(self.imaging_thread_pool, PriorityThreadPoolExecutor):
-            self.imaging_thread_pool.submit_with_priority(priority, fn, *args, **kwargs)
+            
+            future = self.imaging_thread_pool.submit_with_priority(priority, fn, *args, **kwargs)
+            if future: # 반환된 future가 유효한지 확인 (선택적이지만 안전함)
+                self.active_tasks.add(future)
+                future.add_done_callback(lambda f: self.active_tasks.discard(f))
+            return future
+
         else:
             # 우선순위 지원하지 않으면 일반 제출
-            self.submit_imaging_task(fn, *args, **kwargs)
-
+            return self.submit_imaging_task(fn, *args, **kwargs)
 
 
     def submit_imaging_task(self, fn, *args, **kwargs):
@@ -2103,6 +2139,192 @@ class ResourceManager:
         self.raw_decoder_pool.shutdown()
         
         print("ResourceManager: 리소스 종료 완료")
+
+class ThumbnailModel(QAbstractListModel):
+    """썸네일 패널을 위한 가상화된 리스트 모델"""
+    
+    # 시그널 정의
+    thumbnailRequested = Signal(str, int)  # 썸네일 로딩 요청 (파일 경로, 인덱스)
+    currentIndexChanged = Signal(int)      # 현재 선택 인덱스 변경
+    
+    def __init__(self, image_files=None, image_loader=None, parent=None):
+        super().__init__(parent)
+        self._image_files = image_files or []         # ← 첫 번째 버전과 동일하게 _image_files 사용
+        self.image_loader = image_loader              # ← 새로 추가
+        self._current_index = -1                      # 현재 선택된 인덱스
+        self._thumbnail_cache = {}                    # 썸네일 캐시 {파일경로: QPixmap}
+        self._thumbnail_size = UIScaleManager.get("thumbnail_image_size")  # 64 → 동적 크기
+        self._loading_set = set()                     # 현재 로딩 중인 파일 경로들
+        
+        # ResourceManager 인스턴스 참조
+        self.resource_manager = ResourceManager.instance()
+        
+    def set_image_files(self, image_files):
+        """이미지 파일 목록 설정"""
+        self.beginResetModel()
+        self._image_files = image_files or []
+        self._current_index = -1
+        self._thumbnail_cache.clear()
+        self._loading_set.clear()
+        self.endResetModel()
+        
+        # 캐시에서 불필요한 항목 제거
+        self._cleanup_cache()
+        
+    def set_current_index(self, index):
+        """현재 선택 인덱스 설정"""
+        if 0 <= index < len(self._image_files) and index != self._current_index:
+            old_index = self._current_index
+            self._current_index = index
+            
+            # 변경된 인덱스들 업데이트
+            if old_index >= 0:
+                self.dataChanged.emit(self.createIndex(old_index, 0), 
+                                    self.createIndex(old_index, 0))
+            if self._current_index >= 0:
+                self.dataChanged.emit(self.createIndex(self._current_index, 0), 
+                                    self.createIndex(self._current_index, 0))
+                
+            self.currentIndexChanged.emit(self._current_index)
+    
+    def get_current_index(self):
+        """현재 선택 인덱스 반환"""
+        return self._current_index
+    
+    def rowCount(self, parent=QModelIndex()):
+        """모델의 행 개수 반환 (가상화 지원)"""
+        count = len(self._image_files)
+        if count > 0:  # 이미지가 있을 때만 로그 출력
+            logging.debug(f"ThumbnailModel.rowCount: {count}개 파일")
+        return count
+    
+    def data(self, index, role=Qt.DisplayRole):
+        """모델 데이터 제공"""
+        if not index.isValid() or index.row() >= len(self._image_files):
+            return None
+            
+        row = index.row()
+        file_path = str(self._image_files[row])
+        
+        # 기본 호출 로그 추가
+        logging.debug(f"ThumbnailModel.data 호출: row={row}, role={role}, file={Path(file_path).name}")
+        
+        if role == Qt.DisplayRole:
+            # 파일명만 반환
+            return Path(file_path).name
+            
+        elif role == Qt.DecorationRole:
+            # 썸네일 이미지 반환
+            logging.debug(f"ThumbnailModel.data: Qt.DecorationRole 요청 - {Path(file_path).name}")
+            return self._get_thumbnail(file_path, row)
+            
+        elif role == Qt.UserRole:
+            # 파일 경로 반환
+            return file_path
+            
+        elif role == Qt.UserRole + 1:
+            # 현재 선택 여부 반환
+            return row == self._current_index
+            
+        elif role == Qt.ToolTipRole:
+            # 툴팁: 파일명 + 경로
+            return f"{Path(file_path).name}\n{file_path}"
+            
+        return None
+    
+    def flags(self, index):
+        """아이템 플래그 반환 (선택, 드래그 가능)"""
+        if not index.isValid():
+            return Qt.NoItemFlags
+            
+        return (Qt.ItemIsEnabled | 
+                Qt.ItemIsSelectable | 
+                Qt.ItemIsDragEnabled)
+    
+    def _get_thumbnail(self, file_path, row):
+        """썸네일 이미지 반환 (캐시 우선, 없으면 비동기 로딩)"""
+        # 캐시에서 확인
+        if file_path in self._thumbnail_cache:
+            thumbnail = self._thumbnail_cache[file_path]
+            if thumbnail and not thumbnail.isNull():
+                logging.debug(f"썸네일 캐시 히트: {Path(file_path).name}")
+                return thumbnail
+        
+        # 로딩 중이 아니면 비동기 로딩 요청
+        if file_path not in self._loading_set:
+            logging.debug(f"썸네일 비동기 로딩 요청: {Path(file_path).name}")
+            self._loading_set.add(file_path)
+            self.thumbnailRequested.emit(file_path, row)
+        else:
+            logging.debug(f"썸네일 이미 로딩 중: {Path(file_path).name}")
+        
+        # 기본 이미지 반환 (로딩 중 표시)
+        return self._create_loading_pixmap()
+    
+    def _create_loading_pixmap(self):
+        """로딩 중 표시할 기본 픽스맵 생성"""
+        size = UIScaleManager.get("thumbnail_image_size")
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor(ThemeManager.get_color('bg_secondary')))
+        
+        painter = QPainter(pixmap)
+        painter.setPen(QPen(QColor(ThemeManager.get_color('text_disabled')), 1))
+        painter.drawRect(0, 0, size-1, size-1)
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, "...")
+        painter.end()
+        
+        return pixmap
+    
+    def set_thumbnail(self, file_path, pixmap):
+        """썸네일 캐시에 저장 및 UI 업데이트"""
+        if not pixmap or pixmap.isNull():
+            return
+            
+        # 캐시에 저장
+        self._thumbnail_cache[file_path] = pixmap
+        
+        # 로딩 상태에서 제거
+        self._loading_set.discard(file_path)
+        
+        # 해당 인덱스 찾아서 UI 업데이트
+        for i, image_file in enumerate(self._image_files):
+            if str(image_file) == file_path:
+                index = self.createIndex(i, 0)
+                self.dataChanged.emit(index, index, [Qt.DecorationRole])
+                break
+    
+    def _cleanup_cache(self):
+        """불필요한 캐시 항목 제거"""
+        if not self._image_files:
+            self._thumbnail_cache.clear()
+            return
+            
+        # 현재 이미지 파일 목록에 없는 캐시 항목 제거
+        current_paths = {str(f) for f in self._image_files}
+        cached_paths = set(self._thumbnail_cache.keys())
+        
+        for path in cached_paths - current_paths:
+            del self._thumbnail_cache[path]
+    
+    def clear_cache(self):
+        """모든 캐시 지우기"""
+        self._thumbnail_cache.clear()
+        self._loading_set.clear()
+    
+    def preload_thumbnails(self, center_index, radius=10):
+        """중심 인덱스 주변의 썸네일 미리 로딩"""
+        if not self._image_files or center_index < 0:
+            return
+            
+        start = max(0, center_index - radius)
+        end = min(len(self._image_files), center_index + radius + 1)
+        
+        for i in range(start, end):
+            file_path = str(self._image_files[i])
+            if (file_path not in self._thumbnail_cache and 
+                file_path not in self._loading_set):
+                self._loading_set.add(file_path)
+                self.thumbnailRequested.emit(file_path, i)
 
 class ImageLoader(QObject):
     """이미지 로딩 및 캐싱을 관리하는 클래스"""
@@ -2643,6 +2865,356 @@ class ImageLoader(QObject):
             logging.info(f"ImageLoader: RAW 처리 방식 설정됨: {strategy}")
         else:
             logging.warning(f"ImageLoader: 알 수 없는 RAW 처리 방식 '{strategy}'. 변경 안 함.")
+
+class ThumbnailDelegate(QStyledItemDelegate):
+    """썸네일 아이템의 렌더링을 담당하는 델리게이트"""
+    
+    # 썸네일 클릭 시그널
+    thumbnailClicked = Signal(int)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._placeholder_pixmap = self._create_placeholder()
+    
+    def _create_placeholder(self):
+        """플레이스홀더 이미지 생성"""
+        size = UIScaleManager.get("thumbnail_image_size")
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor("#222222"))
+        return pixmap
+    
+    def paint(self, painter, option, index):
+        """썸네일 아이템 렌더링 (중앙 정렬 보장)"""
+        painter.save()  # 페인터 상태 저장
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # --- 기본 변수 설정 ---
+        rect = option.rect
+        image_size = UIScaleManager.get("thumbnail_image_size")
+        padding = UIScaleManager.get("thumbnail_padding")
+        text_height = UIScaleManager.get("thumbnail_text_height")
+        border_width = UIScaleManager.get("thumbnail_border_width")
+        
+        # --- 1. 배경 그리기 ---
+        is_current = index.data(Qt.UserRole + 1)
+        is_selected = option.state & QStyle.State_Selected
+        
+        # 선택 상태에 따른 배경색 설정
+        if is_current or is_selected:
+            bg_color = "#444444"  # 선택된 아이템은 배경색 변경
+        else:
+            bg_color = ThemeManager.get_color('bg_primary')
+            
+        painter.fillRect(rect, QColor(bg_color))
+        
+        # painter.setRenderHint(QPainter.Antialiasing, False)
+        # --- 2. 테두리 그리기 (모든 아이템에 동일한 테두리) ---
+        border_color = "#474747"  # 고정 테두리 색상
+        painter.setPen(QPen(QColor(border_color), border_width))
+        painter.drawRect(rect.adjusted(1, 1, -1, -1))
+            
+        # --- 3. 이미지 그리기 ---
+        image_path = index.data(Qt.UserRole)
+        if image_path:
+            pixmap = index.data(Qt.DecorationRole)
+            
+            # 사용할 픽스맵 결정 (로딩 완료 시 썸네일, 아니면 플레이스홀더)
+            target_pixmap = pixmap if pixmap and not pixmap.isNull() else self._placeholder_pixmap
+            
+            # 종횡비를 유지하며 스케일링
+            scaled_pixmap = target_pixmap.scaled(
+                image_size, image_size,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            # 중앙 정렬을 위한 좌표 계산
+            # 아이템의 전체 너비(rect.width())를 기준으로 계산해야 합니다.
+            x_pos = rect.x() + (rect.width() - scaled_pixmap.width()) // 2
+            
+            # y 좌표도 중앙 정렬을 위해 계산
+            # 이미지 영역 높이 = 전체 높이 - 텍스트 영역 높이 - 패딩*3 (상단, 이미지-텍스트 사이, 하단)
+            image_area_height = rect.height() - text_height - (padding * 3)
+            y_pos = rect.y() + padding + (image_area_height - scaled_pixmap.height()) // 2
+            
+            # 계산된 위치에 픽스맵 그리기
+            painter.drawPixmap(x_pos, y_pos, scaled_pixmap)
+
+        # --- 4. 파일명 텍스트 그리기 ---
+        filename = index.data(Qt.DisplayRole)
+        if filename:
+            # 텍스트 영역 계산 (이미지 바로 아래)
+            # y 좌표: 이미지 시작점(padding) + 이미지 높이(image_size) + 이미지와 텍스트 사이 간격(padding)
+            text_rect = QRect(
+                rect.x() + padding,
+                rect.y() + padding + image_size + padding,
+                rect.width() - (padding * 2),
+                text_height
+            )
+            
+            painter.setPen(QColor(ThemeManager.get_color('text')))
+            font = QFont()
+            font.setPointSize(UIScaleManager.get("font_size"))
+            painter.setFont(font)
+            
+            metrics = painter.fontMetrics()
+            elided_text = metrics.elidedText(filename, Qt.ElideMiddle, text_rect.width())
+            painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, elided_text)
+
+        painter.restore() # 페인터 상태 복원
+
+    
+    def sizeHint(self, option, index):
+        """아이템 크기 힌트"""
+        height = UIScaleManager.get("thumbnail_item_height")
+        return QSize(0, height)
+
+# ThumbnailDelegate 클래스 바로 뒤에 추가
+
+class ThumbnailPanel(QWidget):
+    """썸네일 패널 위젯 - 현재 이미지 주변의 썸네일들을 표시"""
+    
+    # 시그널 정의
+    thumbnailClicked = Signal(int)           # 썸네일 클릭 시 인덱스 전달
+    thumbnailDoubleClicked = Signal(int)     # 썸네일 더블클릭 시 인덱스 전달
+    selectionChanged = Signal(list)          # 다중 선택 변경 시 인덱스 리스트 전달
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_app = parent  # PhotoSortApp 참조
+        
+        # 모델과 델리게이트 생성 (image_loader 전달)
+        self.model = ThumbnailModel([], self.parent_app.image_loader if self.parent_app else None, self)
+        self.delegate = ThumbnailDelegate(self)
+        
+        self.setup_ui()
+        self.connect_signals()
+        
+        # 테마/언어 변경 콜백 등록
+        ThemeManager.register_theme_change_callback(self.update_ui_colors)
+        
+    def setup_ui(self):
+        """UI 구성 요소 초기화"""
+        # 메인 레이아웃
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
+        
+
+        
+        # 썸네일 리스트 뷰
+        self.list_view = QListView()
+        self.list_view.setModel(self.model)
+        self.list_view.setItemDelegate(self.delegate)
+        
+        # 리스트 뷰 설정
+        self.list_view.setSelectionMode(QListView.ExtendedSelection)  # 다중 선택 허용
+        self.list_view.setDragDropMode(QListView.DragOnly)           # 드래그 허용
+        self.list_view.setDefaultDropAction(Qt.MoveAction)
+        self.list_view.setVerticalScrollMode(QListView.ScrollPerPixel)
+        self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list_view.setSpacing(UIScaleManager.get("thumbnail_item_spacing"))
+
+        # 썸네일 아이템 간격 설정
+        item_spacing = UIScaleManager.get("thumbnail_item_spacing")
+        
+        # 스타일 설정
+        self.list_view.setStyleSheet(f"""
+            QListView {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border: none;
+                outline: none;
+                padding: {item_spacing}px;
+                spacing: {item_spacing}px;
+            }}
+            QListView::item {{
+                border: none;
+                padding: 0px;
+                margin-bottom: {item_spacing}px;
+            }}
+            QListView::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                background-color: rgba(255, 255, 255, 30);
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: {ThemeManager.get_color('bg_primary')};
+                width: 10px;
+                margin: 0px 0px 0px 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {ThemeManager.get_color('border')};
+                min-height: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {ThemeManager.get_color('accent_hover')};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                border: none;
+                background: none;
+                height: 0px;
+            }}
+            QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {{
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+        
+        # 레이아웃에 추가
+        self.layout.addWidget(self.list_view, 1)  # 확장 가능
+        
+        # 패널 전체 스타일
+        self.setStyleSheet(f"""
+            ThumbnailPanel {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border-right: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """)
+        
+        # 최소 크기 설정
+        min_width = UIScaleManager.get("thumbnail_panel_min_width")
+        self.setMinimumWidth(min_width)
+        
+    def connect_signals(self):
+        """시그널 연결"""
+        # 모델 시그널 연결
+        logging.info("ThumbnailPanel: 시그널 연결 시작")
+        self.model.currentIndexChanged.connect(self.on_current_index_changed)
+        
+        # 리스트 뷰 시그널 연결
+        self.list_view.clicked.connect(self.on_thumbnail_clicked)
+        self.list_view.doubleClicked.connect(self.on_thumbnail_double_clicked)
+        
+        # 선택 변경 시그널
+        selection_model = self.list_view.selectionModel()
+        if selection_model:
+            selection_model.selectionChanged.connect(self.on_selection_changed)
+        
+        logging.info("ThumbnailPanel: 모든 시그널 연결 완료")
+    
+    def set_image_files(self, image_files):
+        """이미지 파일 목록 설정"""
+        logging.info(f"ThumbnailPanel.set_image_files: {len(image_files) if image_files else 0}개 파일 설정")
+        self.model.set_image_files(image_files)
+        
+        # 모델 상태 확인
+        logging.debug(f"ThumbnailPanel: 모델 rowCount={self.model.rowCount()}")
+                
+    def set_current_index(self, index):
+        """현재 인덱스 설정 및 스크롤"""
+        if not self.model._image_files or index < 0 or index >= len(self.model._image_files):
+            return
+            
+        # 기존 선택 해제
+        self.list_view.clearSelection()
+            
+        # 모델에 현재 인덱스 설정
+        self.model.set_current_index(index)
+        
+        # 해당 인덱스로 스크롤
+        self.scroll_to_index(index)
+        
+        # 주변 썸네일 미리 로딩
+        self.preload_surrounding_thumbnails(index)
+    
+    def scroll_to_index(self, index):
+        """지정된 인덱스가 리스트 중앙에 오도록 스크롤"""
+        if index < 0 or index >= self.model.rowCount():
+            return
+            
+        model_index = self.model.createIndex(index, 0)
+        self.list_view.scrollTo(model_index, QListView.PositionAtCenter)
+    
+    def preload_surrounding_thumbnails(self, center_index, radius=5):
+        """중심 인덱스 주변의 썸네일 미리 로딩"""
+        self.model.preload_thumbnails(center_index, radius)
+
+    
+    def on_current_index_changed(self, index):
+        """모델의 현재 인덱스 변경 시 호출"""
+        # 필요시 추가 처리
+        pass
+    
+    def on_thumbnail_clicked(self, model_index):
+        """썸네일 클릭 시 호출"""
+        if model_index.isValid():
+            index = model_index.row()
+            self.thumbnailClicked.emit(index)
+    
+    def on_thumbnail_double_clicked(self, model_index):
+        """썸네일 더블클릭 시 호출"""
+        if model_index.isValid():
+            index = model_index.row()
+            self.thumbnailDoubleClicked.emit(index)
+    
+    def on_selection_changed(self, selected, deselected):
+        """선택 변경 시 호출"""
+        selection_model = self.list_view.selectionModel()
+        selected_indexes = selection_model.selectedIndexes()
+        selected_rows = [index.row() for index in selected_indexes]
+        self.selectionChanged.emit(selected_rows)
+    
+    def get_selected_indexes(self):
+        """현재 선택된 인덱스들 반환"""
+        selection_model = self.list_view.selectionModel()
+        selected_indexes = selection_model.selectedIndexes()
+        return [index.row() for index in selected_indexes]
+    
+    def clear_selection(self):
+        """선택 해제"""
+        self.list_view.clearSelection()
+    
+    
+    def update_ui_colors(self):
+        """테마 변경 시 UI 색상 업데이트"""
+        
+        self.list_view.setStyleSheet(f"""
+            QListView {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                border: none;
+                outline: none;
+            }}
+            QListView::item {{
+                border: none;
+                padding: 0px;
+            }}
+            QListView::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                background-color: rgba(255, 255, 255, 30);
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: {ThemeManager.get_color('bg_primary')};
+                width: 10px;
+                margin: 0px 0px 0px 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {ThemeManager.get_color('border')};
+                min-height: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {ThemeManager.get_color('accent_hover')};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                border: none;
+                background: none;
+                height: 0px;
+            }}
+            QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {{
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+    
+
+
 
 class FileListDialog(QDialog):
     """사진 목록과 미리보기를 보여주는 팝업 대화상자"""
@@ -3211,6 +3783,16 @@ class PhotoSortApp(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(0)  # 분할기 핸들 너비를 0픽셀로 설정
         self.main_layout.addWidget(self.splitter)
+
+        # === 썸네일 패널 생성 ===
+        self.thumbnail_panel = ThumbnailPanel(self)
+        self.thumbnail_panel.hide()  # 초기에는 숨김 (Grid Off 모드에서만 표시)
+
+        # 썸네일 패널 시그널 연결
+        self.thumbnail_panel.thumbnailClicked.connect(self.on_thumbnail_clicked)
+        self.thumbnail_panel.thumbnailDoubleClicked.connect(self.on_thumbnail_double_clicked)
+        self.thumbnail_panel.selectionChanged.connect(self.on_thumbnail_selection_changed)
+        self.thumbnail_panel.model.thumbnailRequested.connect(self.request_thumbnail_load)
         
         # 1. 스크롤 가능한 컨트롤 패널을 위한 QScrollArea 생성
         self.control_panel = QScrollArea() # 기존 self.control_panel을 QScrollArea로 변경
@@ -3561,14 +4143,19 @@ class PhotoSortApp(QMainWindow):
         # 세로 가운데 정렬을 위한 하단 Stretch
         self.control_layout.addStretch(1)
 
-        logging.info(f"__init__: 컨트롤 패널 오른쪽 배치 = {getattr(self, 'control_panel_on_right', False)}") # 초기 상태 확인용
+        logging.info(f"__init__: 컨트롤 패널 오른쪽 배치 = {getattr(self, 'control_panel_on_right', False)}")
 
-        if getattr(self, 'control_panel_on_right', False): # 로드된 값 확인 (없으면 False)
-            self.splitter.addWidget(self.image_panel)   # 인덱스 0
-            self.splitter.addWidget(self.control_panel) # 인덱스 1
+        # 초기에는 2패널 구조로 시작 (썸네일 패널은 숨김)
+        self.thumbnail_panel.hide()
+        
+        if getattr(self, 'control_panel_on_right', False):
+            # 우측 컨트롤 패널: [이미지] [컨트롤]
+            self.splitter.addWidget(self.image_panel)      # 인덱스 0
+            self.splitter.addWidget(self.control_panel)    # 인덱스 1
         else:
-            self.splitter.addWidget(self.control_panel) # 인덱스 0
-            self.splitter.addWidget(self.image_panel)   # 인덱스 1
+            # 좌측 컨트롤 패널: [컨트롤] [이미지]
+            self.splitter.addWidget(self.control_panel)    # 인덱스 0
+            self.splitter.addWidget(self.image_panel)      # 인덱스 1
         
         # 화면 크기가 변경되면 레이아웃 다시 조정
         QGuiApplication.instance().primaryScreen().geometryChanged.connect(self.adjust_layout)
@@ -3678,6 +4265,194 @@ class PhotoSortApp(QMainWindow):
         # === 드래그 앤 드랍 설정 끝 ===
 
         self.update_scrollbar_style()
+
+    def request_thumbnail_load(self, file_path, index):
+        """ThumbnailModel로부터 썸네일 로딩 요청을 받아 처리"""
+        if not self.resource_manager or not self.resource_manager._running:
+            return
+
+        thumbnail_size = UIScaleManager.get("thumbnail_image_size")
+
+        # --- [핵심 수정] future가 None이 아닌지 확인하는 방어 코드 추가 ---
+        future = self.resource_manager.submit_imaging_task_with_priority(
+            'low',
+            self._generate_thumbnail_task,
+            file_path,
+            thumbnail_size
+        )
+        
+        if future: # <<< future가 유효할 때만 콜백을 연결합니다.
+            future.add_done_callback(
+                lambda f, path=file_path: self._on_thumbnail_generated(f, path)
+            )
+        else:
+            logging.warning(f"썸네일 로딩 작업 제출 실패 (future is None): {Path(file_path).name}")
+
+    
+    def _on_thumbnail_generated(self, future, file_path):
+        """
+        [Main Thread] 썸네일 생성이 완료되면 호출되는 콜백.
+        """
+        try:
+            qimage = future.result()
+            if qimage and not qimage.isNull():
+                pixmap = QPixmap.fromImage(qimage)
+                # 생성된 썸네일을 모델에 전달하여 UI 업데이트
+                self.thumbnail_panel.model.set_thumbnail(file_path, pixmap)
+        except Exception as e:
+            logging.error(f"썸네일 결과 처리 중 오류 ({Path(file_path).name}): {e}")
+
+    def on_thumbnail_clicked(self, index):
+        """썸네일 클릭 시 해당 이미지로 이동"""
+        if 0 <= index < len(self.image_files):
+            self.current_image_index = index
+            
+            # Fit 모드인 경우 기존 캐시 무효화
+            if self.zoom_mode == "Fit":
+                self.last_fit_size = (0, 0)
+                self.fit_pixmap_cache.clear()
+            
+            # 이미지 표시
+            self.display_current_image()
+            
+            # 썸네일 패널 현재 인덱스 업데이트
+            self.thumbnail_panel.set_current_index(index)
+
+    def _generate_thumbnail_task(self, file_path, size):
+        """
+        [Worker Thread] QImageReader를 사용하여 썸네일용 QImage를 생성합니다.
+        스레드에 안전하며, 메인 스레드에서 QPixmap으로 변환됩니다.
+        """
+        try:
+            # RAW 파일의 경우 내장 미리보기 우선 사용
+            is_raw = Path(file_path).suffix.lower() in self.raw_extensions
+            if is_raw:
+                # ImageLoader의 미리보기 추출 기능을 재활용
+                preview_pixmap, _, _ = self.image_loader._load_raw_preview_with_orientation(file_path)
+                if preview_pixmap and not preview_pixmap.isNull():
+                    # 미리보기를 QImage로 변환하여 반환
+                    return preview_pixmap.toImage()
+
+            # 일반 이미지 또는 RAW 미리보기 실패 시 QImageReader 사용
+            reader = QImageReader(str(file_path))
+            if not reader.canRead():
+                logging.warning(f"썸네일 생성을 위해 파일을 읽을 수 없음: {file_path}")
+                
+                # HEIC/HEIF 파일인 경우 PIL로 대체 시도
+                if Path(file_path).suffix.lower() in ['.heic', '.heif']:
+                    try:
+                        from PIL import Image
+                        pil_image = Image.open(file_path)
+                        # 썸네일 크기로 리사이즈
+                        pil_image.thumbnail((size, size), Image.Resampling.LANCZOS)
+                        
+                        # PIL Image를 QImage로 변환
+                        if pil_image.mode != 'RGB':
+                            pil_image = pil_image.convert('RGB')
+                        
+                        width, height = pil_image.size
+                        rgb_data = pil_image.tobytes('raw', 'RGB')
+                        qimage = QImage(rgb_data, width, height, QImage.Format_RGB888)
+                        
+                        logging.info(f"PIL로 HEIC 썸네일 생성 성공: {file_path}")
+                        return qimage
+                    except Exception as e:
+                        logging.error(f"PIL로 HEIC 썸네일 생성 실패: {e}")
+                
+                return None
+            
+            # EXIF 방향 자동 변환 설정
+            reader.setAutoTransform(True)
+            
+            # 원본 크기에 맞춰 스케일링된 크기 계산
+            original_size = reader.size()
+            scaled_size = original_size.scaled(size, size, Qt.KeepAspectRatio)
+            reader.setScaledSize(scaled_size)
+            
+            # QImage 읽기
+            qimage = reader.read()
+            if qimage.isNull():
+                logging.error(f"QImageReader로 썸네일 읽기 실패: {file_path}")
+                
+                # HEIC/HEIF 파일인 경우 PIL로 대체 시도
+                if Path(file_path).suffix.lower() in ['.heic', '.heif']:
+                    try:
+                        from PIL import Image
+                        pil_image = Image.open(file_path)
+                        # 썸네일 크기로 리사이즈
+                        pil_image.thumbnail((size, size), Image.Resampling.LANCZOS)
+                        
+                        # PIL Image를 QImage로 변환
+                        if pil_image.mode != 'RGB':
+                            pil_image = pil_image.convert('RGB')
+                        
+                        width, height = pil_image.size
+                        rgb_data = pil_image.tobytes('raw', 'RGB')
+                        qimage = QImage(rgb_data, width, height, QImage.Format_RGB888)
+                        
+                        logging.info(f"PIL로 HEIC 썸네일 생성 성공 (QImageReader 실패 후): {file_path}")
+                        return qimage
+                    except Exception as e:
+                        logging.error(f"PIL로 HEIC 썸네일 생성 실패 (QImageReader 실패 후): {e}")
+                
+                return None
+            
+            return qimage
+
+        except Exception as e:
+            logging.error(f"썸네일 생성 작업 중 오류 ({Path(file_path).name}): {e}")
+            return None
+
+
+    def on_thumbnail_double_clicked(self, index):
+        """썸네일 더블클릭 시 처리 (단일 클릭과 동일하게 처리)"""
+        self.on_thumbnail_clicked(index)
+
+    def on_thumbnail_selection_changed(self, selected_indices):
+        """썸네일 다중 선택 변경 시 처리"""
+        if selected_indices:
+            # 첫 번째 선택된 이미지로 이동
+            self.on_thumbnail_clicked(selected_indices[0])
+
+    def toggle_thumbnail_panel(self):
+        """썸네일 패널 표시/숨김 토글 (Grid Off 모드에서만)"""
+        if self.grid_mode == "Off":
+            if self.thumbnail_panel.isVisible():
+                self.thumbnail_panel.hide()
+            else:
+                self.thumbnail_panel.show()
+                # 썸네일 패널이 표시될 때 현재 이미지 파일 목록 설정
+                self.thumbnail_panel.set_image_files(self.image_files)
+                if self.current_image_index >= 0:
+                    self.thumbnail_panel.set_current_index(self.current_image_index)
+            
+            # 레이아웃 재조정
+            self.adjust_layout()
+
+    def update_thumbnail_panel_visibility(self):
+        """Grid 모드에 따른 썸네일 패널 표시 상태 업데이트"""
+        thumbnail_should_be_visible = (self.grid_mode == "Off")
+        
+        # 현재 상태와 목표 상태가 다를 때만 위젯 구성 변경
+        if self.thumbnail_panel.isVisible() != thumbnail_should_be_visible:
+            if thumbnail_should_be_visible:
+                self.thumbnail_panel.show()
+                self.thumbnail_panel.set_image_files(self.image_files)
+                if self.current_image_index >= 0:
+                    self.thumbnail_panel.set_current_index(self.current_image_index)
+            else:
+                self.thumbnail_panel.hide()
+                
+            # 위젯 구성 변경이 필요하므로 재구성 함수 호출
+            self._reorganize_splitter_widgets(thumbnail_should_be_visible, self.control_panel_on_right)
+
+            self.adjust_layout()
+        
+    def update_thumbnail_current_index(self):
+        """현재 이미지 인덱스가 변경될 때 썸네일 패널 업데이트"""
+        if self.thumbnail_panel.isVisible() and self.current_image_index >= 0:
+            self.thumbnail_panel.set_current_index(self.current_image_index)
+
 
     def set_window_icon(self):
         """크로스 플랫폼 윈도우 아이콘을 설정합니다."""
@@ -5866,7 +6641,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font())
         font.setPointSize(UIScaleManager.get("font_size"))
         language_title.setFont(font)
-        language_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        language_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         language_title.setObjectName("language_title_label")
         
         # 라디오 버튼 컨테이너
@@ -5949,7 +6724,7 @@ class PhotoSortApp(QMainWindow):
         font = QFont(self.font()) # 현재 적용된 폰트 가져오기
         font.setPointSize(UIScaleManager.get("font_size")) # 명시적으로 설정
         panel_pos_title.setFont(font)
-        panel_pos_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
+        panel_pos_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
         panel_pos_title.setObjectName("panel_pos_title_label")
 
         # 라디오 버튼 컨테이너
@@ -6028,7 +6803,7 @@ class PhotoSortApp(QMainWindow):
         date_format_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         date_format_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         date_format_title.setFont(font)
-        date_format_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        date_format_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         date_format_title.setObjectName("date_format_title_label")
         
         self.date_format_combo = QComboBox()
@@ -6059,7 +6834,7 @@ class PhotoSortApp(QMainWindow):
         theme_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         theme_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         theme_title.setFont(font)
-        theme_title.setMinimumWidth(250) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
+        theme_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
         theme_title.setObjectName("theme_title_label")
         
         self.theme_combo = QComboBox()
@@ -6090,7 +6865,7 @@ class PhotoSortApp(QMainWindow):
             ext_title = QLabel(LanguageManager.translate("불러올 이미지 형식")) # 새 번역 키
             ext_title.setObjectName("ext_title_label")  # objectName 지정
             ext_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-            ext_title.setMinimumWidth(250) 
+            ext_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) 
 
             # 체크박스 6개를 가로로 나란히 배치 (QHBoxLayout 사용)
             self.ext_checkboxes = {} # 체크박스 위젯들을 저장할 딕셔너리
@@ -6152,7 +6927,7 @@ class PhotoSortApp(QMainWindow):
             folder_count_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
             folder_count_title.setFont(font)
-            folder_count_title.setMinimumWidth(250)
+            folder_count_title.setMinimumWidth(UIScaleManager.get("settings_label_width"))
             folder_count_title.setObjectName("folder_count_title_label")
 
             self.folder_count_combo = QComboBox()
@@ -6186,7 +6961,7 @@ class PhotoSortApp(QMainWindow):
             viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
             viewport_speed_label.setFont(font)
-            viewport_speed_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤
+            viewport_speed_label.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 다른 라벨들과 너비 맞춤
             viewport_speed_label.setObjectName("viewport_speed_label")
 
             self.viewport_speed_combo = QComboBox()
@@ -6224,7 +6999,7 @@ class PhotoSortApp(QMainWindow):
             font = QFont(self.font())
             font.setPointSize(UIScaleManager.get("font_size"))
             mouse_wheel_label.setFont(font)
-            mouse_wheel_label.setMinimumWidth(250)
+            mouse_wheel_label.setMinimumWidth(UIScaleManager.get("settings_label_width"))
             mouse_wheel_label.setObjectName("mouse_wheel_label")
 
             # 라디오 버튼 컨테이너
@@ -6319,7 +7094,7 @@ class PhotoSortApp(QMainWindow):
             font = QFont(self.font())
             font.setPointSize(UIScaleManager.get("font_size"))
             raw_reset_label.setFont(font)
-            raw_reset_label.setMinimumWidth(250) # 다른 라벨들과 너비 맞춤 (선택 사항)
+            raw_reset_label.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 다른 라벨들과 너비 맞춤 (선택 사항)
             raw_reset_label.setObjectName("raw_reset_label")
 
             self.reset_camera_settings_button = QPushButton(LanguageManager.translate("초기화")) # 새 번역 키
@@ -7348,51 +8123,146 @@ class PhotoSortApp(QMainWindow):
                 logging.error(f"제목 표시줄 다크 테마 적용 실패: {e}")
     
     def adjust_layout(self):
-        """이미지 영역이 3:2 비율을 유지하면서 최대 크기를 갖도록 레이아웃 조정"""
-        # 현재 창의 크기
+        """(비율 기반) 이미지 영역 3:2 비율 유지 및 좌우 패널 크기 동적 조절"""
         window_width = self.width()
         window_height = self.height()
         
-        # 3:2 비율로 이미지 영역의 최대 크기 계산
-        if window_width / window_height > 3/2:
-            # 창이 더 넓은 경우: 높이 기준으로 너비 계산
-            image_height = window_height
-            image_width = int(image_height * 3/2)
-        else:
-            # 창이 더 좁은 경우: 너비 기준으로 높이 계산
-            image_width = window_width
-            image_height = int(image_width * 2/3)
+        # 썸네일 패널의 현재 가시성 상태를 직접 확인
+        thumbnail_visible = self.thumbnail_panel.isVisible()
         
-        # 컨트롤 패널의 너비 계산
-        control_width = window_width - image_width
+        # 스플리터 위젯 재구성은 필요할 때만 호출 (예: on_grid_changed, _apply_panel_position)
+        # 여기서 직접 호출하지 않음
+        
+        # 1. 패널들의 최소 너비와 비율 정의
+        control_min_width = UIScaleManager.get("control_panel_min_width")
+        thumbnail_min_width = UIScaleManager.get("thumbnail_panel_min_width")
+        
+        control_ratio = 319.0  # 부동소수점 계산을 위해 .0 추가
+        thumbnail_ratio = 240.0
+        
+        # 2. 캔버스 크기 우선 결정
+        side_panels_min_width = control_min_width + (thumbnail_min_width if thumbnail_visible else 0)
+        available_for_canvas_width = window_width - side_panels_min_width
+        
+        canvas_ideal_width = window_height * 1.5
+        canvas_width = max(100, min(canvas_ideal_width, available_for_canvas_width))
 
-        # 컨트롤 패널 최소 너비 보장 (319px)
-        min_control_width = 319
-        if control_width < min_control_width:
-            control_width = min_control_width
-            image_width = window_width - control_width
+        # 3. 남은 공간을 컨트롤/썸네일 패널에 비율대로 배분
+        remaining_width = window_width - canvas_width
         
+        sizes = []
+        if thumbnail_visible:
+            total_ratio = control_ratio + thumbnail_ratio
+            control_width = remaining_width * (control_ratio / total_ratio)
+            thumbnail_width = remaining_width * (thumbnail_ratio / total_ratio)
+            
+            if control_width < control_min_width:
+                control_width = control_min_width
+                thumbnail_width = remaining_width - control_width
+            elif thumbnail_width < thumbnail_min_width:
+                thumbnail_width = thumbnail_min_width
+                control_width = remaining_width - thumbnail_width
+            
+            sizes = [int(control_width), int(canvas_width), int(thumbnail_width)]
+        else:
+            control_width = remaining_width
+            sizes = [int(control_width), int(canvas_width)]
+
+        # 컨트롤 패널 위치에 따라 순서 조정
         control_on_right = getattr(self, 'control_panel_on_right', False)
-        
-        if control_width > 0:
-            if control_on_right:
-                self.splitter.setSizes([image_width, control_width]) # 우측 배치 시 순서 변경
-            else:
-                self.splitter.setSizes([control_width, image_width]) # 좌측 배치 시 기존 순서
-        else:
-            # Fallback 처리도 순서 고려
-            fallback_control_width = 200
-            fallback_image_width = self.width() - fallback_control_width
-            if fallback_image_width < 0: fallback_image_width = 0
+        if control_on_right:
+            # 3단: [썸네일, 이미지, 컨트롤] -> [컨트롤, 이미지, 썸네일]
+            # 2단: [이미지, 컨트롤] -> [컨트롤, 이미지]
+            sizes.reverse()
 
-            if control_on_right:
-                self.splitter.setSizes([fallback_image_width, fallback_control_width])
-            else:
-                self.splitter.setSizes([fallback_control_width, fallback_image_width])
+        # 4. 스플리터에 최종 크기 적용
+        # 스플리터의 위젯 수와 sizes 리스트의 길이가 맞는지 확인
+        if self.splitter.count() == len(sizes):
+            self.splitter.setSizes(sizes)
+        else:
+            # 위젯 수가 맞지 않으면 재구성 후 다시 adjust_layout 호출
+            logging.warning("스플리터 위젯 수와 크기 목록 불일치. 재구성합니다.")
+            self._reorganize_splitter_widgets(thumbnail_visible, control_on_right)
+            # 재구성 후에는 QTimer를 통해 adjust_layout을 다시 호출하여 안정성 확보
+            QTimer.singleShot(0, self.adjust_layout)
+            return # 현재 adjust_layout 실행은 중단
         
         # 이미지가 로드된 경우 이미지 크기도 조정
-        if hasattr(self, 'current_image_index') and self.current_image_index >= 0:
-            self.display_current_image()
+        if hasattr(self, 'current_image_index') and self.current_image_index >= 0 and self.grid_mode == "Off":
+            self.apply_zoom_to_image()
+
+
+    def _need_splitter_reorganization(self):
+        """스플리터 재구성이 필요한지 확인"""
+        try:
+            # 위젯 순서가 올바른지 확인
+            control_on_right = getattr(self, 'control_panel_on_right', False)
+            thumbnail_visible = (self.grid_mode == "Off")
+            
+            if self.splitter.count() == 3 and thumbnail_visible:
+                # 3패널일 때 순서 확인
+                if control_on_right:
+                    # 예상 순서: [썸네일] [이미지] [컨트롤]
+                    return (self.splitter.widget(0) != self.thumbnail_panel or
+                            self.splitter.widget(1) != self.image_panel or
+                            self.splitter.widget(2) != self.control_panel)
+                else:
+                    # 예상 순서: [컨트롤] [이미지] [썸네일]
+                    return (self.splitter.widget(0) != self.control_panel or
+                            self.splitter.widget(1) != self.image_panel or
+                            self.splitter.widget(2) != self.thumbnail_panel)
+            elif self.splitter.count() == 2 and not thumbnail_visible:
+                # 2패널일 때 순서 확인
+                if control_on_right:
+                    # 예상 순서: [이미지] [컨트롤]
+                    return (self.splitter.widget(0) != self.image_panel or
+                            self.splitter.widget(1) != self.control_panel)
+                else:
+                    # 예상 순서: [컨트롤] [이미지]
+                    return (self.splitter.widget(0) != self.control_panel or
+                            self.splitter.widget(1) != self.image_panel)
+            
+            return True  # 패널 수가 맞지 않으면 재구성 필요
+        except:
+            return True  # 오류 발생 시 재구성
+
+    def _reorganize_splitter_widgets(self, thumbnail_visible, control_on_right):
+        """스플리터 위젯 재구성"""
+        # 모든 위젯을 스플리터에서 제거
+        while self.splitter.count() > 0:
+            widget = self.splitter.widget(0)
+            if widget:
+                widget.setParent(None)
+        
+        # 썸네일 패널 표시/숨김 설정
+        if thumbnail_visible:
+            self.thumbnail_panel.show()
+        else:
+            self.thumbnail_panel.hide()
+        
+        # 위젯을 올바른 순서로 다시 추가
+        if thumbnail_visible:
+            # 3패널 구조
+            if control_on_right:
+                # [썸네일] [이미지] [컨트롤]
+                self.splitter.addWidget(self.thumbnail_panel)
+                self.splitter.addWidget(self.image_panel)
+                self.splitter.addWidget(self.control_panel)
+            else:
+                # [컨트롤] [이미지] [썸네일]
+                self.splitter.addWidget(self.control_panel)
+                self.splitter.addWidget(self.image_panel)
+                self.splitter.addWidget(self.thumbnail_panel)
+        else:
+            # 2패널 구조
+            if control_on_right:
+                # [이미지] [컨트롤]
+                self.splitter.addWidget(self.image_panel)
+                self.splitter.addWidget(self.control_panel)
+            else:
+                # [컨트롤] [이미지]
+                self.splitter.addWidget(self.control_panel)
+                self.splitter.addWidget(self.image_panel)
     
     def resizeEvent(self, event):
         """창 크기 변경 이벤트 처리"""
@@ -7524,11 +8394,19 @@ class PhotoSortApp(QMainWindow):
         self.update_match_raw_button_state() # <--- RAW 버튼 상태 업데이트 ("JPG - RAW 연결"로)
         self.update_raw_folder_ui_state() # <--- RAW 토글 상태 업데이트
 
-        # --- Grid Off 상태이면 백그라운드 썸네일 생성 시작 ---
+        # Grid Off 상태이면 백그라운드 썸네일 생성 시작
         if self.grid_mode == "Off":
             self.start_background_thumbnail_preloading()
 
-        return True # 파일 로드 성공 반환
+        # 이미지 로드 성공 시 썸네일 패널에 이미지 파일 목록 설정
+        self.thumbnail_panel.set_image_files(self.image_files)
+        # Grid Off 모드에서 썸네일 패널 표시 및 현재 인덱스 설정
+        self.update_thumbnail_panel_visibility()
+        if self.current_image_index >= 0:
+            self.thumbnail_panel.set_current_index(self.current_image_index)
+
+        return True  # 파일 로드 성공 반환
+
     
     def force_grid_refresh(self):
         """그리드 뷰를 강제로 리프레시"""
@@ -9095,11 +9973,13 @@ class PhotoSortApp(QMainWindow):
 
     def show_previous_image(self):
         if not self.image_files: return
-        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
-        # ... (인덱스 변경 로직) ...
+        self._prepare_for_photo_change()
         if self.current_image_index <= 0: self.current_image_index = len(self.image_files) - 1
         else: self.current_image_index -= 1
-        self.force_refresh = True; self.display_current_image()
+        self.force_refresh = True
+        self.display_current_image()
+        # 썸네일 패널 동기화 추가
+        self.update_thumbnail_current_index()
     
     def set_current_image_from_dialog(self, index):
         if not (0 <= index < len(self.image_files)): return
@@ -9117,11 +9997,13 @@ class PhotoSortApp(QMainWindow):
 
     def show_next_image(self):
         if not self.image_files: return
-        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
-        # ... (인덱스 변경 로직) ...
+        self._prepare_for_photo_change()
         if self.current_image_index >= len(self.image_files) - 1: self.current_image_index = 0
         else: self.current_image_index += 1
-        self.force_refresh = True; self.display_current_image()
+        self.force_refresh = True
+        self.display_current_image()
+        # 썸네일 패널 동기화 추가
+        self.update_thumbnail_current_index()
     
     def move_current_image_to_folder(self, folder_index):
         """현재 이미지를 지정된 폴더로 이동 (Grid Off 모드 전용)"""
@@ -9339,7 +10221,7 @@ class PhotoSortApp(QMainWindow):
         self.zoom_spin.setValue(int(self.zoom_spin_value * 100)) # 2.0 -> 200
         self.zoom_spin.setSuffix("%")
         self.zoom_spin.setSingleStep(10)
-        self.zoom_spin.setFixedWidth(85)
+        self.zoom_spin.setFixedWidth(UIScaleManager.get("zoom_spinbox_width"))
         self.zoom_spin.lineEdit().setReadOnly(True)
         self.zoom_spin.setContextMenuPolicy(Qt.NoContextMenu)
         self.zoom_spin.valueChanged.connect(self.on_zoom_spinbox_value_changed)
@@ -9461,6 +10343,7 @@ class PhotoSortApp(QMainWindow):
         new_zoom_mode = ""
         if button == self.fit_radio:
             new_zoom_mode = "Fit"
+            self.update_thumbnail_panel_visibility()
         elif button == self.zoom_100_radio:
             new_zoom_mode = "100%"
         elif button == self.zoom_spin_btn:
@@ -10087,6 +10970,9 @@ class PhotoSortApp(QMainWindow):
             logging.debug(f"Grid mode changed: {previous_grid_mode} -> {new_grid_mode}")
             self.clear_grid_selection()
             self.grid_mode = new_grid_mode
+
+            # === 썸네일 패널 표시 상태 업데이트 추가 ===
+            self.update_thumbnail_panel_visibility()
 
             if new_grid_mode == "Off":
                 # Grid On -> Off 로 변경된 경우
@@ -11045,6 +11931,10 @@ class PhotoSortApp(QMainWindow):
                     # Grid Off 모드로 변경 및 이미지 표시
                     # update_grid_view()가 내부적으로 display_current_image() 호출
                     self.update_grid_view()
+
+                    # 썸네일 패널 동기화 추가
+                    self.update_thumbnail_current_index()
+
                     
                     # 이미지 로더의 캐시 확인하여 이미 메모리에 있으면 즉시 적용을 시도
                     # (display_current_image 내에서 이미 처리될 수 있지만, 명시적으로도 가능)
@@ -11289,7 +12179,7 @@ class PhotoSortApp(QMainWindow):
 
         # 정보 레이블들을 담을 하나의 컨테이너
         info_container = QWidget()
-        info_container.setFixedWidth(300)  # 고정 너비 설정으로 가운데 정렬 효과
+        info_container.setFixedWidth(UIScaleManager.get("info_container_width"))  # 고정 너비 설정으로 가운데 정렬 효과
         info_layout = QVBoxLayout(info_container)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
@@ -11713,6 +12603,9 @@ class PhotoSortApp(QMainWindow):
             self.original_pixmap = None
             self.update_counters()
             self.state_save_timer.stop() # 오류 시 타이머 중지
+
+        # 썸네일 패널 업데이트 (함수 끝 부분에 추가)
+        self.update_thumbnail_current_index()
 
 
     def show_loading_indicator(self):
@@ -14139,7 +15032,6 @@ class PhotoSortApp(QMainWindow):
         """현재 self.control_panel_on_right 상태에 따라 패널 위치 및 크기 적용"""
         print(f"_apply_panel_position 호출됨: 오른쪽 배치 = {self.control_panel_on_right}")
 
-        # 0. 유효성 검사 (splitter가 준비되었는지)
         if not hasattr(self, 'splitter') or not self.splitter:
             logging.warning("Warning: Splitter가 아직 준비되지 않았습니다.")
             return
@@ -14148,55 +15040,21 @@ class PhotoSortApp(QMainWindow):
             return
 
         try:
-            # 현재 스플리터 크기 저장 (선택 사항)
-            # current_sizes = self.splitter.sizes()
-
-            # 위젯 참조 저장
-            control_panel_ref = self.control_panel
-            image_panel_ref = self.image_panel
-
-            # 스플리터 비우기 (위젯을 삭제하지 않음)
-            # count() 만큼 반복하며 widget(0)을 가져와 setParent(None) 호출
-            # count가 0이 될 때까지 반복
-            while self.splitter.count() > 0:
-                widget = self.splitter.widget(0)
-                if widget:
-                    widget.setParent(None) # splitter에서 분리만 함
-                else:
-                    # 예외 처리: 혹시 모를 None 위젯 방지
-                    break
-
-            # 2. 새로운 순서로 위젯 다시 추가
-            if self.control_panel_on_right:
-                self.splitter.addWidget(image_panel_ref)
-                self.splitter.addWidget(control_panel_ref)
-                print("  -> 스플리터에 위젯 추가: 이미지, 컨트롤 순")
-            else:
-                self.splitter.addWidget(control_panel_ref)
-                self.splitter.addWidget(image_panel_ref)
-                print("  -> 스플리터에 위젯 추가: 컨트롤, 이미지 순")
-
-            # 3. 레이아웃 크기 재조정 (adjust_layout 호출)
-            #    adjust_layout은 내부적으로 self.control_panel_on_right를 확인하여 올바른 setSizes를 호출함
+            # 현재 썸네일 패널 표시 상태 확인
+            thumbnail_visible = (self.grid_mode == "Off")
+            
+            # 스플리터 재구성
+            self._reorganize_splitter_widgets(thumbnail_visible, self.control_panel_on_right)
+            
+            # 레이아웃 크기 재조정
             print("  -> adjust_layout 호출")
             self.adjust_layout()
-
-            # (선택 사항) 저장된 크기 복원 시도 - 하지만 adjust_layout이 우선될 수 있음
-            # if 'current_sizes' in locals() and len(current_sizes) == 2:
-            #    if self.control_panel_on_right and current_sizes[0] != 0 and current_sizes[1] != 0:
-            #        # 순서 바꿔서 복원 시도
-            #        try: self.splitter.setSizes([current_sizes[1], current_sizes[0]])
-            #        except Exception: pass # 실패해도 adjust_layout 결과 사용
-            #    elif not self.control_panel_on_right and current_sizes[0] != 0 and current_sizes[1] != 0:
-            #        try: self.splitter.setSizes(current_sizes)
-            #        except Exception: pass
 
             print("_apply_panel_position 완료")
 
         except Exception as e:
-            logging.error(f"Error applying panel position: {e}")
-            import traceback
-            traceback.print_exc() # 상세 오류 출력
+            logging.error(f"_apply_panel_position 오류: {e}")
+            print(f"ERROR in _apply_panel_position: {e}")
 
 def main():
     # PyInstaller로 패키징된 실행 파일을 위한 멀티프로세싱 지원 추가
@@ -14336,6 +15194,7 @@ def main():
             "(Note: The original image resolution for {model_name_placeholder} is <b>{orig_res_placeholder}</b>.)",
         "저장된 RAW 처리 방식": "Saved RAW Processing Methods",
         "초기화": "Reset",
+        "썸네일": "Thumbnails",
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
         "초기화 완료": "Reset Complete",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
