@@ -31,7 +31,7 @@ import pillow_heif
 # PySide6 - Qt framework imports
 from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
                            QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
-                           QMimeData, QAbstractListModel, QModelIndex, QSize)
+                           QMimeData, QAbstractListModel, QModelIndex, QSize, QSharedMemory)
 
 from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
                           QImage, QImageReader, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
@@ -15237,6 +15237,12 @@ def main():
     }
     
     LanguageManager.initialize_translations(translations)
+
+    # 하나만 실행되도록 단일 인스턴스 체크 (모든 플랫폼에서 동작)
+    shared_memory = QSharedMemory("PhotoSortApp_SingleInstance")
+    if not shared_memory.create(1):
+        print("PhotoSort가 이미 실행 중입니다.")
+        sys.exit(1)
 
     app = QApplication(sys.argv)
 
