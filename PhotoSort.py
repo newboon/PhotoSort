@@ -121,6 +121,16 @@ class UIScaleManager:
         "combobox_padding": 4,
         "settings_label_width": 250,               # 설정 창 라벨 최소 너비
         "control_panel_min_width": 280,            # 컨트롤 패널 최소 너비
+        # 라디오 버튼 스타일 관련 키
+        "radiobutton_size": 14,
+        "radiobutton_border": 2,
+        "radiobutton_border_radius": 8,
+        "radiobutton_padding": 0,
+        # 체크박스 스타일 관련 키
+        "checkbox_size": 12,
+        "checkbox_border": 2,
+        "checkbox_border_radius": 2,
+        "checkbox_padding": 0,
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
         "settings_popup_height": 1240,
@@ -154,7 +164,7 @@ class UIScaleManager:
         "section_spacing": 12,                     # 구분선(HorizontalLine) 주변 간격
         "group_box_spacing": 10,                   # 라디오 버튼 등 그룹 내 간격
         "title_spacing": 7,                        # Zoom, Grid 등 섹션 제목 아래 간격
-        "settings_button_size": 30,                # 설정(톱니바퀴) 버튼 크기
+        "settings_button_size": 25,                # 설정(톱니바퀴) 버튼 크기
         "filename_label_padding": 25,              # 파일명 레이블 상하 패딩
         "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
         "font_size": 9,                            # 기본 폰트 크기
@@ -168,6 +178,16 @@ class UIScaleManager:
         "combobox_padding": 3,
         "settings_label_width": 180,               # 설정 창 라벨 최소 너비 (컴팩트 모드에서는 더 작게)
         "control_panel_min_width": 220,            # 컨트롤 패널 최소 너비 (컴팩트 모드에서는 더 작게)
+        # 라디오 버튼 스타일 관련 키
+        "radiobutton_size": 9,
+        "radiobutton_border": 2,
+        "radiobutton_border_radius": 6,
+        "radiobutton_padding": 0,
+        # 체크박스 스타일 관련 키
+        "checkbox_size": 8,
+        "checkbox_border": 2,
+        "checkbox_border_radius": 1,
+        "checkbox_padding": 0,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
         "settings_popup_height": 940,
@@ -4035,27 +4055,27 @@ class PhotoSortApp(QMainWindow):
         self.raw_toggle_button.setStyleSheet(f"""
             QCheckBox {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("checkbox_padding")}px;
             }}
             QCheckBox:disabled {{
                 color: {ThemeManager.get_color('text_disabled')};
             }}
             QCheckBox::indicator {{
-                width: 11px;
-                height: 11px;
+                width: {UIScaleManager.get("checkbox_size")}px;
+                height: {UIScaleManager.get("checkbox_size")}px;
             }}
             QCheckBox::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """)
         
@@ -4849,8 +4869,9 @@ class PhotoSortApp(QMainWindow):
                 temp_raw_file_list.extend(target_path.glob(f'*{ext}'))
                 temp_raw_file_list.extend(target_path.glob(f'*{ext.upper()}')) # 대문자 확장자도 고려
 
-            # 중복 제거 및 정렬
-            unique_raw_files = sorted(list(set(temp_raw_file_list)))
+            # 중복 제거 및 촬영 시간 기준 정렬
+            unique_raw_files = list(set(temp_raw_file_list))
+            unique_raw_files = sorted(unique_raw_files, key=lambda x: self.get_datetime_from_file_fast(x))
 
             if not unique_raw_files:
                 self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 RAW 파일이 없습니다."))
@@ -5279,24 +5300,24 @@ class PhotoSortApp(QMainWindow):
             radio_style = f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text')};
-                    padding: 5px 0px;
+                    padding: {UIScaleManager.get("radiobutton_padding")}px;
                 }}
                 QRadioButton::indicator {{
-                    width: 14px;
-                    height: 14px;
+                    width: {UIScaleManager.get("radiobutton_size")}px;
+                    height: {UIScaleManager.get("radiobutton_size")}px;
                 }}
                 QRadioButton::indicator:checked {{
                     background-color: {ThemeManager.get_color('accent')};
-                    border: 2px solid {ThemeManager.get_color('accent')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked {{
                     background-color: {ThemeManager.get_color('bg_primary')};
-                    border: 2px solid {ThemeManager.get_color('border')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked:hover {{
-                    border: 2px solid {ThemeManager.get_color('text_disabled')};
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
                 }}
             """
             
@@ -6674,24 +6695,24 @@ class PhotoSortApp(QMainWindow):
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
             }}
             QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
             }}
             QRadioButton::indicator:checked {{
                 background-color: #848484;
-                border: 2px solid #848484;
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         self.english_radio.setStyleSheet(radio_style)
@@ -6756,24 +6777,24 @@ class PhotoSortApp(QMainWindow):
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
             }}
             QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
             }}
             QRadioButton::indicator:checked {{
                 background-color: #848484;
-                border: 2px solid #848484;
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         self.panel_pos_left_radio.setStyleSheet(radio_style)
@@ -6882,11 +6903,11 @@ class PhotoSortApp(QMainWindow):
             
             # 체크박스 스타일
             checkbox_style = f"""
-                QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 2px; }}
-                QCheckBox::indicator {{ width: 11px; height: 11px; }}
-                QCheckBox::indicator:checked {{ background-color: #848484; border: 2px solid #848484; border-radius: 1px; }}
-                QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 1px; }}
-                QCheckBox::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+                QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("checkbox_padding")}px; }}
+                QCheckBox::indicator {{ width: {UIScaleManager.get("checkbox_size")}px; height: {UIScaleManager.get("checkbox_size")}px; }}
+                QCheckBox::indicator:checked {{ background-color: #848484; border: {UIScaleManager.get("checkbox_border")}px solid #848484; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+                QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+                QCheckBox::indicator:unchecked:hover {{ border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
             """
 
             # 한 줄에 ext_title + 체크박스 6개 가로 배치
@@ -7016,21 +7037,21 @@ class PhotoSortApp(QMainWindow):
             self.mouse_wheel_photo_radio.setStyleSheet(f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text')};
-                    padding: 2px;
+                    padding: {UIScaleManager.get("radiobutton_padding")}px;
                 }}
                 QRadioButton::indicator {{
-                    width: 14px;
-                    height: 14px;
+                    width: {UIScaleManager.get("radiobutton_size")}px;
+                    height: {UIScaleManager.get("radiobutton_size")}px;
                 }}
                 QRadioButton::indicator:checked {{
                     background-color: #848484;
-                    border: 2px solid #848484;
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked {{
                     background-color: {ThemeManager.get_color('bg_primary')};
-                    border: 2px solid {ThemeManager.get_color('border')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
             """)
 
@@ -7039,21 +7060,21 @@ class PhotoSortApp(QMainWindow):
             self.mouse_wheel_none_radio.setStyleSheet(f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text')};
-                    padding: 2px;
+                    padding: {UIScaleManager.get("radiobutton_padding")}px;
                 }}
                 QRadioButton::indicator {{
-                    width: 14px;
-                    height: 14px;
+                    width: {UIScaleManager.get("radiobutton_size")}px;
+                    height: {UIScaleManager.get("radiobutton_size")}px;
                 }}
                 QRadioButton::indicator:checked {{
                     background-color: #848484;
-                    border: 2px solid #848484;
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked {{
                     background-color: {ThemeManager.get_color('bg_primary')};
-                    border: 2px solid {ThemeManager.get_color('border')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
             """)
 
@@ -7321,24 +7342,24 @@ class PhotoSortApp(QMainWindow):
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
             }}
             QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
             }}
             QRadioButton::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         
@@ -7396,31 +7417,31 @@ class PhotoSortApp(QMainWindow):
         checkbox_style = f"""
             QCheckBox {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("checkbox_padding")}px;
             }}
             QCheckBox:disabled {{
                 color: {ThemeManager.get_color('text_disabled')};
             }}
             QCheckBox::indicator {{
-                width: 11px;
-                height: 11px;
+                width: {UIScaleManager.get("checkbox_size")}px;
+                height: {UIScaleManager.get("checkbox_size")}px;
             }}
             QCheckBox::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
             QCheckBox::indicator:disabled {{
                 background-color: {ThemeManager.get_color('bg_disabled')};
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         
@@ -8309,6 +8330,50 @@ class PhotoSortApp(QMainWindow):
         else: # JPG가 로드되지 않은 상태 -> RAW 단독 로드 로직
             self.load_raw_only_folder()
 
+
+    def get_datetime_from_file_fast(self, file_path):
+        """파일에서 촬영 시간을 빠르게 추출 (캐시 우선 사용)"""
+        file_key = str(file_path)
+        
+        # 1. 캐시에서 먼저 확인
+        if file_key in self.exif_cache:
+            cached_data = self.exif_cache[file_key]
+            if 'exif_datetime' in cached_data:
+                cached_value = cached_data['exif_datetime']
+                # 캐시된 값이 문자열이면 datetime 객체로 변환
+                if isinstance(cached_value, str):
+                    try:
+                        return datetime.strptime(cached_value, '%Y:%m:%d %H:%M:%S')
+                    except:
+                        pass
+                elif isinstance(cached_value, datetime):
+                    return cached_value
+        
+        # 2. RAW 파일의 경우 rawpy로 빠른 메타데이터 추출
+        if file_path.suffix.lower() in self.raw_extensions:
+            try:
+                import rawpy
+                with rawpy.imread(str(file_path)) as raw:
+                    # rawpy는 exiftool보다 훨씬 빠름
+                    if hasattr(raw, 'metadata') and 'DateTimeOriginal' in raw.metadata:
+                        datetime_str = raw.metadata['DateTimeOriginal']
+                        return datetime.strptime(datetime_str, '%Y:%m:%d %H:%M:%S')
+            except:
+                pass
+        
+        # 3. JPG/HEIC의 경우 piexif 사용 (이미 구현됨)
+        try:
+            import piexif
+            exif_data = piexif.load(str(file_path))
+            if piexif.ExifIFD.DateTimeOriginal in exif_data['Exif']:
+                datetime_str = exif_data['Exif'][piexif.ExifIFD.DateTimeOriginal].decode()
+                return datetime.strptime(datetime_str, '%Y:%m:%d %H:%M:%S')
+        except:
+            pass
+        
+        # 4. 마지막 수단: 파일 수정 시간
+        return datetime.fromtimestamp(file_path.stat().st_mtime)
+
     def load_images_from_folder(self, folder_path):
         """폴더에서 JPG 이미지 파일 목록 로드 및 유효성 검사"""
         if not folder_path:
@@ -8355,7 +8420,7 @@ class PhotoSortApp(QMainWindow):
         # --- 검사 끝 ---
 
         # 파일이 있으면 내부 목록 업데이트 및 정렬
-        self.image_files = sorted(temp_image_files)
+        self.image_files = sorted(temp_image_files, key=self.get_datetime_from_file_fast)
         self.is_raw_only_mode = False # <--- JPG 로드 성공 시 RAW 전용 모드 해제
 
         # 그리드 상태 초기화
@@ -9289,18 +9354,18 @@ class PhotoSortApp(QMainWindow):
         
         # 체크박스 스타일은 PhotoSortApp의 것을 재사용하거나 여기서 정의
         checkbox_style = f"""
-            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 2px; }}
-            QCheckBox::indicator {{ width: 11px; height: 11px; }}
-            QCheckBox::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: 2px solid {ThemeManager.get_color('accent')}; border-radius: 1px; }}
-            QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 1px; }}
-            QCheckBox::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("checkbox_padding")}px; }}
+            QCheckBox::indicator {{ width: {UIScaleManager.get("checkbox_size")}px; height: {UIScaleManager.get("checkbox_size")}px; }}
+            QCheckBox::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+            QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+            QCheckBox::indicator:unchecked:hover {{ border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
         """
         radio_style = f"""
-            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: 5px 0px; }} 
-            QRadioButton::indicator {{ width: 14px; height: 14px; }}
-            QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: 2px solid {ThemeManager.get_color('accent')}; border-radius: 9px; }}
-            QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: 2px solid {ThemeManager.get_color('border')}; border-radius: 9px; }}
-            QRadioButton::indicator:unchecked:hover {{ border: 2px solid {ThemeManager.get_color('text_disabled')}; }}
+            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("radiobutton_padding")}px 0px; }} 
+            QRadioButton::indicator {{ width: {UIScaleManager.get("radiobutton_size")}px; height: {UIScaleManager.get("radiobutton_size")}px; }}
+            QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
+            QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
+            QRadioButton::indicator:unchecked:hover {{ border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
         """
         preview_radio.setStyleSheet(radio_style)
         decode_radio.setStyleSheet(radio_style)
@@ -10254,24 +10319,24 @@ class PhotoSortApp(QMainWindow):
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
             }}
             QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
             }}
             QRadioButton::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         self.fit_radio.setStyleSheet(radio_style)
@@ -10306,24 +10371,24 @@ class PhotoSortApp(QMainWindow):
         self.minimap_toggle.setStyleSheet(f"""
             QCheckBox {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("checkbox_padding")}px;
             }}
             QCheckBox::indicator {{
-                width: 11px;
-                height: 11px;
+                width: {UIScaleManager.get("checkbox_size")}px;
+                height: {UIScaleManager.get("checkbox_size")}px;
             }}
             QCheckBox::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """)
         
@@ -10863,24 +10928,24 @@ class PhotoSortApp(QMainWindow):
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
             }}
             QRadioButton::indicator {{
-                width: 14px;
-                height: 14px;
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
             }}
             QRadioButton::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 9px;
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
             }}
             QRadioButton::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         self.grid_off_radio.setStyleSheet(radio_style)
@@ -10908,24 +10973,24 @@ class PhotoSortApp(QMainWindow):
         checkbox_style = f"""
             QCheckBox {{
                 color: {ThemeManager.get_color('text')};
-                padding: 2px;
+                padding: {UIScaleManager.get("checkbox_padding")}px;
             }}
             QCheckBox::indicator {{
-                width: 11px;
-                height: 11px;
+                width: {UIScaleManager.get("checkbox_size")}px;
+                height: {UIScaleManager.get("checkbox_size")}px;
             }}
             QCheckBox::indicator:checked {{
                 background-color: {ThemeManager.get_color('accent')};
-                border: 2px solid {ThemeManager.get_color('accent')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked {{
                 background-color: {ThemeManager.get_color('bg_primary')};
-                border: 2px solid {ThemeManager.get_color('border')};
-                border-radius: 1px;
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
             }}
             QCheckBox::indicator:unchecked:hover {{
-                border: 2px solid {ThemeManager.get_color('text_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
         self.filename_toggle_grid.setStyleSheet(checkbox_style)
@@ -11040,21 +11105,21 @@ class PhotoSortApp(QMainWindow):
             disabled_radio_style = f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text_disabled')};
-                    padding: 2px;
+                    padding: {UIScaleManager.get("radiobutton_padding")}px;
                 }}
                 QRadioButton::indicator {{
-                    width: 14px;
-                    height: 14px;
+                    width: {UIScaleManager.get("radiobutton_size")}px;
+                    height: {UIScaleManager.get("radiobutton_size")}px;
                 }}
                 QRadioButton::indicator:checked {{
                     background-color: {ThemeManager.get_color('accent')};
-                    border: 2px solid {ThemeManager.get_color('accent')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked {{
                     background-color: {ThemeManager.get_color('bg_primary')};
-                    border: 2px solid {ThemeManager.get_color('border')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
             """
             self.zoom_100_radio.setStyleSheet(disabled_radio_style)
@@ -11093,24 +11158,24 @@ class PhotoSortApp(QMainWindow):
             radio_style = f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text')};
-                    padding: 2px;
+                    padding: {UIScaleManager.get("radiobutton_padding")}px;
                 }}
                 QRadioButton::indicator {{
-                    width: 14px;
-                    height: 14px;
+                    width: {UIScaleManager.get("radiobutton_size")}px;
+                    height: {UIScaleManager.get("radiobutton_size")}px;
                 }}
                 QRadioButton::indicator:checked {{
                     background-color: {ThemeManager.get_color('accent')};
-                    border: 2px solid {ThemeManager.get_color('accent')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked {{
                     background-color: {ThemeManager.get_color('bg_primary')};
-                    border: 2px solid {ThemeManager.get_color('border')};
-                    border-radius: 9px;
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
+                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
                 }}
                 QRadioButton::indicator:unchecked:hover {{
-                    border: 2px solid {ThemeManager.get_color('text_disabled')};
+                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
                 }}
             """
             self.zoom_100_radio.setStyleSheet(radio_style)
