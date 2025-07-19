@@ -116,13 +116,14 @@ class UIScaleManager:
         "filename_font_size": 11,                  # 파일명 폰트 크기
         "folder_container_spacing": 6,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 13,                # 폴더 경로 레이블 높이 계산용 패딩
+        "sort_folder_label_padding": 25,           # 분류폴더 레이블 패딩
         "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
         "info_container_width": 300,
         "combobox_padding": 4,
         "settings_label_width": 250,               # 설정 창 라벨 최소 너비
         "control_panel_min_width": 280,            # 컨트롤 패널 최소 너비
         # 라디오 버튼 스타일 관련 키
-        "radiobutton_size": 14,
+        "radiobutton_size": 13,
         "radiobutton_border": 2,
         "radiobutton_border_radius": 8,
         "radiobutton_padding": 0,
@@ -133,7 +134,7 @@ class UIScaleManager:
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가
         "settings_popup_width": 785,
-        "settings_popup_height": 1240,
+        "settings_popup_height": 800,
         "settings_layout_vspace": 15,
         "infotext_licensebutton": 30,
         "donation_between_tworows": 25,
@@ -173,6 +174,7 @@ class UIScaleManager:
         "filename_font_size": 10,                  # 파일명 폰트 크기
         "folder_container_spacing": 4,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
         "folder_label_padding": 10,                # 폴더 경로 레이블 높이 계산용 패딩
+        "sort_folder_label_padding": 20,           # 분류폴더 레이블 패딩
         "category_folder_vertical_spacing": 6,     # 분류 폴더 UI 사이 간격
         "info_container_width": 200,
         "combobox_padding": 3,
@@ -190,7 +192,7 @@ class UIScaleManager:
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 750,
-        "settings_popup_height": 940,
+        "settings_popup_height": 700,
         "settings_layout_vspace": 7,
         "infotext_licensebutton": 20,
         "donation_between_tworows": 17,
@@ -767,25 +769,21 @@ class FolderPathLabel(QLabel):
     """폴더 경로를 보여주는 레이블 클래스, 더블클릭 시 탐색기 열기"""
     doubleClicked = Signal(str)
     imageDropped = Signal(int, str)  # 폴더 인덱스, 드롭 데이터 전달
-    
+
     def __init__(self, text="", fixed_height_padding=10, parent=None):
         super().__init__(parent=parent)
         self.full_path = ""
         self.folder_index = -1  # 폴더 인덱스 저장
         self.original_style = ""  # 원본 스타일 저장
-        
+        self.fixed_height_padding = fixed_height_padding
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)")
-
         font = QFont("Arial", UIScaleManager.get("font_size"))
         self.setFont(font)
-
-        # 폰트 메트릭스를 이용해 2줄 높이 계산
         fm = QFontMetrics(font)
         line_height = fm.height()
-        fixed_height = (line_height * 2) + fixed_height_padding
-        self.setFixedHeight(fixed_height)
-
+        default_height = (line_height * 2) + self.fixed_height_padding
+        self.setFixedHeight(default_height)
         self.setWordWrap(True)
         self.setStyleSheet(f"""
             QLabel {{
@@ -796,19 +794,25 @@ class FolderPathLabel(QLabel):
             }}
         """)
         self.original_style = self.styleSheet()  # 원본 스타일 저장
-        
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        
         # === 드롭 기능 활성화 ===
         self.setAcceptDrops(True)
-        
         self.setText(text)
 
     def set_folder_index(self, index):
-        """폴더 인덱스 설정"""
+        """폴더 인덱스 설정 및 높이 조정"""
         self.folder_index = index
         logging.debug(f"FolderPathLabel {index} 드롭 기능 활성화됨")
+
+        # 분류 폴더(index >= 0)일 경우, 높이를 1줄로 재조정
+        if index >= 0:
+            fm = QFontMetrics(self.font())
+            line_height = fm.height()
+            # 1줄 높이로 계산
+            single_line_height = line_height + self.fixed_height_padding
+            self.setFixedHeight(single_line_height)
+            self.setWordWrap(False) # 1줄이므로 줄바꿈 비활성화
 
     def dragEnterEvent(self, event):
         """드래그 진입 시 호출"""
@@ -925,42 +929,96 @@ class FolderPathLabel(QLabel):
         except Exception as e:
             logging.error(f"_apply_drop_hover_style 오류: {e}")
 
+    def update_original_style(self, new_style):
+        """원본 스타일 업데이트 (외부에서 스타일이 변경될 때 호출)"""
+        self.original_style = new_style
+
     def _restore_original_style(self):
-        """원본 스타일 복원"""
+        """현재 상태에 맞는 올바른 스타일 복원"""
         try:
-            self.setStyleSheet(self.original_style)
+            # PhotoSortApp 인스턴스 찾기
+            parent_app = None
+            current_widget = self.parent()
+            while current_widget is not None:
+                if hasattr(current_widget, 'target_folders'):
+                    parent_app = current_widget
+                    break
+                current_widget = current_widget.parent()
+            
+            # 폴더 상태에 따라 적절한 스타일 적용
+            if (parent_app and 
+                hasattr(parent_app, 'target_folders') and 
+                self.folder_index >= 0 and
+                self.folder_index < len(parent_app.target_folders) and 
+                parent_app.target_folders[self.folder_index] and 
+                os.path.isdir(parent_app.target_folders[self.folder_index])):
+                # 폴더가 설정된 경우 - 활성화 스타일
+                style = f"""
+                    QLabel {{
+                        color: #AAAAAA;
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_primary')};
+                        border-radius: 1px;
+                    }}
+                """
+            else:
+                # 폴더가 설정되지 않은 경우 - 비활성화 스타일
+                style = f"""
+                    QLabel {{
+                        color: {ThemeManager.get_color('text_disabled')};
+                        padding: 5px;
+                        background-color: {ThemeManager.get_color('bg_disabled')};
+                        border-radius: 1px;
+                    }}
+                """
+            
+            self.setStyleSheet(style)
         except Exception as e:
             logging.error(f"_restore_original_style 오류: {e}")
 
     def setText(self, text: str, max_length=None, prefix_length=None, suffix_length=None):
-        """
-        라벨 텍스트 설정 및 긴 경로 생략 처리
-        """
-        self.full_path = text
-        self.setToolTip(text)
+            """
+            라벨 텍스트 설정 및 긴 경로 생략 처리 (분류 폴더/기타 폴더 분기 처리)
+            """
+            self.full_path = text
+            self.setToolTip(text)
 
-        # 파라미터로 전달된 값을 우선 사용, None이면 해상도에 따라 기본값 적용
-        screen = QGuiApplication.primaryScreen()
-        if screen:
-            geometry = screen.geometry()
-            width = geometry.width()
-            height = geometry.height()
-            aspect_ratio = width / height if height else 0
-            if abs(aspect_ratio - 1.6) < 0.05:
-                if max_length is None: max_length = 30
-                if prefix_length is None: prefix_length = 12
-                if suffix_length is None: suffix_length = 15
+            # <<< [수정 시작] 분류 폴더(folder_index >= 0)와 기타 폴더를 분기하여 처리 >>>
+            if self.folder_index >= 0:
+                # --- 분류 폴더 (1줄 높이) 처리 ---
+                # 1줄이므로 최대 길이를 짧게 설정하여 잘림이 잘 일어나도록 함
+                max_len = 18 
+                suf_len = 13
+                
+                if len(text) > max_len:
+                    # prefix_length가 0이므로, 앞부분을 "..."로 대체
+                    display_text = "..." + text[-suf_len:]
+                else:
+                    display_text = text
+                super().setText(display_text)
             else:
-                if max_length is None: max_length = 60
-                if prefix_length is None: prefix_length = 20
-                if suffix_length is None: suffix_length = 35
-
-        # 경로가 너무 길면 중간을 '...'로 표시
-        if len(text) > max_length:
-            display_text = text[:prefix_length] + "..." + text[-suffix_length:]
-        else:
-            display_text = text
-        super().setText(display_text)
+                # --- JPG/RAW 폴더 (2줄 높이) 처리  ---
+                # 파라미터로 전달된 값을 우선 사용, None이면 해상도에 따라 기본값 적용
+                screen = QGuiApplication.primaryScreen()
+                if screen:
+                    geometry = screen.geometry()
+                    width = geometry.width()
+                    height = geometry.height()
+                    aspect_ratio = width / height if height else 0
+                    if abs(aspect_ratio - 1.6) < 0.05:
+                        if max_length is None: max_length = 30
+                        if prefix_length is None: prefix_length = 12
+                        if suffix_length is None: suffix_length = 15
+                    else:
+                        if max_length is None: max_length = 60
+                        if prefix_length is None: prefix_length = 20
+                        if suffix_length is None: suffix_length = 35
+                # 경로가 너무 길면 중간을 '...'로 표시
+                if len(text) > max_length:
+                    display_text = text[:prefix_length] + "..." + text[-suffix_length:]
+                else:
+                    display_text = text
+                super().setText(display_text)
 
     def text(self) -> str:
         return super().text()
@@ -3591,6 +3649,32 @@ def format_camera_name(make, model):
 
 class PhotoSortApp(QMainWindow):
     STATE_FILE = "photosort_data.json" # 상태 저장 파일 이름 정의
+    
+    # 단축키 정의 (두 함수에서 공통으로 사용)
+    SHORTCUT_DEFINITIONS = [
+        (0, "▪ WASD: 사진 넘기기"),
+        (0, "▪ Shift + WASD:"),
+        (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
+        (1, "  - Zoom 100% 이상: 뷰포트 이동"),
+        (0, "▪ 방향키:"),
+        (1, "  - 사진 넘기기"),
+        (1, "  - Zoom 100% 이상: 뷰포트 이동"),
+        (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
+        (0, "▪ 스페이스바:"),
+        (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
+        (1, "  - Grid On: 선택한 이미지 확대 보기"),
+        (0, "▪ ESC:"),
+        (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
+        (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
+        (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
+        (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
+        (0, "▪ F5: 폴더 새로고침"),
+        (0, "▪ Ctrl + Z: 파일 이동 취소"),
+        (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
+        (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
+        (0, "▪ Enter: 파일 목록 표시"),
+        (0, "▪ Delete: 작업 상태 초기화"),
+    ]
 
     def __init__(self):
         super().__init__()
@@ -3665,13 +3749,11 @@ class PhotoSortApp(QMainWindow):
         self.current_active_zoom_level = "Fit" # 초기값은 Fit
         self.zoom_change_trigger = None # "double_click", "space_key_to_zoom", "radio_button", "photo_change_same_orientation", "photo_change_diff_orientation"
 
-
         # 메모리 모니터링 및 자동 조정을 위한 타이머
         self.memory_monitor_timer = QTimer(self)
         self.memory_monitor_timer.setInterval(10000)  # 10초마다 확인
         self.memory_monitor_timer.timeout.connect(self.check_memory_usage)
         self.memory_monitor_timer.start()
-
 
         # current_image_index 주기적 자동동저장을 위한
         self.state_save_timer = QTimer(self)
@@ -3679,11 +3761,9 @@ class PhotoSortApp(QMainWindow):
         self.state_save_timer.setInterval(5000)  # 5초 (5000ms)
         self.state_save_timer.timeout.connect(self._trigger_state_save_for_index) # 새 슬롯 연결
 
-        
         # 시스템 사양 검사
         self.system_memory_gb = self.get_system_memory_gb()
         self.system_cores = cpu_count()
-
 
         # 파일 이동 기록 (Undo/Redo 용)
         self.move_history = [] # 이동 기록을 저장할 리스트
@@ -3776,7 +3856,6 @@ class PhotoSortApp(QMainWindow):
         # === 이미지→폴더 드래그 앤 드롭 설정 끝 ===
 
         self.pressed_number_keys = set()  # 현재 눌린 숫자키 추적
-        self.key_highlight_timers = {}    # 키별 타이머 저장
 
         # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
         # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
@@ -4011,7 +4090,7 @@ class PhotoSortApp(QMainWindow):
                 color: {ThemeManager.get_color('text_disabled')};
                 opacity: 0.7;
             }}
-""")
+        """)
         self.match_raw_button.clicked.connect(self.on_match_raw_button_clicked)
         self.control_layout.addWidget(self.match_raw_button) # 컨트롤 레이아웃에 직접 추가
 
@@ -4089,9 +4168,10 @@ class PhotoSortApp(QMainWindow):
         
         # 구분선 추가
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
-        self.control_layout.addWidget(HorizontalLine())
+        self.line_before_folders = HorizontalLine()
+        self.control_layout.addWidget(self.line_before_folders)
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
-        
+
         # 분류 폴더 설정 영역
         self._rebuild_folder_selection_ui() # 이 시점에는 self.folder_count = 3
         
@@ -4285,6 +4365,91 @@ class PhotoSortApp(QMainWindow):
         # === 드래그 앤 드랍 설정 끝 ===
 
         self.update_scrollbar_style()
+
+        # 설정 창에 사용될 UI 컨트롤들을 미리 생성합니다.
+        self._create_settings_controls()
+
+    def refresh_folder_contents(self):
+        """F5 키를 눌렀을 때 현재 로드된 폴더의 내용을 새로고침합니다."""
+        if not self.current_folder and not self.is_raw_only_mode:
+            logging.debug("새로고침 건너뛰기: 로드된 폴더가 없습니다.")
+            return
+
+        logging.info("폴더 내용 새로고침을 시작합니다...")
+
+        current_index_before_refresh = self.current_image_index
+        current_path_before_refresh = self.get_current_image_path()
+        
+        new_image_files = []
+
+        if self.is_raw_only_mode:
+            if self.raw_folder and Path(self.raw_folder).is_dir():
+                raw_path = Path(self.raw_folder)
+                scanned_files = []
+                for ext in self.raw_extensions:
+                    scanned_files.extend(raw_path.glob(f'*{ext}'))
+                    scanned_files.extend(raw_path.glob(f'*{ext.upper()}'))
+                new_image_files = sorted(list(set(scanned_files)), key=self.get_datetime_from_file_fast)
+            
+            if not new_image_files:
+                logging.warning("새로고침 결과: RAW 폴더에 파일이 더 이상 없습니다. 초기화합니다.")
+                self.clear_raw_folder()
+                return
+
+        else: # JPG 모드
+            if self.current_folder and Path(self.current_folder).is_dir():
+                jpg_path = Path(self.current_folder)
+                scanned_files = []
+                for file_path in jpg_path.iterdir():
+                    if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                        scanned_files.append(file_path)
+                new_image_files = sorted(scanned_files, key=self.get_datetime_from_file_fast)
+
+            if not new_image_files:
+                logging.warning("새로고침 결과: JPG 폴더에 파일이 더 이상 없습니다. 초기화합니다.")
+                self.clear_jpg_folder()
+                return
+            
+            if self.raw_folder and Path(self.raw_folder).is_dir():
+                # <<< [BUG FIX] silent=True 옵션을 사용하여 팝업 없이 RAW 매칭 실행 >>>
+                self.match_raw_files(self.raw_folder, silent=True)
+
+        self.image_files = new_image_files
+        logging.info(f"새로고침 완료: 총 {len(self.image_files)}개의 파일을 찾았습니다.")
+
+        new_index = -1
+        if current_path_before_refresh:
+            try:
+                new_index = self.image_files.index(Path(current_path_before_refresh))
+                logging.info(f"이전 이미지 '{Path(current_path_before_refresh).name}'를 새 목록에서 찾았습니다. 인덱스: {new_index}")
+            except ValueError:
+                logging.info("이전에 보던 파일이 삭제되었습니다. 인덱스를 조정합니다.")
+                new_index = min(current_index_before_refresh, len(self.image_files) - 1)
+        
+        if new_index < 0 and self.image_files:
+            new_index = 0
+
+        self.force_refresh = True
+        
+        if self.grid_mode == "Off":
+            self.current_image_index = new_index
+            self.display_current_image()
+            self.thumbnail_panel.set_image_files(self.image_files)
+            if self.current_image_index >= 0:
+                self.thumbnail_panel.set_current_index(self.current_image_index)
+        else: # Grid 모드
+            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+            num_cells = rows * cols
+            if new_index != -1:
+                self.grid_page_start_index = (new_index // num_cells) * num_cells
+                self.current_grid_index = new_index % num_cells
+            else:
+                self.grid_page_start_index = 0
+                self.current_grid_index = 0
+            self.update_grid_view()
+
+        self.update_counters()
+        logging.info("UI 새로고침이 완료되었습니다.")
 
     def request_thumbnail_load(self, file_path, index):
         """ThumbnailModel로부터 썸네일 로딩 요청을 받아 처리"""
@@ -4508,22 +4673,24 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"윈도우 아이콘 설정 실패: {e}")
 
     def _rebuild_folder_selection_ui(self):
-        """기존 분류 폴더 UI를 제거하고 새로 생성하여 교체합니다."""
-        # 1. 기존 위젯이 있다면 제거
-        if hasattr(self, 'category_folder_container') and self.category_folder_container:
-            self.control_layout.removeWidget(self.category_folder_container)
-            self.category_folder_container.deleteLater()
+            """기존 분류 폴더 UI를 제거하고 새로 생성하여 교체합니다."""
+            if hasattr(self, 'category_folder_container') and self.category_folder_container:
+                self.category_folder_container.deleteLater()
+                self.category_folder_container = None
 
-        # 2. 새 컨테이너 위젯 생성
-        self.category_folder_container = self.setup_folder_selection_ui()
-        
-        # 3. 컨트롤 레이아웃의 올바른 위치에 새 위젯 삽입
-        #    "JPG + RAW 이동" 토글 버튼 아래, 첫 번째 구분선 위에 삽입합니다.
-        insertion_index = self.control_layout.indexOf(self.toggle_container) + 4 # 토글 컨테이너와 그 아래 여백(Spacing) 다음
-        self.control_layout.insertWidget(insertion_index, self.category_folder_container)
-        
-        # 4. UI 상태 업데이트
-        self.update_folder_buttons()
+            self.category_folder_container = self.setup_folder_selection_ui()
+
+            # <<< [수정] 로직 단순화: 구분선(line_before_folders) 바로 아래에 삽입 >>>
+            try:
+                # 구분선의 인덱스를 찾아서 그 바로 아래(+2, 구분선과 그 아래 spacing)에 삽입
+                insertion_index = self.control_layout.indexOf(self.line_before_folders) + 2
+                self.control_layout.insertWidget(insertion_index, self.category_folder_container)
+            except Exception as e:
+                # 예외 발생 시 (예: 구분선을 찾지 못함) 레이아웃의 끝에 추가 (안전 장치)
+                logging.error(f"_rebuild_folder_selection_ui에서 삽입 위치 찾기 실패: {e}. 레이아웃 끝에 추가합니다.")
+                self.control_layout.addWidget(self.category_folder_container)
+
+            self.update_folder_buttons()
 
     def on_folder_count_changed(self, index):
         """분류 폴더 개수 콤보박스 변경 시 호출되는 슬롯"""
@@ -4551,7 +4718,7 @@ class PhotoSortApp(QMainWindow):
         # 변경된 상태 저장
         self.save_state()
 
-    # === 드래그 앤 드랍 관련 코드 시작 === #
+    # === 폴더 경로 레이블 드래그 앤 드랍 관련 코드 시작 === #
     def dragEnterEvent(self, event):
         """드래그 진입 시 호출"""
         try:
@@ -5151,7 +5318,9 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"_handle_category_folder_drop 오류: {e}")
             return False
-        
+    # === 폴더 경로 레이블 드래그 앤 드랍 관련 코드 끝 === #
+
+    # === 캔버스 영역 드래그 앤 드랍 관련 코드 시작 === #
     def canvas_dragEnterEvent(self, event):
         """캔버스 영역 드래그 진입 시 호출"""
         try:
@@ -5475,10 +5644,15 @@ class PhotoSortApp(QMainWindow):
         except Exception as e:
             logging.error(f"_handle_canvas_folder_drop 오류: {e}")
             return False
-    # === 드래그 앤 드랍 관련 코드 끝 === #
+    # === 캔버스 영역 드래그 앤 드랍 관련 코드 끝 === #
 
     def on_extension_checkbox_changed(self, state):
-        # 확장자 그룹 정의 (setup_settings_ui와 동일하게)
+        # QTimer.singleShot을 사용하여 이 함수의 실행을 이벤트 루프의 다음 사이클로 지연시킵니다.
+        # 이렇게 하면 모든 체크박스의 상태 업데이트가 완료된 후에 로직이 실행되어 안정성이 높아집니다.
+        QTimer.singleShot(0, self._update_supported_extensions)
+
+    def _update_supported_extensions(self):
+        """실제로 지원 확장자 목록을 업데이트하고 UI를 검증하는 내부 메서드"""
         extension_groups = {
             "JPG": ['.jpg', '.jpeg'],
             "HEIC": ['.heic', '.heif'],
@@ -5488,7 +5662,7 @@ class PhotoSortApp(QMainWindow):
             "TIFF": ['.tif', '.tiff']
         }
 
-        # 1. 현재 체크된 모든 확장자를 수집
+        # 1. 현재 UI에 표시된 모든 체크박스의 상태를 다시 확인
         new_supported_extensions = set()
         checked_count = 0
         for name, checkbox in self.ext_checkboxes.items():
@@ -5496,32 +5670,22 @@ class PhotoSortApp(QMainWindow):
                 checked_count += 1
                 new_supported_extensions.update(extension_groups[name])
 
-        # 2. 모든 체크박스가 해제되었는지 확인 (핵심 수정 부분)
+        # 2. 체크된 박스가 하나도 없는지 검증
         if checked_count == 0:
-            # 마지막 체크박스가 해제되려는 순간, 신호를 보낸 체크박스의 연결을 잠시 끊음
-            sender_checkbox = self.sender()
-            if sender_checkbox:
-                sender_checkbox.blockSignals(True)  # 시그널 전파 중지
-                sender_checkbox.setChecked(False)   # UI상으로는 체크 해제된 것처럼 보이게 함 (선택적)
-                sender_checkbox.blockSignals(False) # 시그널 다시 연결
-
-            # JPG 체크박스를 찾아서 강제로 체크 상태로 만듦
+            logging.warning("모든 확장자 선택 해제 감지됨. JPG를 강제로 다시 선택합니다.")
             jpg_checkbox = self.ext_checkboxes.get("JPG")
             if jpg_checkbox:
-                jpg_checkbox.blockSignals(True)   # 무한 재귀 방지를 위해 시그널 중지
-                jpg_checkbox.setChecked(True)     # JPG를 강제로 체크
-                jpg_checkbox.blockSignals(False)  # 시그널 다시 연결
+                # 이 시점에서는 이미 모든 체크가 해제된 상태이므로,
+                # 시그널을 막을 필요 없이 그냥 켜기만 하면 됩니다.
+                jpg_checkbox.setChecked(True)
+            
+            # JPG가 다시 켜졌으므로, 지원 확장자 목록을 JPG만 포함하도록 재설정
+            self.supported_image_extensions = set(extension_groups["JPG"])
+        else:
+            # 체크된 박스가 하나 이상 있으면, 그 상태를 그대로 데이터에 반영
+            self.supported_image_extensions = new_supported_extensions
 
-            # JPG 확장자만 다시 new_supported_extensions에 추가
-            new_supported_extensions.update(extension_groups["JPG"])
-            logging.warning("모든 확장자 선택 해제 시도됨. JPG를 기본값으로 자동 선택합니다.")
-
-        # 3. 변경된 확장자 목록을 self.supported_image_extensions에 반영
-        self.supported_image_extensions = new_supported_extensions
         logging.info(f"지원 확장자 변경됨: {sorted(list(self.supported_image_extensions))}")
-
-        # (선택 사항) 변경 사항을 즉시 저장하고 싶다면 아래 주석 해제
-        # self.save_state()
 
     
     def _trigger_state_save_for_index(self): # 자동저장
@@ -5674,12 +5838,10 @@ class PhotoSortApp(QMainWindow):
             "is_raw_only_mode": self.is_raw_only_mode,
             "show_grid_filenames": self.show_grid_filenames,
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
-            "zoom_mode": self.zoom_mode, # 추가
-            "grid_mode": self.grid_mode, # 추가
-            "previous_grid_mode": self.previous_grid_mode, # 추가
+            "zoom_mode": self.zoom_mode,
+            "grid_mode": self.grid_mode,
+            "previous_grid_mode": self.previous_grid_mode,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            # "viewport_move_speed": self.viewport_move_speed, # 뷰포트 속도는 전역 설정으로 유지, 세션별 저장 X
-            # "camera_raw_settings": self.camera_raw_settings, # 카메라별 설정도 전역으로 유지
         }
         return session_data
 
@@ -5797,7 +5959,7 @@ class PhotoSortApp(QMainWindow):
         self.minimap_toggle.setChecked(session_data.get("minimap_visible", True))
         self.show_grid_filenames = session_data.get("show_grid_filenames", False)
         if hasattr(self, 'filename_toggle_grid'): self.filename_toggle_grid.setChecked(self.show_grid_filenames)
-        
+
         self.zoom_mode = session_data.get("zoom_mode", "Fit")
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
@@ -6265,7 +6427,10 @@ class PhotoSortApp(QMainWindow):
         main_layout.addWidget(self.settings_popup.welcome_label)
         main_layout.addSpacing(10)
 
-        settings_ui_widget = self.setup_settings_ui(is_first_run_popup=True)
+        settings_ui_widget = self.setup_settings_ui(
+            groups_to_build=["general", "advanced"], 
+            is_first_run=True
+        )
         main_layout.addWidget(settings_ui_widget)
 
         # 확인 버튼 추가
@@ -6358,37 +6523,14 @@ class PhotoSortApp(QMainWindow):
             
     def _build_shortcut_html_text(self):
         """현재 언어 설정에 맞춰 단축키 안내 HTML 텍스트 생성 (개별 p 태그와 margin 사용)"""
-        shortcut_definitions = [
-            (0, "▪ WASD: 사진 넘기기"),
-            (0, "▪ Shift + WASD:"),
-            (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
-            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-            (0, "▪ 방향키:"),
-            (1, "  - 사진 넘기기"),
-            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-            (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
-            (0, "▪ 스페이스바:"),
-            (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
-            (1, "  - Grid On: 선택한 이미지 확대 보기"),
-            (0, "▪ ESC:"),
-            (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
-            (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
-            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
-            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
-            (0, "▪ Ctrl + Z: 파일 이동 취소"),
-            (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
-            (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
-            (0, "▪ Enter: 파일 목록 표시"),
-            (0, "▪ Delete: 작업 상태 초기화"),
-        ]
         html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
 
         # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
         # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
         default_margin_bottom = 6 # px
 
-        for i in range(len(shortcut_definitions)):
-            level, key = shortcut_definitions[i]
+        for i in range(len(self.SHORTCUT_DEFINITIONS)):
+            level, key = self.SHORTCUT_DEFINITIONS[i]
             text = LanguageManager.translate(key)
             
             style_parts = []
@@ -6417,38 +6559,14 @@ class PhotoSortApp(QMainWindow):
 
     def _build_shortcut_popup_content_html(self):
         """단축키 안내 팝업창에 표시될 내용을 HTML로 생성합니다."""
-
-        shortcut_definitions = [
-            (0, "▪ WASD: 사진 넘기기"),
-            (0, "▪ Shift + WASD:"),
-            (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
-            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-            (0, "▪ 방향키:"),
-            (1, "  - 사진 넘기기"),
-            (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-            (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
-            (0, "▪ 스페이스바:"),
-            (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
-            (1, "  - Grid On: 선택한 이미지 확대 보기"),
-            (0, "▪ ESC:"),
-            (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
-            (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
-            (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
-            (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
-            (0, "▪ Ctrl + Z: 파일 이동 취소"),
-            (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
-            (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
-            (0, "▪ Enter: 파일 목록 표시"),
-            (0, "▪ Delete: 작업 상태 초기화"),
-        ]
         html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
 
         # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
         # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
         default_margin_bottom = 6 # px
 
-        for i in range(len(shortcut_definitions)):
-            level, key = shortcut_definitions[i]
+        for i in range(len(self.SHORTCUT_DEFINITIONS)):
+            level, key = self.SHORTCUT_DEFINITIONS[i]
             text = LanguageManager.translate(key)
             
             style_parts = []
@@ -6645,566 +6763,392 @@ class PhotoSortApp(QMainWindow):
             self.mouse_wheel_action = "none"
             logging.info("마우스 휠 동작: 없음으로 변경됨")
 
-    def setup_settings_ui(self, is_first_run_popup=False):
-        """설정 UI 구성 (언어, 날짜 형식, 테마 설정)"""
-        settings_container = QWidget()
-        settings_layout = QVBoxLayout(settings_container)
-        settings_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 10))
-        
-        # ========== 언어 설정 ==========
-        language_container = QWidget()
-        language_layout = QHBoxLayout(language_container)
-        language_layout.setContentsMargins(0, 5, 0, 5)
-        
-        language_title = QLabel(LanguageManager.translate("언어"))
-        language_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        language_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        font = QFont(self.font())
-        font.setPointSize(UIScaleManager.get("font_size"))
-        language_title.setFont(font)
-        language_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
-        language_title.setObjectName("language_title_label")
-        
-        # 라디오 버튼 컨테이너
-        radio_container = QWidget()
-        radio_layout = QHBoxLayout(radio_container)
-        radio_layout.setContentsMargins(0, 0, 0, 0)
-        radio_layout.setSpacing(20)  # 버튼 사이 간격
-        
-        # 언어 라디오 버튼 그룹 생성
-        self.language_group = QButtonGroup(self)
-        
-        # English 라디오 버튼 (왼쪽)
-        self.english_radio = QRadioButton("English")
-        
-        # 한국어 라디오 버튼 (오른쪽)
-        self.korean_radio = QRadioButton("한국어")
-        
-        # 버튼 그룹에 추가
-        self.language_group.addButton(self.english_radio, 0)  # 영어 = 0
-        self.language_group.addButton(self.korean_radio, 1)   # 한국어 = 1
-        
-        # 현재 언어 상태에 따라 선택
-        current_lang = LanguageManager.get_current_language()
-        if current_lang == "en":
-            self.english_radio.setChecked(True)
-        else:  # "ko"
-            self.korean_radio.setChecked(True)
-        
-        # 라디오 버튼 스타일 설정
+    def _create_settings_controls(self):
+        """설정 창에 사용될 모든 UI 컨트롤들을 미리 생성하고 초기화합니다."""
+        # --- 공통 스타일 ---
         radio_style = f"""
-            QRadioButton {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("radiobutton_padding")}px;
-            }}
-            QRadioButton::indicator {{
-                width: {UIScaleManager.get("radiobutton_size")}px;
-                height: {UIScaleManager.get("radiobutton_size")}px;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: #848484;
-                border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
+            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("radiobutton_padding")}px; }}
+            QRadioButton::indicator {{ width: {UIScaleManager.get("radiobutton_size")}px; height: {UIScaleManager.get("radiobutton_size")}px; }}
+            QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
+            QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
+            QRadioButton::indicator:unchecked:hover {{ border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
         """
+        checkbox_style = f"""
+            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("checkbox_padding")}px; }}
+            QCheckBox::indicator {{ width: {UIScaleManager.get("checkbox_size")}px; height: {UIScaleManager.get("checkbox_size")}px; }}
+            QCheckBox::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+            QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
+            QCheckBox::indicator:unchecked:hover {{ border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
+        """
+
+        # --- 언어 설정 ---
+        self.language_group = QButtonGroup(self)
+        self.english_radio = QRadioButton("English")
+        self.korean_radio = QRadioButton("한국어")
         self.english_radio.setStyleSheet(radio_style)
         self.korean_radio.setStyleSheet(radio_style)
-        
-        # 이벤트 연결
+        self.language_group.addButton(self.english_radio, 0)
+        self.language_group.addButton(self.korean_radio, 1)
         self.language_group.buttonClicked.connect(self.on_language_radio_changed)
-        
-        # 라디오 버튼을 컨테이너에 추가
-        radio_layout.addWidget(self.english_radio)
-        radio_layout.addWidget(self.korean_radio)
-        radio_layout.addStretch(1)  # 우측 여백
-        
-        # 레이아웃에 위젯 추가 (가로 정렬)
-        language_layout.addWidget(language_title)
-        language_layout.addWidget(radio_container, 1)  # 1=stretch factor
-        
-        settings_layout.addWidget(language_container)
-        # ========== 언어 설정 끝 ==========
-        
-        # ========== 컨트롤 패널 위치 설정 ==========
-        panel_pos_container = QWidget()
-        panel_pos_layout = QHBoxLayout(panel_pos_container)
-        panel_pos_layout.setContentsMargins(0, 5, 0, 5)
 
-        panel_pos_title = QLabel(LanguageManager.translate("컨트롤 패널"))
-        panel_pos_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        panel_pos_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        # 기본 폰트 크기 사용 (main에서 설정됨)
-        font = QFont(self.font()) # 현재 적용된 폰트 가져오기
-        font.setPointSize(UIScaleManager.get("font_size")) # 명시적으로 설정
-        panel_pos_title.setFont(font)
-        panel_pos_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 다른 라벨과 너비 맞춤
-        panel_pos_title.setObjectName("panel_pos_title_label")
-
-        # 라디오 버튼 컨테이너
-        panel_radio_container = QWidget()
-        panel_radio_layout = QHBoxLayout(panel_radio_container)
-        panel_radio_layout.setContentsMargins(0, 0, 0, 0)
-        panel_radio_layout.setSpacing(20)
-
-        # 라디오 버튼 그룹 생성
-        self.panel_position_group = QButtonGroup(self) # 그룹 객체 저장
-
-        # 라디오 버튼 생성
-        self.panel_pos_left_radio = QRadioButton(LanguageManager.translate("좌측")) # 새 번역 키
-        self.panel_pos_left_radio.setFont(self.font()) # 애플리케이션 폰트 사용
-        self.panel_pos_right_radio = QRadioButton(LanguageManager.translate("우측")) # 새 번역 키
-        self.panel_pos_right_radio.setFont(self.font()) # 애플리케이션 폰트 사용
-
-        # 버튼 그룹에 추가 (좌측=0, 우측=1)
-        self.panel_position_group.addButton(self.panel_pos_left_radio, 0)
-        self.panel_position_group.addButton(self.panel_pos_right_radio, 1)
-
-        # 현재 상태에 따라 초기 선택 설정
-        if getattr(self, 'control_panel_on_right', False):
-            self.panel_pos_right_radio.setChecked(True)
-        else:
-            self.panel_pos_left_radio.setChecked(True)
-
-        # 라디오 버튼 스타일 설정 (기존 스타일 재사용)
-        radio_style = f"""
-            QRadioButton {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("radiobutton_padding")}px;
-            }}
-            QRadioButton::indicator {{
-                width: {UIScaleManager.get("radiobutton_size")}px;
-                height: {UIScaleManager.get("radiobutton_size")}px;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: #848484;
-                border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
-        self.panel_pos_left_radio.setStyleSheet(radio_style)
-        self.panel_pos_right_radio.setStyleSheet(radio_style)
-
-        # 이벤트 연결 (새로운 슬롯 _on_panel_position_changed 연결)
-        self.panel_position_group.buttonClicked.connect(self._on_panel_position_changed)
-
-        # 라디오 버튼을 컨테이너에 추가
-        panel_radio_layout.addWidget(self.panel_pos_left_radio)
-        panel_radio_layout.addWidget(self.panel_pos_right_radio)
-        panel_radio_layout.addStretch(1)
-
-        # 레이아웃에 위젯 추가
-        panel_pos_layout.addWidget(panel_pos_title)
-        panel_pos_layout.addWidget(panel_radio_container, 1)
-
-        settings_layout.addWidget(panel_pos_container)
-        # ========== 컨트롤 패널 위치 설정 끝 ==========
-
-        # ========== 날짜 형식 설정 ==========
-        date_format_container = QWidget()
-        date_format_layout = QHBoxLayout(date_format_container)
-        date_format_layout.setContentsMargins(0, 5, 0, 5)
-        
-        date_format_title = QLabel(LanguageManager.translate("날짜 형식"))
-        date_format_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        date_format_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        date_format_title.setFont(font)
-        date_format_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
-        date_format_title.setObjectName("date_format_title_label")
-        
-        self.date_format_combo = QComboBox()
-        for format_code in DateFormatManager.get_available_formats():
-            self.date_format_combo.addItem(DateFormatManager.get_format_display_name(format_code), format_code)
-        
-        # 현재 날짜 형식 선택
-        current_format = DateFormatManager.get_current_format()
-        index = self.date_format_combo.findData(current_format)
-        if index >= 0:
-            self.date_format_combo.setCurrentIndex(index)
-        
-        self.date_format_combo.setStyleSheet(self.generate_combobox_style())
-        self.date_format_combo.currentIndexChanged.connect(self.on_date_format_changed)
-        
-        date_format_layout.addWidget(date_format_title)
-        date_format_layout.addWidget(self.date_format_combo, 1)  # 1=stretch factor
-        
-        settings_layout.addWidget(date_format_container)
-        # ========== 날짜 형식 설정 끝 ==========
-        
-        # ========== 테마 설정 ==========
-        theme_container = QWidget()
-        theme_layout = QHBoxLayout(theme_container)
-        theme_layout.setContentsMargins(0, 5, 0, 5)
-        
-        theme_title = QLabel(LanguageManager.translate("테마"))
-        theme_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        theme_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        theme_title.setFont(font)
-        theme_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 좌측 텍스트라벨과 우측 설정UI 사이 간격  # 레이블 최소 너비 설정
-        theme_title.setObjectName("theme_title_label")
-        
+        # --- 테마 설정 ---
         self.theme_combo = QComboBox()
         for theme_name in ThemeManager.get_available_themes():
             self.theme_combo.addItem(theme_name.capitalize())
-        
-        # 현재 테마 선택
-        current_theme = ThemeManager.get_current_theme_name()
-        index = self.theme_combo.findText(current_theme.capitalize())
-        if index >= 0:
-            self.theme_combo.setCurrentIndex(index)
-        
         self.theme_combo.setStyleSheet(self.generate_combobox_style())
         self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+
+        # --- 컨트롤 패널 위치 설정 ---
+        self.panel_position_group = QButtonGroup(self)
+        self.panel_pos_left_radio = QRadioButton() # 텍스트 제거
+        self.panel_pos_right_radio = QRadioButton() # 텍스트 제거
+        self.panel_pos_left_radio.setStyleSheet(radio_style)
+        self.panel_pos_right_radio.setStyleSheet(radio_style)
+        self.panel_position_group.addButton(self.panel_pos_left_radio, 0)
+        self.panel_position_group.addButton(self.panel_pos_right_radio, 1)
+        self.panel_position_group.buttonClicked.connect(self._on_panel_position_changed)
+
+        # --- 날짜 형식 설정 ---
+        self.date_format_combo = QComboBox()
+        # 날짜 형식 이름은 언어에 따라 바뀔 수 있으므로, 추가 시점이 아니라 텍스트 업데이트 시점에 설정
+        self.date_format_combo.setStyleSheet(self.generate_combobox_style())
+        self.date_format_combo.currentIndexChanged.connect(self.on_date_format_changed)
+
+        # --- 불러올 이미지 형식 설정 ---
+        self.ext_checkboxes = {}
+        extension_groups = {"JPG": ['.jpg', '.jpeg'], "PNG": ['.png'], "WebP": ['.webp'], "HEIC": ['.heic', '.heif'], "BMP": ['.bmp'], "TIFF": ['.tif', '.tiff']}
+        for name, exts in extension_groups.items():
+            checkbox = QCheckBox(name)
+            checkbox.setStyleSheet(checkbox_style)
+            checkbox.stateChanged.connect(self.on_extension_checkbox_changed)
+            self.ext_checkboxes[name] = checkbox
+    
+        # --- 분류 폴더 개수 설정 ---
+        self.folder_count_combo = QComboBox()
+        for i in range(1, 10):
+            self.folder_count_combo.addItem(str(i), i)
+        self.folder_count_combo.setStyleSheet(self.generate_combobox_style())
+        self.folder_count_combo.setMinimumWidth(80)
+        self.folder_count_combo.currentIndexChanged.connect(self.on_folder_count_changed)
+
+        # --- 뷰포트 이동 속도 설정 ---
+        self.viewport_speed_combo = QComboBox()
+        for i in range(1, 11):
+            self.viewport_speed_combo.addItem(str(i), i)
+        self.viewport_speed_combo.setStyleSheet(self.generate_combobox_style())
+        self.viewport_speed_combo.setMinimumWidth(80)
+        self.viewport_speed_combo.currentIndexChanged.connect(self.on_viewport_speed_changed)
+
+        # --- 마우스 휠 동작 설정 ---
+        self.mouse_wheel_group = QButtonGroup(self)
+        self.mouse_wheel_photo_radio = QRadioButton() # 텍스트 제거
+        self.mouse_wheel_none_radio = QRadioButton() # 텍스트 제거
+        self.mouse_wheel_photo_radio.setStyleSheet(radio_style)
+        self.mouse_wheel_none_radio.setStyleSheet(radio_style)
+        self.mouse_wheel_group.addButton(self.mouse_wheel_photo_radio, 0)
+        self.mouse_wheel_group.addButton(self.mouse_wheel_none_radio, 1)
+        self.mouse_wheel_group.buttonClicked.connect(self.on_mouse_wheel_action_changed)
+
+        # --- 저장된 RAW 처리 방식 초기화 버튼 ---
+        button_style = f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
+                border: none; padding: 8px 12px; border-radius: 4px;
+            }}
+            QPushButton:hover {{ background-color: {ThemeManager.get_color('bg_hover')}; }}
+            QPushButton:pressed {{ background-color: {ThemeManager.get_color('bg_pressed')}; }}
+        """
+        self.reset_camera_settings_button = QPushButton() # 텍스트 제거
+        self.reset_camera_settings_button.setStyleSheet(button_style)
+        self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
+
+        # --- 세션 관리 및 단축키 버튼 생성 ---
+        self.session_management_button = QPushButton() # 텍스트 제거
+        self.session_management_button.setStyleSheet(button_style)
+        self.session_management_button.clicked.connect(self.show_session_management_popup)
+
+        self.shortcuts_button = QPushButton() # 텍스트 제거
+        self.shortcuts_button.setStyleSheet(button_style)
+        self.shortcuts_button.clicked.connect(self.show_shortcuts_popup)
+
+    def update_all_settings_controls_text(self):
+        """현재 언어 설정에 맞게 모든 설정 관련 컨트롤의 텍스트를 업데이트합니다."""
+        # --- 라디오 버튼 ---
+        self.panel_pos_left_radio.setText(LanguageManager.translate("좌측"))
+        self.panel_pos_right_radio.setText(LanguageManager.translate("우측"))
+        self.mouse_wheel_photo_radio.setText(LanguageManager.translate("사진 넘기기"))
+        self.mouse_wheel_none_radio.setText(LanguageManager.translate("없음"))
+
+        # --- 버튼 ---
+        self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
+        self.session_management_button.setText(LanguageManager.translate("세션 관리"))
+        self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
+
+        # --- 콤보 박스 (내용이 언어에 따라 바뀌는 경우) ---
+        # DateFormatManager가 언어 지원을 한다면 여기서 업데이트
+        # 현재는 고정 텍스트이므로 상태만 복원
+        self.date_format_combo.clear()
+        for format_code in DateFormatManager.get_available_formats():
+            # DateFormatManager.get_format_display_name이 내부적으로 LanguageManager를 쓴다고 가정
+            display_name = DateFormatManager.get_format_display_name(format_code)
+            self.date_format_combo.addItem(display_name, format_code)
         
-        theme_layout.addWidget(theme_title)
-        theme_layout.addWidget(self.theme_combo, 1)  # 1=stretch factor
+        # 설정 창이 열려있을 때, 그 내부의 라벨 텍스트들도 업데이트
+        if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
+            self.update_settings_labels_texts(self.settings_popup)
+
+    def setup_settings_ui(self, groups_to_build=None, is_first_run=False):
+        """
+        설정 UI의 특정 그룹들을 동적으로 구성하고 컨테이너 위젯을 반환합니다.
+        is_first_run: 최초 실행 팝업인지 여부를 나타내는 플래그.
+        """
+        if groups_to_build is None:
+            groups_to_build = ["general", "workflow", "advanced"]
+
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 15) * 1.5) # 그룹 간 간격 조정
+
+        group_builders = {
+            "general": self._build_general_settings_group,
+            "workflow": self._build_workflow_settings_group,
+            "advanced": self._build_advanced_tools_group,
+        }
+
+        for i, group_name in enumerate(groups_to_build):
+            if group_name in group_builders:
+                # is_first_run 플래그를 각 그룹 빌더에 전달
+                group_widget = group_builders[group_name](is_first_run=is_first_run)
+                main_layout.addWidget(group_widget)
+                
+                # 그룹 사이에 구분선 추가 (최초 실행이 아니고, 마지막 그룹이 아닐 때)
+                if not is_first_run and i < len(groups_to_build) - 1:
+                    separator = QFrame()
+                    separator.setFrameShape(QFrame.HLine)
+                    separator.setFrameShadow(QFrame.Sunken)
+                    separator.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+                    main_layout.addWidget(separator)
         
-        settings_layout.addWidget(theme_container)
-        # ========== 테마 설정 끝 ==========
+        main_layout.addStretch(1)
 
-        if not is_first_run_popup: # 초기 설정 창에는 나오지 않을 설정들
-        # ========== 이미지 형식 설정 ==========
-            ext_container = QWidget()
-            ext_layout = QVBoxLayout(ext_container)
-            ext_layout.setContentsMargins(0, 5, 0, 5)
+        return main_container
 
-            ext_title = QLabel(LanguageManager.translate("불러올 이미지 형식")) # 새 번역 키
-            ext_title.setObjectName("ext_title_label")  # objectName 지정
-            ext_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-            ext_title.setMinimumWidth(UIScaleManager.get("settings_label_width")) 
+    def _build_group_widget(self, title_key, add_widgets_func, show_title=True):
+        """설정 그룹 UI를 위한 템플릿 위젯을 생성합니다."""
+        group_box = QWidget()
+        group_layout = QVBoxLayout(group_box)
+        group_layout.setContentsMargins(0, 0, 0, 0)
+        group_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 15))
 
-            # 체크박스 6개를 가로로 나란히 배치 (QHBoxLayout 사용)
-            self.ext_checkboxes = {} # 체크박스 위젯들을 저장할 딕셔너리
-
-            # 확장자 그룹 정의 (UI 표시용)
-            extension_groups = {
-                "JPG": ['.jpg', '.jpeg'],
-                "PNG": ['.png'],
-                "WebP": ['.webp'],
-                "HEIC": ['.heic', '.heif'],
-                "BMP": ['.bmp'],
-                "TIFF": ['.tif', '.tiff']
-            }
-            
-            # 체크박스 스타일
-            checkbox_style = f"""
-                QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("checkbox_padding")}px; }}
-                QCheckBox::indicator {{ width: {UIScaleManager.get("checkbox_size")}px; height: {UIScaleManager.get("checkbox_size")}px; }}
-                QCheckBox::indicator:checked {{ background-color: #848484; border: {UIScaleManager.get("checkbox_border")}px solid #848484; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
-                QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
-                QCheckBox::indicator:unchecked:hover {{ border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
-            """
-
-            # 한 줄에 ext_title + 체크박스 6개 가로 배치
-            ext_row_widget = QWidget()
-            ext_row_layout = QHBoxLayout(ext_row_widget)
-            ext_row_layout.setContentsMargins(0, 0, 0, 0)
-            ext_row_layout.setSpacing(10)
-            ext_row_layout.addWidget(ext_title)
-
-            # 체크박스 6개를 가로로 추가
-            checkbox_row_widget = QWidget()
-            checkbox_row_layout = QHBoxLayout(checkbox_row_widget)
-            checkbox_row_layout.setContentsMargins(0, 0, 0, 0)
-            checkbox_row_layout.setSpacing(20)  # 체크박스 사이 간격
-            
-            for name, exts in extension_groups.items():
-                checkbox = QCheckBox(name)
-                checkbox.setStyleSheet(checkbox_style)
-                is_checked = any(ext in self.supported_image_extensions for ext in exts)
-                checkbox.setChecked(is_checked)
-                checkbox.stateChanged.connect(self.on_extension_checkbox_changed)
-                self.ext_checkboxes[name] = checkbox
-                checkbox_row_layout.addWidget(checkbox)
-            checkbox_row_layout.addStretch()
-
-            ext_row_layout.addWidget(checkbox_row_widget)
-            ext_layout.addWidget(ext_row_widget)
-            settings_layout.addWidget(ext_container)
-            # ========== 이미지 형식 설정 끝 ==========
-
-            # ========== 분류 폴더 개수 설정 ==========
-            folder_count_container = QWidget()
-            folder_count_layout = QHBoxLayout(folder_count_container)
-            folder_count_layout.setContentsMargins(0, 5, 0, 5)
-
-            folder_count_title = QLabel(LanguageManager.translate("분류 폴더 개수")) # 새 번역 키
-            folder_count_title.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            folder_count_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-            font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
-            folder_count_title.setFont(font)
-            folder_count_title.setMinimumWidth(UIScaleManager.get("settings_label_width"))
-            folder_count_title.setObjectName("folder_count_title_label")
-
-            self.folder_count_combo = QComboBox()
-            for i in range(1, 10): # 1부터 9까지
-                self.folder_count_combo.addItem(str(i), i)
-
-            # 현재 self.folder_count 값으로 콤보박스 초기 선택 설정
-            current_count_idx = self.folder_count_combo.findData(self.folder_count)
-            if current_count_idx >= 0:
-                self.folder_count_combo.setCurrentIndex(current_count_idx)
-
-            self.folder_count_combo.setStyleSheet(self.generate_combobox_style())
-            # 새 슬롯 연결
-            self.folder_count_combo.currentIndexChanged.connect(self.on_folder_count_changed)
-            self.folder_count_combo.setMinimumWidth(80)
-
-            folder_count_layout.addWidget(folder_count_title)
-            folder_count_layout.addWidget(self.folder_count_combo)
-            folder_count_layout.addStretch(1)
-
-            settings_layout.addWidget(folder_count_container)
-            # ========== 분류 폴더 개수 설정 끝 ==========
-            
-            # === 뷰포트 이동 속도 설정 ===
-            viewport_speed_container = QWidget()
-            viewport_speed_layout = QHBoxLayout(viewport_speed_container)
-            viewport_speed_layout.setContentsMargins(0, 5, 0, 5)
-
-            viewport_speed_label = QLabel(LanguageManager.translate("뷰포트 이동 속도")) # 새 번역 키
-            viewport_speed_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            viewport_speed_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-            font = QFont(self.font()); font.setPointSize(UIScaleManager.get("font_size"))
-            viewport_speed_label.setFont(font)
-            viewport_speed_label.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 다른 라벨들과 너비 맞춤
-            viewport_speed_label.setObjectName("viewport_speed_label")
-
-            self.viewport_speed_combo = QComboBox()
-            for i in range(1, 11): # 1부터 10까지의 속도 단계
-                self.viewport_speed_combo.addItem(str(i), i) # 표시 텍스트, 실제 값
-            
-            # 저장된 값으로 초기 선택 (self.viewport_move_speed는 load_state에서 설정됨)
-            current_speed_idx = self.viewport_speed_combo.findData(getattr(self, 'viewport_move_speed', 5))
-            if current_speed_idx >= 0:
-                self.viewport_speed_combo.setCurrentIndex(current_speed_idx)
-            else: # 저장된 값이 없거나 범위 밖이면 기본값 5로 설정
-                default_idx = self.viewport_speed_combo.findData(5)
-                if default_idx >=0 : self.viewport_speed_combo.setCurrentIndex(default_idx)
-
-
-            self.viewport_speed_combo.setStyleSheet(self.generate_combobox_style()) # 기존 콤보박스 스타일 재사용
-            self.viewport_speed_combo.currentIndexChanged.connect(self.on_viewport_speed_changed)
-            self.viewport_speed_combo.setMinimumWidth(80) # 콤보박스 최소 너비
-
-            viewport_speed_layout.addWidget(viewport_speed_label)
-            viewport_speed_layout.addWidget(self.viewport_speed_combo)
-            viewport_speed_layout.addStretch(1) # 우측 정렬 또는 공간 채우기
-
-            settings_layout.addWidget(viewport_speed_container)
-            # === 뷰포트 이동 속도 설정 끝 ===
-
-            # === 마우스 휠 동작 설정 ===
-            mouse_wheel_container = QWidget()
-            mouse_wheel_layout = QHBoxLayout(mouse_wheel_container)
-            mouse_wheel_layout.setContentsMargins(0, 5, 0, 5)
-
-            mouse_wheel_label = QLabel(LanguageManager.translate("마우스 휠 동작"))
-            mouse_wheel_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            mouse_wheel_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        if show_title:
+            title_label = QLabel(LanguageManager.translate(title_key))
             font = QFont(self.font())
-            font.setPointSize(UIScaleManager.get("font_size"))
-            mouse_wheel_label.setFont(font)
-            mouse_wheel_label.setMinimumWidth(UIScaleManager.get("settings_label_width"))
-            mouse_wheel_label.setObjectName("mouse_wheel_label")
+            font.setBold(True)
+            font.setPointSize(UIScaleManager.get("font_size") + 1)
+            title_label.setFont(font)
+            title_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; margin-bottom: 5px;")
+            title_label.setObjectName(f"group_title_{title_key.replace(' ', '_')}")
 
-            # 라디오 버튼 컨테이너
-            mouse_wheel_radio_container = QWidget()
-            mouse_wheel_radio_layout = QHBoxLayout(mouse_wheel_radio_container)
-            mouse_wheel_radio_layout.setContentsMargins(0, 0, 0, 0)
-            mouse_wheel_radio_layout.setSpacing(20)
+            group_layout.addWidget(title_label)
+        
+        add_widgets_func(group_layout)
 
-            # 라디오 버튼 그룹
-            self.mouse_wheel_group = QButtonGroup()
+        return group_box
 
-            # "사진 넘기기" 라디오 버튼
-            self.mouse_wheel_photo_radio = QRadioButton(LanguageManager.translate("사진 넘기기"))
-            self.mouse_wheel_photo_radio.setStyleSheet(f"""
-                QRadioButton {{
-                    color: {ThemeManager.get_color('text')};
-                    padding: {UIScaleManager.get("radiobutton_padding")}px;
-                }}
-                QRadioButton::indicator {{
-                    width: {UIScaleManager.get("radiobutton_size")}px;
-                    height: {UIScaleManager.get("radiobutton_size")}px;
-                }}
-                QRadioButton::indicator:checked {{
-                    background-color: #848484;
-                    border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-                QRadioButton::indicator:unchecked {{
-                    background-color: {ThemeManager.get_color('bg_primary')};
-                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-            """)
+    def _build_general_settings_group(self, is_first_run=False):
+        """'UI 설정' 그룹 UI를 생성합니다."""
+        def add_widgets(layout):
+            layout.addWidget(self._create_setting_row("언어", self._create_language_radios()))
+            layout.addWidget(self._create_setting_row("테마", self.theme_combo))
+            layout.addWidget(self._create_setting_row("컨트롤 패널", self._create_panel_position_radios()))
+            layout.addWidget(self._create_setting_row("날짜 형식", self.date_format_combo))
+        
+        return self._build_group_widget("UI 설정", add_widgets, show_title=not is_first_run)
+    
+    def _build_workflow_settings_group(self, is_first_run=False):
+        """'작업 설정' 그룹 UI를 생성합니다."""
+        def add_widgets(layout):
+            layout.addWidget(self._create_setting_row("불러올 이미지 형식", self._create_extension_checkboxes()))
+            layout.addWidget(self._create_setting_row("분류 폴더 개수", self.folder_count_combo))
+            layout.addWidget(self._create_setting_row("뷰포트 이동 속도", self.viewport_speed_combo))
+            layout.addWidget(self._create_setting_row("마우스 휠 동작", self._create_mouse_wheel_radios()))
 
-            # "없음" 라디오 버튼
-            self.mouse_wheel_none_radio = QRadioButton(LanguageManager.translate("없음"))
-            self.mouse_wheel_none_radio.setStyleSheet(f"""
-                QRadioButton {{
-                    color: {ThemeManager.get_color('text')};
-                    padding: {UIScaleManager.get("radiobutton_padding")}px;
-                }}
-                QRadioButton::indicator {{
-                    width: {UIScaleManager.get("radiobutton_size")}px;
-                    height: {UIScaleManager.get("radiobutton_size")}px;
-                }}
-                QRadioButton::indicator:checked {{
-                    background-color: #848484;
-                    border: {UIScaleManager.get("radiobutton_border")}px solid #848484;
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-                QRadioButton::indicator:unchecked {{
-                    background-color: {ThemeManager.get_color('bg_primary')};
-                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-            """)
+        return self._build_group_widget("작업 설정", add_widgets)
 
-            # 버튼 그룹에 추가
-            self.mouse_wheel_group.addButton(self.mouse_wheel_photo_radio, 0)
-            self.mouse_wheel_group.addButton(self.mouse_wheel_none_radio, 1)
+    def update_quick_sort_input_style(self):
+        """빠른 분류 입력 필드의 활성화/비활성화 스타일을 업데이트합니다."""
+        # 활성화 스타일
+        active_style = f"""
+            QLineEdit {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 4px; border-radius: 3px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {ThemeManager.get_color('accent')}; }}
+        """
+        # 비활성화 스타일
+        disabled_style = f"""
+            QLineEdit {{
+                background-color: {ThemeManager.get_color('bg_disabled')};
+                color: {ThemeManager.get_color('text_disabled')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 4px; border-radius: 3px;
+            }}
+        """
+        
+        self.quick_sort_e_input.setEnabled(self.quick_sort_e_enabled)
+        self.quick_sort_e_input.setStyleSheet(active_style if self.quick_sort_e_enabled else disabled_style)
 
-            # 현재 설정에 따라 초기 선택
-            if getattr(self, 'mouse_wheel_action', 'photo_navigation') == 'photo_navigation':
-                self.mouse_wheel_photo_radio.setChecked(True)
-            else:
-                self.mouse_wheel_none_radio.setChecked(True)
+        self.quick_sort_f_input.setEnabled(self.quick_sort_f_enabled)
+        self.quick_sort_f_input.setStyleSheet(active_style if self.quick_sort_f_enabled else disabled_style)
 
-            # 시그널 연결
-            self.mouse_wheel_group.buttonClicked.connect(self.on_mouse_wheel_action_changed)
 
-            # 레이아웃에 추가
-            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_photo_radio)
-            mouse_wheel_radio_layout.addWidget(self.mouse_wheel_none_radio)
-            mouse_wheel_radio_layout.addStretch(1)
+    def _is_valid_foldername(self, name):
+        """폴더명으로 사용 가능한지 검증하는 헬퍼 메서드"""
+        if not name or not name.strip():
+            return False
+        invalid_chars = '\\/:*?"<>|'
+        if any(char in name for char in invalid_chars):
+            return False
+        return True
 
-            mouse_wheel_layout.addWidget(mouse_wheel_label)
-            mouse_wheel_layout.addWidget(mouse_wheel_radio_container)
-            mouse_wheel_layout.addStretch(1)
+    def _build_advanced_tools_group(self, is_first_run=False):
+        """'도구 및 고급 설정' 그룹 UI를 생성합니다."""
+        def add_widgets(layout):
+            if not is_first_run:
+                # "세션 관리" 버튼을 라벨 없이 바로 추가
+                container_session = QWidget()
+                layout_session = QHBoxLayout(container_session)
+                layout_session.setContentsMargins(0,0,0,0)
+                layout_session.addWidget(self.session_management_button)
+                layout_session.addStretch(1)
+                layout.addWidget(container_session)
 
-            settings_layout.addWidget(mouse_wheel_container)
-            # === 마우스 휠 동작 설정 끝 ===
-
-            # === 새로운 "카메라별 RAW 처리 설정 초기화" 버튼 추가 ===
-            raw_settings_reset_container = QWidget()
-            raw_settings_reset_layout = QHBoxLayout(raw_settings_reset_container)
-            raw_settings_reset_layout.setContentsMargins(0, 5, 0, 5) # 상하 여백
-
-            # 버튼 왼쪽에 설명 라벨 (선택 사항, 버튼만 중앙에 둘 수도 있음)
-            raw_reset_label = QLabel(LanguageManager.translate("저장된 RAW 처리 방식")) # 새 번역 키
-            raw_reset_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            raw_reset_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-            font = QFont(self.font())
-            font.setPointSize(UIScaleManager.get("font_size"))
-            raw_reset_label.setFont(font)
-            raw_reset_label.setMinimumWidth(UIScaleManager.get("settings_label_width")) # 다른 라벨들과 너비 맞춤 (선택 사항)
-            raw_reset_label.setObjectName("raw_reset_label")
-
-            self.reset_camera_settings_button = QPushButton(LanguageManager.translate("초기화")) # 새 번역 키
-            # 버튼 스타일은 기존 load_button이나 다른 일반 버튼 스타일 재사용 가능
-            button_min_height = UIScaleManager.get("button_min_height")
-            button_padding = UIScaleManager.get("button_padding")
-            self.reset_camera_settings_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    color: {ThemeManager.get_color('text')};
-                    border: none;
-                    padding: {UIScaleManager.get("combobox_padding")}px;
-                    border-radius: 1px;
-                    min-height: 25px; 
-                    min-width: 68px; /* 버튼 최소 너비 */
-                }}
-                QPushButton:hover {{
-                    background-color: {ThemeManager.get_color('bg_hover')};
-                }}
-                QPushButton:pressed {{
-                    background-color: {ThemeManager.get_color('bg_pressed')};
-                }}
-            """)
-            self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
-
-            raw_settings_reset_layout.addWidget(raw_reset_label)
-            raw_settings_reset_layout.addWidget(self.reset_camera_settings_button)
-            raw_settings_reset_layout.addStretch(1)
-
-            settings_layout.addWidget(raw_settings_reset_container)
-            # === RAW 설정 초기화 버튼 추가 끝 ===
-
-            # === "세션 저장 및 불러오기 🖜" 텍스트 링크 추가 ===
-            session_management_link_container = QWidget()
-            session_management_link_hbox = QHBoxLayout(session_management_link_container)
-            session_management_link_hbox.setContentsMargins(0, 5, 0, 5)
-            session_management_link_hbox.setSpacing(5)
-
-            session_link_label = QLabel(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
-            session_link_label.setObjectName("session_management_link_label")
-            session_link_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            session_link_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}")
-            session_link_label.setCursor(Qt.PointingHandCursor)
+                # "RAW 처리 방식 초기화" 버튼을 라벨 없이 바로 추가
+                container_raw = QWidget()
+                layout_raw = QHBoxLayout(container_raw)
+                layout_raw.setContentsMargins(0,0,0,0)
+                layout_raw.addWidget(self.reset_camera_settings_button)
+                layout_raw.addStretch(1)
+                layout.addWidget(container_raw)
             
-            def session_link_label_clicked(event):
-                if event.button() == Qt.LeftButton: self.show_session_management_popup()
-            session_link_label.mouseReleaseEvent = session_link_label_clicked
-            
-            session_management_link_hbox.addWidget(session_link_label)
-            session_management_link_hbox.addStretch(1) # 왼쪽에 붙이기
-            settings_layout.addWidget(session_management_link_container)
-            # === 세션 링크 추가 끝 ===
+            # "단축키 확인" 버튼을 라벨 없이 바로 추가
+            container_shortcuts = QWidget()
+            layout_shortcuts = QHBoxLayout(container_shortcuts)
+            layout_shortcuts.setContentsMargins(0,0,0,0)
+            layout_shortcuts.addWidget(self.shortcuts_button)
+            layout_shortcuts.addStretch(1)
+            layout.addWidget(container_shortcuts)
 
+        return self._build_group_widget("도구 및 고급 설정", add_widgets, show_title=not is_first_run)
 
-        # === "단축키 확인 🖜" 라벨 (모든 설정 팝업에 공통으로 표시되도록 if 블록 밖으로 이동) ===
-        # (만약 첫 실행 팝업에서는 이 링크가 맨 아래, 일반 설정에서는 다른 위치에 있다면,
-        #  is_first_run_popup 플래그에 따라 addWidget 순서를 다르게 할 수 있음.
-        #  여기서는 일단 모든 설정 항목들 다음에 공통으로 추가하는 것으로 가정)
+    def _create_setting_row(self, label_key, control_widget):
+        """설정 항목 한 줄(라벨 + 컨트롤)을 생성하는 헬퍼 메서드"""
+        row_container = QWidget()
+        row_layout = QHBoxLayout(row_container)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(10)
 
-        shortcut_info_container = QWidget()
-        shortcut_info_hbox = QHBoxLayout(shortcut_info_container)
-        shortcut_info_hbox.setContentsMargins(0, 5, 0, 0)
-        shortcut_info_hbox.setSpacing(5)
+        label_text = LanguageManager.translate(label_key)
+        label = QLabel(label_text)
+        label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        label.setMinimumWidth(UIScaleManager.get("settings_label_width"))
+        label.setObjectName(f"{label_key.replace(' ', '_')}_label")
 
-        # self.shortcut_info_label_in_settings_ui 라는 일관된 이름의 멤버 변수 사용 고려
-        # 이 라벨은 setup_settings_ui가 호출될 때마다 새로 만들어지므로,
-        # PhotoSortApp의 멤버로 유지하려면 show_..._popup 함수에서 할당해야 함.
-        # 여기서는 지역 변수로 생성하고 반환되는 settings_container에 포함.
-        # update_ui_texts에서 접근하려면 objectName 사용이 더 안정적.
-        _shortcut_label = QLabel(LanguageManager.translate("단축키 확인 🖜"))
-        _shortcut_label.setObjectName("settings_shortcut_info_label") # 공통 ObjectName
-        _shortcut_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        _shortcut_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}")
-        _shortcut_label.setCursor(Qt.PointingHandCursor)
-        
-        def _shortcut_label_clicked(event): # 로컬 함수
-            if event.button() == Qt.LeftButton: 
-                self.show_shortcuts_popup()
+        row_layout.addWidget(label)
 
-        _shortcut_label.mouseReleaseEvent = _shortcut_label_clicked
-        
-        shortcut_info_hbox.addWidget(_shortcut_label)
-        shortcut_info_hbox.addStretch(1)
+        if control_widget:
+            row_layout.addWidget(control_widget)
+            # 컨트롤 위젯이 버튼이면, 버튼 크기만큼만 공간을 차지하고 나머지는 빈 공간으로 둡니다.
+            if isinstance(control_widget, QPushButton):
+                row_layout.addStretch(1)
+            # 콤보박스나 체크박스 그룹처럼 스스로 너비를 조절하는 위젯이 아니면 Stretch 추가
+            elif not isinstance(control_widget, (QComboBox, QCheckBox)):
+                 if control_widget.layout() is not None and isinstance(control_widget.layout(), QHBoxLayout):
+                     pass
+                 else:
+                     row_layout.addStretch(1)
+        else:
+             row_layout.addStretch(1)
 
-        settings_layout.addWidget(shortcut_info_container)
-        
-        # settings_layout.addStretch(1) # 모든 설정 항목 아래에 여백
-        return settings_container
+        return row_container
 
+    def _create_language_radios(self):
+        """언어 선택 라디오 버튼 그룹 위젯 생성"""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+        layout.addWidget(self.english_radio)
+        layout.addWidget(self.korean_radio)
+        layout.addStretch(1)
+        return container
+
+    def _create_panel_position_radios(self):
+        """패널 위치 선택 라디오 버튼 그룹 위젯 생성"""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+        layout.addWidget(self.panel_pos_left_radio)
+        layout.addWidget(self.panel_pos_right_radio)
+        layout.addStretch(1)
+        return container
+
+    def _create_mouse_wheel_radios(self):
+        """마우스 휠 동작 선택 라디오 버튼 그룹 위젯 생성"""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+        layout.addWidget(self.mouse_wheel_photo_radio)
+        layout.addWidget(self.mouse_wheel_none_radio)
+        layout.addStretch(1)
+        return container
+
+    def _create_extension_checkboxes(self):
+        """이미지 형식 체크박스 그룹 위젯 생성 (2줄 구조)"""
+        # 전체 체크박스들을 담을 메인 컨테이너와 수직 레이아웃
+        main_container = QWidget()
+        vertical_layout = QVBoxLayout(main_container)
+        vertical_layout.setContentsMargins(0, 0, 0, 0)
+        vertical_layout.setSpacing(10)  # 줄 사이의 수직 간격
+
+        # 첫 번째 줄 체크박스 키 목록
+        keys_row1 = ["JPG", "HEIC", "WebP"]
+        # 두 번째 줄 체크박스 키 목록
+        keys_row2 = ["PNG", "BMP", "TIFF"]
+
+        # --- 첫 번째 줄 생성 ---
+        row1_container = QWidget()
+        row1_layout = QHBoxLayout(row1_container)
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+        row1_layout.setSpacing(20) # 체크박스 사이의 수평 간격
+
+        for name in keys_row1:
+            if name in self.ext_checkboxes:
+                row1_layout.addWidget(self.ext_checkboxes[name])
+        row1_layout.addStretch(1) # 오른쪽에 남는 공간을 채움
+
+        # --- 두 번째 줄 생성 ---
+        row2_container = QWidget()
+        row2_layout = QHBoxLayout(row2_container)
+        row2_layout.setContentsMargins(0, 0, 0, 0)
+        row2_layout.setSpacing(20) # 체크박스 사이의 수평 간격
+
+        for name in keys_row2:
+            if name in self.ext_checkboxes:
+                row2_layout.addWidget(self.ext_checkboxes[name])
+        row2_layout.addStretch(1) # 오른쪽에 남는 공간을 채움
+
+        # --- 메인 레이아웃에 각 줄 추가 ---
+        vertical_layout.addWidget(row1_container)
+        vertical_layout.addWidget(row2_container)
+
+        return main_container
 
     def on_viewport_speed_changed(self, index):
         """뷰포트 이동 속도 콤보박스 변경 시 호출"""
@@ -7468,25 +7412,17 @@ class PhotoSortApp(QMainWindow):
                 self.update_folder_label_style(label, self.target_folders[i] if hasattr(self, 'target_folders') else None)
     
     def show_settings_popup(self):
-        """설정 버튼 클릭 시 호출되는 메서드, 설정 팝업을 표시 (상하 구조)"""
-        # ──────────────────────────────
-        # [0] 이미 팝업창이 열려있다면 앞으로 가져오기
-        # ──────────────────────────────
+        """설정 버튼 클릭 시 호출되는 메서드, 2컬럼 구조의 설정 팝업을 표시"""
         if hasattr(self, 'settings_popup') and self.settings_popup.isVisible():
             self.settings_popup.activateWindow()
             return
 
-        # ──────────────────────────────
-        # [1] 팝업창 생성 및 기본 속성 설정
-        # ──────────────────────────────
         self.settings_popup = QDialog(self)
         self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
-        # UIScaleManager에서 설정 창 크기 가져오기
         popup_width = UIScaleManager.get("settings_popup_width", 785)
         popup_height = UIScaleManager.get("settings_popup_height", 910)
         self.settings_popup.setMinimumSize(popup_width, popup_height)
 
-        # ── Windows용 다크 테마 제목 표시줄 설정
         if sys.platform == "win32":
             try:
                 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
@@ -7501,207 +7437,113 @@ class PhotoSortApp(QMainWindow):
             except Exception as e:
                 logging.error(f"설정 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
 
-        # ── 다크 테마 배경 색상 적용
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.settings_popup.setPalette(palette)
         self.settings_popup.setAutoFillBackground(True)
 
-        # ──────────────────────────────
-        # [2] 메인 레이아웃 설정 (수직)
-        # ──────────────────────────────
-        main_layout = QVBoxLayout(self.settings_popup)
-        main_layout.setContentsMargins(15, 15, 15, 15)  # 바깥 여백
-        info_donation_spacing = UIScaleManager.get("info_donation_spacing", 40)
-        main_layout.setSpacing(info_donation_spacing)  # 각 패널 간 간격
+        # --- 메인 레이아웃 (수평 2컬럼) ---
+        main_layout = QHBoxLayout(self.settings_popup)
+        main_layout.setContentsMargins(25, 20, 25, 20)
+        main_layout.setSpacing(30)
 
-        # ──────────────────────────────
-        # [3] 상단 설정 패널 (설정 항목 + 단축키 안내)
-        # ──────────────────────────────
-        settings_section = QWidget()
-        settings_layout = QVBoxLayout(settings_section) # 이 레이아웃이 설정 항목들을 담음
-        settings_layout.setContentsMargins(0, 0, 0, 0)
-        settings_layout.setSpacing(0)  # setup_settings_ui 내부에서 간격 조절
+        # --- 왼쪽 컬럼 (설정 항목들) ---
+        left_column = QWidget()
+        left_layout = QVBoxLayout(left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
 
-        # setup_settings_ui가 반환하는 위젯 (모든 설정 항목 포함)을 settings_layout에 추가
-        settings_ui_widget = self.setup_settings_ui(is_first_run_popup=False) # <<< 일반 설정용 UI
-        settings_layout.addWidget(settings_ui_widget)
+        # setup_settings_ui를 호출하여 모든 설정 그룹이 포함된 위젯 생성
+        settings_ui_widget = self.setup_settings_ui() # 파라미터 없이 호출하면 모든 그룹 생성
+        left_layout.addWidget(settings_ui_widget)
+        
+        # --- 중앙 구분선 ---
+        separator_vertical = QFrame()
+        separator_vertical.setFrameShape(QFrame.VLine)
+        separator_vertical.setFrameShadow(QFrame.Sunken)
+        separator_vertical.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-width: 1px;")
+        
+        # --- 오른쪽 컬럼 (정보 및 후원) ---
+        right_column = QWidget()
+        right_layout = QVBoxLayout(right_column)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(UIScaleManager.get("info_donation_spacing", 40))
 
-        # ──────────────────────────────
-        # [4] 첫 번째 구분선 (상단과 중단 사이)
-        # ──────────────────────────────
-        separator1 = QFrame()
-        separator1.setFrameShape(QFrame.HLine)
-        separator1.setFrameShadow(QFrame.Sunken)
-        separator1.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+        # 정보 섹션
+        info_section = self._build_info_section()
+        right_layout.addWidget(info_section)
 
-        # ──────────────────────────────
-        # [5] 중단 정보 섹션
-        # ──────────────────────────────
+        # 구분선
+        separator_horizontal = QFrame()
+        separator_horizontal.setFrameShape(QFrame.HLine)
+        separator_horizontal.setFrameShadow(QFrame.Sunken)
+        separator_horizontal.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+        right_layout.addWidget(separator_horizontal)
+
+        # 후원 섹션
+        donation_section = self._build_donation_section()
+        right_layout.addWidget(donation_section)
+
+        right_layout.addStretch(1) # 하단 여백
+
+        # --- 메인 레이아웃에 컬럼 추가 ---
+        main_layout.addWidget(left_column, 6)    # 왼쪽 컬럼이 6의 비율
+        main_layout.addWidget(separator_vertical)
+        main_layout.addWidget(right_column, 4) # 오른쪽 컬럼이 4의 비율
+
+        self.settings_popup.exec_()
+    
+    def _build_info_section(self):
+        """'정보' 섹션 UI를 생성합니다."""
         info_section = QWidget()
         info_layout = QVBoxLayout(info_section)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(0)
 
-        # 앱 정보 텍스트
         info_text = self.create_translated_info_text()
         info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         info_label.setObjectName("photosort_info_label")
-
-        # 링크 활성화 설정 추가
         info_label.setOpenExternalLinks(True)
         info_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
-
         info_layout.addWidget(info_label)
-        info_layout.addSpacing(UIScaleManager.get("infotext_licensebutton", 40))  # 정보 텍스트와 버튼 사이 간격 추가
+        info_layout.addSpacing(UIScaleManager.get("infotext_licensebutton", 40))
 
-        # 오픈소스 라이선스 버튼 추가 (가운데 정렬을 위한 컨테이너 사용)
         license_button_container = QWidget()
         license_button_layout = QHBoxLayout(license_button_container)
         license_button_layout.setContentsMargins(0, 0, 0, 0)
-
-        # 버튼 생성 및 스타일 설정
         licenses_button = QPushButton("Open Source Licenses")
         licenses_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 180px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('bg_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('bg_pressed')};
-            }}
+            QPushButton {{ background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')}; border: none; padding: 8px 16px; border-radius: 4px; min-width: 180px; }}
+            QPushButton:hover {{ background-color: {ThemeManager.get_color('bg_hover')}; }}
+            QPushButton:pressed {{ background-color: {ThemeManager.get_color('bg_pressed')}; }}
         """)
-        licenses_button.setCursor(Qt.PointingHandCursor)  # 손가락 커서로 변경
+        licenses_button.setCursor(Qt.PointingHandCursor)
         licenses_button.clicked.connect(self.show_licenses_popup)
-
-        # 가운데 정렬을 위한 스트레치 추가
         license_button_layout.addStretch(1)
         license_button_layout.addWidget(licenses_button)
         license_button_layout.addStretch(1)
-
-        # 레이아웃에 버튼 컨테이너 추가
         info_layout.addWidget(license_button_container)
-        info_layout.addStretch(1)  # 정보 섹션 하단 여백 (기존 코드)
         
+        return info_section
 
-        # ──────────────────────────────
-        # [6] 두 번째 구분선 (중단과 하단 사이)
-        # ──────────────────────────────
-        separator2 = QFrame()
-        separator2.setFrameShape(QFrame.HLine)
-        separator2.setFrameShadow(QFrame.Sunken)
-        separator2.setStyleSheet(
-            f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;"
-        )
-
-        # ──────────────────────────────
-        # [7] 하단 후원 섹션
-        # ──────────────────────────────
+    def _build_donation_section(self):
+        """'후원' 섹션 UI를 생성합니다."""
+        # 이 부분은 기존 show_settings_popup의 후원 섹션 로직을 그대로 가져옵니다.
+        # (코드가 길어 생략하고, 기존 로직을 이 함수 안으로 옮기면 됩니다.)
         donation_section = QWidget()
         donation_layout = QVBoxLayout(donation_section)
-        donation_layout.setContentsMargins(0, 0, 0, 0)  # 상단만 여백 10px
+        donation_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 현재 언어 설정 확인 
         current_language = LanguageManager.get_current_language()
 
-        # 영어 설정일 때 결제 링크 표시
         if current_language == "en":
-            # 커피 이모지를 후원 섹션 전체의 왼쪽에 배치하기 위한 컨테이너
             donation_content_container = QWidget()
             donation_content_layout = QHBoxLayout(donation_content_container)
             donation_content_layout.setContentsMargins(0, 0, 0, 0)
             
-            # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
-            coffee_icon_path = self.resource_path("resources/coffee_icon.png")  # 이미지 파일 경로 지정
-            coffee_icon = QPixmap(coffee_icon_path)
-            coffee_emoji = QLabel()
-            if not coffee_icon.isNull():
-                # 이미지 크기 조정 (적절한 크기로 조정)
-                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                coffee_emoji.setPixmap(coffee_icon)
-            else:
-                # 이미지 로드 실패 시 텍스트로 대체
-                coffee_emoji.setText("☕")
-            coffee_emoji.setFixedWidth(60)  # 이미지에 적절한 너비 설정
-            coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
-            coffee_emoji.setAlignment(Qt.AlignCenter)  # 중앙 정렬
-
-            # 결제 링크 컨테이너 (세로 레이아웃)
-            links_container = QWidget()
-            links_layout = QVBoxLayout(links_container)
-            links_layout.setContentsMargins(0, 0, 0, 0)
-            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
-            
-            # 첫 번째 행: 바이미어커피와 페이팔
-            row1_container = QWidget()
-            row1_layout = QHBoxLayout(row1_container)
-            row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-            
-            # 바이미어커피 링크
-            bmc_url = "https://buymeacoffee.com/ffamilist"
-            qr_path_bmc = self.resource_path("resources/bmc_qr.png")
-            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path=qr_path_bmc, qr_display_size=250, parent=self.settings_popup)
-            bmc_label.setAlignment(Qt.AlignCenter)
-            
-            # 페이팔 링크
-            paypal_url = "https://paypal.me/ffamilist"
-            qr_path_paypal = ""
-            paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path=qr_path_paypal, qr_display_size=250, parent=self.settings_popup) 
-            paypal_label.setAlignment(Qt.AlignCenter)
-            paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
-            
-            # 첫 번째 행에 링크 추가
-            row1_layout.addWidget(bmc_label)
-            row1_layout.addWidget(paypal_label)
-            
-            # 두 번째 행: 카카오페이와 네이버페이
-            row2_container = QWidget()
-            row2_layout = QHBoxLayout(row2_container)
-            row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-            
-            # 카카오페이 링크
-            kakaopay_url = ""
-            qr_path_kakaopay = self.resource_path("resources/kakaopay_qr.png")
-            kakaopay_label = QRLinkLabel("KakaoPay 🇰🇷", kakaopay_url, qr_path=qr_path_kakaopay, qr_display_size=400, parent=self.settings_popup) 
-            kakaopay_label.setAlignment(Qt.AlignCenter)
-            
-            # 네이버페이 링크
-            naverpay_url = ""
-            qr_path_naverpay = self.resource_path("resources/naverpay_qr.png")
-            naverpay_label = QRLinkLabel("NaverPay 🇰🇷", naverpay_url, qr_path=qr_path_naverpay, qr_display_size=250, parent=self.settings_popup)
-            naverpay_label.setAlignment(Qt.AlignCenter)
-            
-            # 두 번째 행에 링크 추가
-            row2_layout.addWidget(kakaopay_label)
-            row2_layout.addWidget(naverpay_label)
-            
-            # 링크 컨테이너에 두 행 추가
-            links_layout.addWidget(row1_container)
-            links_layout.addWidget(row2_container)
-            
-            # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
-            donation_content_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
-            donation_content_layout.addWidget(links_container, 1)  # 나머지 공간 차지
-            
-            # 후원 레이아웃에 최종 컨테이너 추가
-            donation_layout.addWidget(donation_content_container)
-        else:  # "ko"
-            # 결제 링크를 담을 컨테이너 생성
-            ko_payment_container = QWidget()
-            ko_payment_layout = QHBoxLayout(ko_payment_container)
-            ko_payment_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
-            
-            # 커피 이모지 레이블 (세로로 중앙에 배치) - 이미지로 변경
-            coffee_icon_path = str(Path(__file__).parent / "resources" / "coffee_icon.png")
+            coffee_icon_path = self.resource_path("resources/coffee_icon.png")
             coffee_icon = QPixmap(coffee_icon_path)
             coffee_emoji = QLabel()
             if not coffee_icon.isNull():
@@ -7710,86 +7552,116 @@ class PhotoSortApp(QMainWindow):
             else:
                 coffee_emoji.setText("☕")
             coffee_emoji.setFixedWidth(60)
-            coffee_emoji.setStyleSheet("padding-left: 10px;")  # 왼쪽에 10px 패딩 추가
+            coffee_emoji.setStyleSheet("padding-left: 10px;")
             coffee_emoji.setAlignment(Qt.AlignCenter)
-            
-            # 결제 링크 컨테이너 (세로 레이아웃)
+
             links_container = QWidget()
             links_layout = QVBoxLayout(links_container)
             links_layout.setContentsMargins(0, 0, 0, 0)
-            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))  # 두 행 사이 간격
+            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
             
-            # 첫 번째 행: 카카오페이와 네이버페이
             row1_container = QWidget()
             row1_layout = QHBoxLayout(row1_container)
-            row1_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            row1_layout.setContentsMargins(0, 0, 0, 0)
             
-            # 카카오페이 링크
-            kakaopay_url = ""
-            qr_path_kakaopay_ko = self.resource_path("resources/kakaopay_qr.png")
-            kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), kakaopay_url, qr_path=qr_path_kakaopay_ko, qr_display_size=400, parent=self.settings_popup)
+            bmc_url = "https://buymeacoffee.com/ffamilist"
+            qr_path_bmc = self.resource_path("resources/bmc_qr.png")
+            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path=qr_path_bmc, qr_display_size=250, parent=self.settings_popup)
+            bmc_label.setAlignment(Qt.AlignCenter)
+            
+            paypal_url = "https://paypal.me/ffamilist"
+            paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path="", qr_display_size=250, parent=self.settings_popup)
+            paypal_label.setAlignment(Qt.AlignCenter)
+            paypal_label.setToolTip("Click to go to PayPal")
+            
+            row1_layout.addWidget(bmc_label)
+            row1_layout.addWidget(paypal_label)
+            
+            row2_container = QWidget()
+            row2_layout = QHBoxLayout(row2_container)
+            row2_layout.setContentsMargins(0, 0, 0, 0)
+            
+            qr_path_kakaopay = self.resource_path("resources/kakaopay_qr.png")
+            kakaopay_label = QRLinkLabel("KakaoPay 🇰🇷", "", qr_path=qr_path_kakaopay, qr_display_size=400, parent=self.settings_popup)
             kakaopay_label.setAlignment(Qt.AlignCenter)
             
-            # 네이버페이 링크
-            naverpay_url = ""
-            qr_path_naverpay_ko = self.resource_path("resources/naverpay_qr.png")
-            naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), naverpay_url, qr_path=qr_path_naverpay_ko, qr_display_size=250, parent=self.settings_popup) 
+            qr_path_naverpay = self.resource_path("resources/naverpay_qr.png")
+            naverpay_label = QRLinkLabel("NaverPay 🇰🇷", "", qr_path=qr_path_naverpay, qr_display_size=250, parent=self.settings_popup)
             naverpay_label.setAlignment(Qt.AlignCenter)
             
-            # 첫 번째 행에 링크 추가
+            row2_layout.addWidget(kakaopay_label)
+            row2_layout.addWidget(naverpay_label)
+            
+            links_layout.addWidget(row1_container)
+            links_layout.addWidget(row2_container)
+            
+            donation_content_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)
+            donation_content_layout.addWidget(links_container, 1)
+            
+            donation_layout.addWidget(donation_content_container)
+        else: # "ko"
+            ko_payment_container = QWidget()
+            ko_payment_layout = QHBoxLayout(ko_payment_container)
+            ko_payment_layout.setContentsMargins(0, 0, 0, 0)
+            
+            coffee_icon_path = self.resource_path("resources/coffee_icon.png")
+            coffee_icon = QPixmap(coffee_icon_path)
+            coffee_emoji = QLabel()
+            if not coffee_icon.isNull():
+                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                coffee_emoji.setPixmap(coffee_icon)
+            else:
+                coffee_emoji.setText("☕")
+            coffee_emoji.setFixedWidth(60)
+            coffee_emoji.setStyleSheet("padding-left: 10px;")
+            coffee_emoji.setAlignment(Qt.AlignCenter)
+            
+            links_container = QWidget()
+            links_layout = QVBoxLayout(links_container)
+            links_layout.setContentsMargins(0, 0, 0, 0)
+            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
+            
+            row1_container = QWidget()
+            row1_layout = QHBoxLayout(row1_container)
+            row1_layout.setContentsMargins(0, 0, 0, 0)
+            
+            qr_path_kakaopay_ko = self.resource_path("resources/kakaopay_qr.png")
+            kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), "", qr_path=qr_path_kakaopay_ko, qr_display_size=400, parent=self.settings_popup)
+            kakaopay_label.setAlignment(Qt.AlignCenter)
+            
+            qr_path_naverpay_ko = self.resource_path("resources/naverpay_qr.png")
+            naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), "", qr_path=qr_path_naverpay_ko, qr_display_size=250, parent=self.settings_popup)
+            naverpay_label.setAlignment(Qt.AlignCenter)
+            
             row1_layout.addWidget(kakaopay_label)
             row1_layout.addWidget(naverpay_label)
             
-            # 두 번째 행: Buy Me a Coffee와 PayPal
             row2_container = QWidget()
             row2_layout = QHBoxLayout(row2_container)
-            row2_layout.setContentsMargins(0, 0, 0, 0)  # 여백 제거
+            row2_layout.setContentsMargins(0, 0, 0, 0)
             
-            # Buy Me a Coffee 링크
             bmc_url_ko = "https://buymeacoffee.com/ffamilist"
             qr_path_bmc_ko = self.resource_path("resources/bmc_qr.png")
             bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url_ko, qr_path=qr_path_bmc_ko, qr_display_size=250, parent=self.settings_popup)
             bmc_label.setAlignment(Qt.AlignCenter)
             
-            # PayPal 링크
             paypal_url_ko = "https://paypal.me/ffamilist"
-            qr_path_paypal_ko = ""
-            paypal_label = QRLinkLabel("PayPal", paypal_url_ko, qr_path=qr_path_paypal_ko, qr_display_size=250, parent=self.settings_popup)
+            paypal_label = QRLinkLabel("PayPal", paypal_url_ko, qr_path="", qr_display_size=250, parent=self.settings_popup)
             paypal_label.setAlignment(Qt.AlignCenter)
-            paypal_label.setToolTip("Click to go to PayPal")  # 툴팁 추가
+            paypal_label.setToolTip("Click to go to PayPal")
             
-            # 두 번째 행에 링크 추가
             row2_layout.addWidget(bmc_label)
             row2_layout.addWidget(paypal_label)
             
-            # 링크 컨테이너에 두 행 추가
             links_layout.addWidget(row1_container)
             links_layout.addWidget(row2_container)
             
-            # 최종 컨테이너에 커피 이모지와 링크 컨테이너 추가
-            ko_payment_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)  # 수직 중앙 정렬
-            ko_payment_layout.addWidget(links_container, 1)  # 나머지 공간 차지
+            ko_payment_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)
+            ko_payment_layout.addWidget(links_container, 1)
             
-            # 후원 레이아웃에 최종 컨테이너 추가
             donation_layout.addWidget(ko_payment_container)
 
-        donation_layout.addStretch(1)  # 하단 여백 확보
-
-        # ──────────────────────────────
-        # [8] 메인 레이아웃에 구성요소 순서대로 추가
-        # ──────────────────────────────
-        main_layout.addWidget(settings_section)  # 상단 설정 패널
-        main_layout.addWidget(separator1)        # 첫 번째 구분선
-        main_layout.addWidget(info_section)      # 중단 정보 패널
-        main_layout.addWidget(separator2)        # 두 번째 구분선
-        main_layout.addWidget(donation_section)  # 하단 후원 패널
-        main_layout.addSpacing(UIScaleManager.get("bottom_space", 25))       # 하단 여백 확보
-
-        # ──────────────────────────────
-        # [9] 팝업 실행
-        # ──────────────────────────────
-        self.settings_popup.exec_()
-
+        return donation_section
 
     def show_shortcuts_popup(self):
         """단축키 안내 팝업창을 표시합니다."""
@@ -9455,80 +9327,55 @@ class PhotoSortApp(QMainWindow):
             else:
                 return None, False # 대화상자 닫힘
 
-    def match_raw_files(self, folder_path): # folder_path 인자 받도록 수정
+    def match_raw_files(self, folder_path, silent=False): # <<< silent 파라미터 추가
         """JPG 파일과 RAW 파일 매칭 및 결과 처리"""
         if not folder_path or not self.image_files:
             return
 
-        # RAW 파일 딕셔너리 초기화
-        temp_raw_files = {} # 임시 딕셔너리 사용
-
-        # 현재 로드된 모든 JPG 파일의 기본 이름(확장자 제외) 획득
+        temp_raw_files = {}
         jpg_filenames = {jpg_path.stem: jpg_path for jpg_path in self.image_files}
-        # RAW 폴더의 모든 파일 검사
         matched_count = 0
         raw_folder_path = Path(folder_path)
 
-        # 모든 파일 검사
         for file_path in raw_folder_path.iterdir():
             if not file_path.is_file():
                 continue
 
-            # 확장자가 RAW 확장자인지 확인
             if file_path.suffix.lower() in self.raw_extensions:
                 base_name = file_path.stem
-
-                # 동일한 이름의 JPG 파일이 있는지 확인
                 if base_name in jpg_filenames:
                     temp_raw_files[base_name] = file_path
                     matched_count += 1
 
-        # --- 매칭 결과 검사 추가 ---
         if matched_count == 0:
-            self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("정보"), LanguageManager.translate("선택한 RAW 폴더에서 매칭되는 파일을 찾을 수 없습니다."))
-            # 매칭 실패 시 UI 상태 업데이트
-            self.raw_folder = "" # 내부 경로도 클리어
+            # <<< silent 모드에서는 팝업을 표시하지 않음 >>>
+            if not silent:
+                self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("정보"), LanguageManager.translate("선택한 RAW 폴더에서 매칭되는 파일을 찾을 수 없습니다."))
+            self.raw_folder = ""
             self.raw_files = {}
-            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 레이블 리셋
-            self.update_raw_folder_ui_state() # X 버튼, 레이블 스타일, 토글 업데이트
+            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+            self.update_raw_folder_ui_state()
             return False
-        # --- 검사 끝 ---
 
-        # 매칭 성공 시 실제 변수 업데이트
         self.raw_folder = folder_path
         self.raw_files = temp_raw_files
         self.raw_folder_path_label.setText(folder_path)
-
-        # --- RAW 파일 매칭 시 자동으로 이동 체크박스 ON 설정 ---
         self.move_raw_files = True
-
-        # --- RAW 폴더 레이블 스타일 및 X 버튼/토글 상태 업데이트 추가 ---
-        self.update_raw_folder_ui_state() # 성공 시 X 버튼, 레이블 스타일, 토글 업데이트
+        self.update_raw_folder_ui_state()
         self.update_match_raw_button_state()
 
-        # 매칭 결과 팝업 표시 (매칭된 경우에만)
-        self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("RAW 파일 매칭 결과"), f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {len(self.image_files)}")
-    
-        # --- 현재 표시 중인 파일 정보 즉시 업데이트 로직 추가 ---
-        current_displaying_image_path_str = None
-        if self.grid_mode == "Off":
-            if 0 <= self.current_image_index < len(self.image_files):
-                current_displaying_image_path_str = str(self.image_files[self.current_image_index])
-        else: # Grid 모드
-            grid_selected_index = self.grid_page_start_index + self.current_grid_index
-            if 0 <= grid_selected_index < len(self.image_files):
-                current_displaying_image_path_str = str(self.image_files[grid_selected_index])
+        # <<< silent 모드에서는 팝업을 표시하지 않음 >>>
+        if not silent:
+            self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("RAW 파일 매칭 결과"), f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {len(self.image_files)}")
         
+        current_displaying_image_path_str = self.get_current_image_path()
         if current_displaying_image_path_str:
-            logging.debug(f"RAW 매칭 후 현재 파일 정보 업데이트 시도: {current_displaying_image_path_str}")
-            # update_file_info_display를 호출하면 내부에서 self.raw_files를 참조하여
-            # 링크 이모지를 포함한 파일명을 info_filename_label에 설정하고,
-            # EXIF 정보도 다시 로드(또는 캐시 사용)합니다.
             self.update_file_info_display(current_displaying_image_path_str)
-        # --- 즉시 업데이트 로직 끝 ---
+        else:
+            self.update_file_info_display(None)
 
-        self.save_state() # <<< 성공 시 저장
-        return True # <<< 성공 시 True 반환
+        self.save_state()
+        return True
 
 
     def get_bundled_exiftool_path(self):
@@ -9817,99 +9664,92 @@ class PhotoSortApp(QMainWindow):
             return False
 
     def setup_folder_selection_ui(self):
-        """분류 폴더 설정 UI를 동적으로 구성하고 컨테이너 위젯을 반환합니다."""
-        # 1. UI 요소 리스트 초기화 (재생성 시 이전 위젯 참조 제거)
-        self.folder_buttons = []
-        self.folder_path_labels = []
-        self.folder_delete_buttons = []
+            """분류 폴더 설정 UI를 동적으로 구성하고 컨테이너 위젯을 반환합니다."""
+            # 1. UI 요소 리스트 초기화 (재생성 시 이전 위젯 참조 제거)
+            self.folder_buttons = []
+            self.folder_path_labels = []
+            self.folder_delete_buttons = []
+            # 2. 모든 폴더 행을 담을 메인 컨테이너 위젯 생성
+            main_container = QWidget()
+            main_layout = QVBoxLayout(main_container)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
+            # UIScaleManager 값 미리 가져오기
+            button_padding = UIScaleManager.get("button_padding")
+            button_min_height = UIScaleManager.get("button_min_height")
+            folder_label_padding = UIScaleManager.get("sort_folder_label_padding")
+            delete_button_width = UIScaleManager.get("delete_button_width")
+            folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
+            temp_label_font = QFont("Arial", UIScaleManager.get("font_size"))
+            fm_label = QFontMetrics(temp_label_font)
+            label_line_height = fm_label.height()
+            # <<< [수정] 버튼 높이를 1줄 기준으로 계산하도록 변경 ( * 2 를 * 1 로) >>>
+            label_fixed_height = (label_line_height * 1) + folder_label_padding
+            # 3. self.folder_count 만큼 루프를 돌며 각 폴더 행 UI 생성
+            for i in range(self.folder_count):
+                folder_container = QWidget()
+                folder_layout = QHBoxLayout(folder_container)
+                folder_layout.setContentsMargins(0, 0, 0, 0)
+                folder_layout.setSpacing(folder_container_spacing)
+                # 폴더 버튼 생성
+                folder_button = QPushButton(f"{i+1}")
+                folder_button.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {ThemeManager.get_color('bg_secondary')};
+                        color: {ThemeManager.get_color('text')};
+                        border: none;
+                        padding: {button_padding}px;
+                        border-radius: 1px;
+                        height: {label_fixed_height}px;
+                    }}
+                    QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
+                    QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
+                """)
+                folder_button.clicked.connect(lambda checked=False, idx=i: self.select_category_folder(idx))
+                folder_button.setFixedWidth(delete_button_width)
+                folder_button.setFixedHeight(label_fixed_height)
+                # 삭제 버튼 생성
+                delete_button = QPushButton("X")
+                delete_button.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {ThemeManager.get_color('bg_secondary')};
+                        color: {ThemeManager.get_color('text')};
+                        border: none;
+                        padding: 4px;
+                        border-radius: 1px;
+                        height: {label_fixed_height}px;
+                    }}
+                    QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; color: white; }}
+                    QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; color: white; }}
+                    QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; }}
+                """)
+                delete_button.clicked.connect(lambda checked=False, idx=i: self.clear_category_folder(idx))
+                delete_button.setFixedWidth(delete_button_width)
+                delete_button.setFixedHeight(label_fixed_height)
 
-        # 2. 모든 폴더 행을 담을 메인 컨테이너 위젯 생성
-        main_container = QWidget()
-        main_layout = QVBoxLayout(main_container)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
+                # 1. 레이블을 빈 텍스트로 먼저 생성
+                folder_path_label = FolderPathLabel("", fixed_height_padding=folder_label_padding)
+                
+                # 2. 인덱스를 설정하여 레이블의 타입(1줄/2줄)과 높이를 먼저 결정
+                folder_path_label.set_folder_index(i)
+                folder_path_label.imageDropped.connect(self.on_folder_image_dropped)
+                folder_path_label.doubleClicked.connect(lambda full_path_emitted, idx=i: self.open_category_folder(idx, full_path_emitted))
 
-        # UIScaleManager 값 미리 가져오기
-        button_padding = UIScaleManager.get("button_padding")
-        button_min_height = UIScaleManager.get("button_min_height")
-        folder_label_padding = UIScaleManager.get("folder_label_padding")
-        delete_button_width = UIScaleManager.get("delete_button_width")
-        folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
+                # 3. 저장된 경로를 가져와서 마지막에 setText 호출
+                folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
+                display_text = folder_path if folder_path else LanguageManager.translate("폴더 경로")
+                folder_path_label.setText(display_text)
 
-        temp_label_font = QFont("Arial", UIScaleManager.get("font_size"))
-        fm_label = QFontMetrics(temp_label_font)
-        label_line_height = fm_label.height()
-        label_fixed_height = (label_line_height * 2) + folder_label_padding
-
-        # 3. self.folder_count 만큼 루프를 돌며 각 폴더 행 UI 생성
-        for i in range(self.folder_count):
-            folder_container = QWidget()
-            folder_layout = QHBoxLayout(folder_container)
-            folder_layout.setContentsMargins(0, 0, 0, 0)
-            folder_layout.setSpacing(folder_container_spacing)
-
-            # 폴더 버튼 생성
-            folder_button = QPushButton(f"{i+1}")
-            folder_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    color: {ThemeManager.get_color('text')};
-                    border: none;
-                    padding: {button_padding}px;
-                    border-radius: 1px;
-                    min-height: {button_min_height}px;
-                }}
-                QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
-                QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
-            """)
-            folder_button.clicked.connect(lambda checked=False, idx=i: self.select_category_folder(idx))
-            folder_button.setFixedWidth(delete_button_width)
-            folder_button.setFixedHeight(label_fixed_height)
-
-            # 삭제 버튼 생성
-            delete_button = QPushButton("X")
-            delete_button.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    color: {ThemeManager.get_color('text')};
-                    border: none;
-                    padding: 4px;
-                    border-radius: 1px;
-                    min-height: {button_min_height}px;
-                }}
-                QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; color: white; }}
-                QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; color: white; }}
-                QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; }}
-            """)
-            delete_button.clicked.connect(lambda checked=False, idx=i: self.clear_category_folder(idx))
-            delete_button.setFixedWidth(delete_button_width)
-            delete_button.setFixedHeight(label_fixed_height)
-
-            # 폴더 경로 레이블 생성
-            folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
-            display_text = folder_path if folder_path else LanguageManager.translate("폴더 경로")
-            
-            folder_path_label = FolderPathLabel(display_text, fixed_height_padding=folder_label_padding)
-            
-            # === 드롭 기능 설정 ===
-            folder_path_label.set_folder_index(i)  # 폴더 인덱스 설정
-            folder_path_label.imageDropped.connect(self.on_folder_image_dropped)  # 드롭 시그널 연결
-            
-            folder_path_label.doubleClicked.connect(lambda full_path_emitted, idx=i: self.open_category_folder(idx, full_path_emitted))
-
-            folder_layout.addWidget(folder_button)
-            folder_layout.addWidget(folder_path_label, 1)
-            folder_layout.addWidget(delete_button)
-
-            # 4. 생성된 한 줄의 폴더 UI를 메인 레이아웃에 추가
-            main_layout.addWidget(folder_container)
-
-            self.folder_buttons.append(folder_button)
-            self.folder_path_labels.append(folder_path_label)
-            self.folder_delete_buttons.append(delete_button)
-
-        # 5. 최종 컨테이너 위젯 반환
-        return main_container
+                folder_layout.addWidget(folder_button)
+                folder_layout.addWidget(folder_path_label, 1)
+                folder_layout.addWidget(delete_button)
+                # 4. 생성된 한 줄의 폴더 UI를 메인 레이아웃에 추가
+                main_layout.addWidget(folder_container)
+                self.folder_buttons.append(folder_button)
+                self.folder_path_labels.append(folder_path_label)
+                self.folder_delete_buttons.append(delete_button)
+            # 5. 최종 컨테이너 위젯 반환
+            return main_container
     
     def update_folder_buttons(self):
         """폴더 설정 상태에 따라 UI 업데이트"""
@@ -9951,7 +9791,9 @@ class PhotoSortApp(QMainWindow):
                         border-radius: 1px;
                     }}
                 """)
-                
+            
+            self.folder_path_labels[i].update_original_style(self.folder_path_labels[i].styleSheet())
+
             # X 버튼 상태 설정
             self.folder_delete_buttons[i].setEnabled(has_folder)
     
@@ -12177,6 +12019,11 @@ class PhotoSortApp(QMainWindow):
             self.fit_pixmap_cache.clear()
             self.image_loader.clear_cache()
 
+            # 썸네일 패널 초기화
+            self.thumbnail_panel.model.clear_cache()
+            self.thumbnail_panel.model.set_image_files([])
+            self.thumbnail_panel.clear_selection()
+
             # --- 그리드 썸네일 캐시 및 백그라운드 작업 초기화 ---
             self.grid_thumbnail_cache_2x2.clear()  # 2x2 그리드 캐시 초기화
             self.grid_thumbnail_cache_3x3.clear()  # 3x3 그리드 캐시 초기화
@@ -13303,9 +13150,9 @@ class PhotoSortApp(QMainWindow):
             "theme": ThemeManager.get_current_theme_name(),
             "is_raw_only_mode": self.is_raw_only_mode,
             "control_panel_on_right": getattr(self, 'control_panel_on_right', False),
-            "show_grid_filenames": self.show_grid_filenames, # 파일명 표시 상태 추가
+            "show_grid_filenames": self.show_grid_filenames, # 파일명 표시 상태
             "last_used_raw_method": self.image_loader._raw_load_strategy if hasattr(self, 'image_loader') else "preview",
-            "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정 추가
+            "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
             "mouse_wheel_action": getattr(self, 'mouse_wheel_action', 'photo_navigation'),  # 마우스 휠 동작
             "folder_count": self.folder_count,
@@ -13396,17 +13243,27 @@ class PhotoSortApp(QMainWindow):
             
             self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
+    
+            self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")
 
             self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")  # 추가
             logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
 
-            self.saved_sessions = loaded_data.get("saved_sessions", {}) # <<< 추가, 없으면 빈 딕셔너리
+            self.saved_sessions = loaded_data.get("saved_sessions", {})
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
 
             # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
             default_extensions = {'.jpg', '.jpeg'}
             loaded_extensions = loaded_data.get("supported_image_extensions", list(default_extensions))
             self.supported_image_extensions = set(loaded_extensions)
+
+            # 불러온 데이터로 체크박스 UI 상태 동기화
+            if hasattr(self, 'ext_checkboxes'):
+                extension_groups = {"JPG": ['.jpg', '.jpeg'], "PNG": ['.png'], "WebP": ['.webp'], "HEIC": ['.heic', '.heif'], "BMP": ['.bmp'], "TIFF": ['.tif', '.tiff']}
+                for name, checkbox in self.ext_checkboxes.items():
+                    # 해당 그룹의 확장자 중 하나라도 지원 목록에 포함되어 있는지 확인
+                    is_checked = any(ext in self.supported_image_extensions for ext in extension_groups[name])
+                    checkbox.setChecked(is_checked)
 
             self.folder_count = loaded_data.get("folder_count", 3)
             loaded_folders = loaded_data.get("target_folders", [])
@@ -13446,7 +13303,7 @@ class PhotoSortApp(QMainWindow):
                     self.mouse_wheel_photo_radio.setChecked(True)
                 else:
                     self.mouse_wheel_none_radio.setChecked(True)
-            
+        
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
 
@@ -13635,7 +13492,12 @@ class PhotoSortApp(QMainWindow):
             self.update_all_ui_after_load_failure_or_first_run()
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-            return True # 오류가 있었지만 기본값으로 계속 실행함을 알림
+            logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
+
+            # 상태 로드가 완료된 후, 최종 언어 설정에 맞게 모든 컨트롤의 텍스트를 업데이트합니다.
+            self.update_all_settings_controls_text()
+
+            return True # 정상적으로 상태 로드 완료
 
     def initialize_to_default_state(self):
         """애플리케이션 상태를 안전한 기본값으로 초기화합니다 (파일 로드 실패 시 등)."""
@@ -14347,23 +14209,24 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"center_viewport 오류: {e}")
             return False
 
-
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
+            focused_widget = QApplication.focusWidget()
+            if isinstance(focused_widget, (QLineEdit, QSpinBox, QTextBrowser)):
+                return super().eventFilter(obj, event)
             if self.is_input_dialog_active:
                 return super().eventFilter(obj, event)
 
             key = event.key()
             modifiers = event.modifiers()
             is_auto_repeat = event.isAutoRepeat()
-
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
 
             if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
             elif modifiers == ctrl_modifier and key == Qt.Key_Y: self.redo_move(); return True
             elif (modifiers & ctrl_modifier) and (modifiers & Qt.ShiftModifier) and key == Qt.Key_Z: self.redo_move(); return True
-            
+
             if key == Qt.Key_Return or key == Qt.Key_Enter:
                 if self.file_list_dialog is None or not self.file_list_dialog.isVisible():
                     if self.image_files:
@@ -14386,12 +14249,11 @@ class PhotoSortApp(QMainWindow):
                     self.file_list_dialog.activateWindow()
                     self.file_list_dialog.raise_()
                 return True
-                
             if key == Qt.Key_F1: self.force_refresh=True; self.space_pressed = False; self.grid_off_radio.setChecked(True); self.on_grid_changed(self.grid_off_radio); return True
             elif key == Qt.Key_F2: self.force_refresh=True; self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio); return True
             elif key == Qt.Key_F3: self.force_refresh=True; self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio); return True
+            elif key == Qt.Key_F5: self.refresh_folder_contents(); return True
             elif key == Qt.Key_Delete: self.reset_program_state(); return True
-            
             if key == Qt.Key_Escape:
                 if self.file_list_dialog and self.file_list_dialog.isVisible(): self.file_list_dialog.reject(); return True
                 if self.zoom_mode != "Fit":
@@ -14403,28 +14265,20 @@ class PhotoSortApp(QMainWindow):
                     if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
-
-            # R 키: 뷰포트 중앙 이동 (Zoom 100% 또는 Spin 모드에서만)
             if key == Qt.Key_R:
                 if (self.grid_mode == "Off" and 
                     self.zoom_mode in ["100%", "Spin"] and 
                     self.original_pixmap):
                     self.center_viewport()
                     return True
-
             if key == Qt.Key_Space:
                 if self.grid_mode == "Off":
-                    # 기존 Grid Off 모드에서의 줌 전환 로직
                     if self.zoom_mode == "Fit":
                         if self.original_pixmap:
-                            # [수정] 마지막 활성 줌 모드로 전환
                             target_zoom_mode = self.last_active_zoom_mode
                             logging.debug(f"Space 키: Fit -> {target_zoom_mode} 요청")
-                            
-                            # 현재 방향 정보 확인
                             current_orientation = self.current_image_orientation
                             if current_orientation:
-                                # 저장된 뷰포트 포커스 복구
                                 saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
                                 self.current_active_rel_center = saved_rel_center
                                 self.current_active_zoom_level = target_zoom_mode
@@ -14432,66 +14286,48 @@ class PhotoSortApp(QMainWindow):
                             else:
                                 self.current_active_rel_center = QPointF(0.5, 0.5)
                                 self.current_active_zoom_level = target_zoom_mode
-                            
                             self.zoom_change_trigger = "space_key_to_zoom"
                             self.zoom_mode = target_zoom_mode
-                            
                             if target_zoom_mode == "100%":
                                 self.zoom_100_radio.setChecked(True)
                             elif target_zoom_mode == "Spin":
                                 self.zoom_spin_btn.setChecked(True)
-                            
                             self.apply_zoom_to_image()
                     elif self.zoom_mode in ["100%", "Spin"]:
                         logging.debug(f"Space 키: {self.zoom_mode} -> Fit 요청")
-                        
-                        # 현재 뷰포트 위치 저장
                         current_orientation = self.current_image_orientation
                         if current_orientation:
                             current_rel_center = self._get_current_view_relative_center()
                             logging.debug(f"Space 키 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
-                            
                             self.current_active_rel_center = current_rel_center
                             self.current_active_zoom_level = self.zoom_mode
-                            
                             self._save_orientation_viewport_focus(
                                 current_orientation,
                                 current_rel_center,
                                 self.zoom_mode
                             )
-                        
-                        # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
                         self.last_active_zoom_mode = self.zoom_mode
                         logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
-                        
                         self.zoom_mode = "Fit"
                         self.fit_radio.setChecked(True)
                         self.apply_zoom_to_image()
                     return True
-                
-                else:  # Grid On 모드에서 Space 키 - 누락된 부분 복원
-                    # Grid 모드에서 선택된 이미지로 전환하고 Grid Off 모드로 변경
+                else:
                     current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
                     if 0 <= current_selected_grid_index < len(self.image_files):
                         self.current_image_index = current_selected_grid_index
-                        self.force_refresh = True  # Grid Off로 전환 후 첫 이미지 표시 시 강제 새로고침
-                    
-                    # Grid Off로 전환하기 전에 현재 Grid 모드 저장 (ESC 복귀용)
+                        self.force_refresh = True
                     self.previous_grid_mode = self.grid_mode
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True)
-                    self.space_pressed = True  # on_grid_changed에서 이전 모드 초기화 방지용
-                    
-                    # Grid Off로 전환 및 UI 업데이트
-                    self.update_grid_view()  # Grid Off로 전환 및 display_current_image 호출 유도
+                    self.space_pressed = True
+                    self.update_grid_view()
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
                     return True
-
             is_viewport_move_condition = (self.grid_mode == "Off" and
                                         self.zoom_mode in ["100%", "Spin"] and
                                         self.original_pixmap)
-            
             key_to_add_for_viewport = None
             if is_viewport_move_condition:
                 if modifiers & Qt.ShiftModifier:
@@ -14504,7 +14340,6 @@ class PhotoSortApp(QMainWindow):
                     elif key == Qt.Key_Right: key_to_add_for_viewport = Qt.Key_Right
                     elif key == Qt.Key_Up: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_Down: key_to_add_for_viewport = Qt.Key_Down
-            
             if key_to_add_for_viewport:
                 if not is_auto_repeat:
                     if key_to_add_for_viewport not in self.pressed_keys_for_viewport:
@@ -14512,7 +14347,6 @@ class PhotoSortApp(QMainWindow):
                     if not self.viewport_move_timer.isActive():
                         self.viewport_move_timer.start()
                 return True
-
             if self.grid_mode == "Off":
                 if not (modifiers & Qt.ShiftModifier):
                     if key == Qt.Key_A: self.show_previous_image(); return True
@@ -14532,19 +14366,13 @@ class PhotoSortApp(QMainWindow):
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
                     elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
-
             if Qt.Key_1 <= key <= (Qt.Key_1 + self.folder_count - 1):
-                # 키 반복 이벤트 무시 (3번 문제 해결)
                 if event.isAutoRepeat():
                     return True
-                    
                 if self.image_processing:
                     return True
                 folder_index = key - Qt.Key_1
-                
-                # 폴더 레이블 하이라이트 (2번 문제 해결)
                 self.highlight_folder_label(folder_index, True)
-                
                 self.image_processing = True
                 if self.grid_mode != "Off":
                     self.move_grid_image(folder_index)
@@ -14552,29 +14380,23 @@ class PhotoSortApp(QMainWindow):
                     self.move_current_image_to_folder(folder_index)
                 self.image_processing = False
                 return True
-
-            # Ctrl+A: 전체 선택/해제
             if key == Qt.Key_A and (modifiers & Qt.ControlModifier):
                 if self.grid_mode != "Off" and self.image_files:
                     self.toggle_select_all_in_page()
                 return True
-
             return False
-
         elif event.type() == QEvent.KeyRelease:
+            # <<< [수정] key 변수 정의 추가 >>>
+            key = event.key()
+
             if self.is_input_dialog_active:
                 return super().eventFilter(obj, event)
-
-            key = event.key()
             if event.isAutoRepeat():
                 return super().eventFilter(obj, event)
-
-            # 숫자키 릴리스 처리 추가
             if Qt.Key_1 <= key <= Qt.Key_9:
                 folder_index = key - Qt.Key_1
                 self.highlight_folder_label(folder_index, False)
                 return True
-
             key_to_remove_from_viewport = None
             if key == Qt.Key_Shift:
                 if self.pressed_keys_for_viewport:
@@ -14587,12 +14409,10 @@ class PhotoSortApp(QMainWindow):
             elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up
             elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down
-
             action_taken = False
             if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
                 self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
                 action_taken = True
-            
             if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
                 self.viewport_move_timer.stop()
                 if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap:
@@ -14602,12 +14422,9 @@ class PhotoSortApp(QMainWindow):
                     self.current_active_rel_center = final_rel_center
                     self.current_active_zoom_level = final_zoom_level
                     self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, final_zoom_level)
-
             if action_taken or key == Qt.Key_Shift:
                 return True
-            
             return False
-
         return super().eventFilter(obj, event)
 
     def on_file_list_dialog_closed(self, result):
@@ -14737,6 +14554,11 @@ class PhotoSortApp(QMainWindow):
         self.original_pixmap = None
         self.image_loader.clear_cache() # 이미지 로더 캐시 비우기
         self.fit_pixmap_cache.clear()   # Fit 모드 캐시 비우기
+
+        # 썸네일 패널 초기화
+        self.thumbnail_panel.model.clear_cache()
+        self.thumbnail_panel.model.set_image_files([])
+        self.thumbnail_panel.clear_selection()
 
         # --- 뷰포트 포커스 정보 초기화 ---
         self.viewport_focus_by_orientation.clear()
@@ -14935,6 +14757,9 @@ class PhotoSortApp(QMainWindow):
         elif button == self.korean_radio:
             LanguageManager.set_language("ko")
 
+        if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
+            self.update_settings_labels_texts(self.settings_popup)
+
     def on_date_format_changed(self, index):
         """날짜 형식 변경 시 호출되는 함수"""
         if index < 0:
@@ -14944,118 +14769,96 @@ class PhotoSortApp(QMainWindow):
 
     def update_ui_texts(self):
         """UI의 모든 텍스트를 현재 언어로 업데이트"""
-        # 버튼 텍스트 업데이트
+        # --- 메인 윈도우 UI 텍스트 업데이트 ---
         self.load_button.setText(LanguageManager.translate("이미지 불러오기"))
         self.update_match_raw_button_state()
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
-
-        # "파일명" 토글 체크박스 텍스트 업데이트
         if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
         
-        # 폴더 경로 레이블 업데이트
-        if self.folder_path_label.text() == "폴더 경로" or self.folder_path_label.text() == "Folder Path":
+        if not self.current_folder:
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-        if self.raw_folder_path_label.text() == "폴더 경로" or self.raw_folder_path_label.text() == "Folder Path":
+        if not self.raw_folder:
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            
-        # 분류 폴더 경로 레이블 업데이트
-        for label in self.folder_path_labels:
-            if label.text() == "폴더 경로" or label.text() == "Folder Path":
+        for i, label in enumerate(self.folder_path_labels):
+            if not (i < len(self.target_folders) and self.target_folders[i]):
                 label.setText(LanguageManager.translate("폴더 경로"))
         
-        # 파일 정보 레이블 업데이트
-        self.update_file_info_display(self.get_current_image_path())
-        
-        # 창 제목 업데이트
         self.update_window_title_with_selection()
         
-        # 🎯 설정 창 처리 - 모든 텍스트 업데이트를 update_settings_labels_texts()로 위임
-        if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
-            print("설정 팝업 텍스트 업데이트 중...")
-            # 팝업 창 제목 업데이트
-            popup_title_key = "초기 설정" if self.settings_popup.windowTitle() in ["초기 설정", "Initial Setup"] else "설정 및 정보"
-            self.settings_popup.setWindowTitle(LanguageManager.translate(popup_title_key))
+        # --- 설정 창 관련 모든 컨트롤의 텍스트 업데이트 ---
+        self.update_all_settings_controls_text()
 
-            # 팝업 내부 위젯 텍스트 업데이트 (재귀 함수 호출)
-            self.update_settings_labels_texts(self.settings_popup)
-
-            # '확인' 버튼 텍스트 업데이트 (첫 실행 팝업에만 존재)
-            if hasattr(self.settings_popup, 'confirm_button'):
-                self.settings_popup.confirm_button.setText(LanguageManager.translate("확인"))
-            
-            print("설정 팝업 텍스트 업데이트 완료.")
-
-        # 현재 파일 정보 다시 표시
+        # --- 현재 파일 정보 다시 표시 (날짜 형식 등이 바뀌었을 수 있으므로) ---
         self.update_file_info_display(self.get_current_image_path())
 
-    def update_settings_labels_texts(self, widget):
-        """설정 UI의 라벨 텍스트 업데이트 (재귀적으로 모든 자식 위젯 검색)"""
-        
-        # 현재 위젯이 QLabel인 경우 확인
-        if isinstance(widget, QLabel):
-            widget_object_name = widget.objectName()
+    def update_settings_labels_texts(self, parent_widget):
+        """설정 UI의 모든 텍스트를 현재 언어로 업데이트합니다."""
+        if not parent_widget:
+            return
 
-            # 1. ObjectName으로 먼저 확인 (더 안정적인 방법)
-            if widget_object_name == "first_run_welcome_label":
-                widget.setText(LanguageManager.translate("기본 설정을 선택해주세요."))
-            elif widget_object_name == "shortcuts_title_label":
-                widget.setText(LanguageManager.translate("단축키"))
-            elif widget_object_name == "shortcuts_content_label":
-                self._update_shortcut_label_text(widget)
-            elif widget_object_name == "panel_pos_title_label":
-                widget.setText(LanguageManager.translate("컨트롤 패널"))
-            elif widget_object_name == "language_title_label":
-                widget.setText(LanguageManager.translate("언어"))
-            elif widget_object_name == "date_format_title_label":
-                widget.setText(LanguageManager.translate("날짜 형식"))
-            elif widget_object_name == "theme_title_label":
-                widget.setText(LanguageManager.translate("테마"))
-            elif widget_object_name == "folder_count_title_label":
-                widget.setText(LanguageManager.translate("분류 폴더 개수"))
-            elif widget_object_name == "settings_shortcut_info_label":
-                widget.setText(LanguageManager.translate("단축키 확인 🖜"))
-            # 🎯 새로 추가: 기존 update_ui_texts()에서 처리되던 설정 창 텍스트들
-            elif widget_object_name == "ext_title_label":
-                widget.setText(LanguageManager.translate("불러올 이미지 형식"))
-            elif widget_object_name == "raw_reset_label":
-                widget.setText(LanguageManager.translate("저장된 RAW 처리 방식"))
-            elif widget_object_name == "mouse_wheel_label":
-                widget.setText(LanguageManager.translate("마우스 휠 동작"))
-            elif widget_object_name == "viewport_speed_label":
-                widget.setText(LanguageManager.translate("뷰포트 이동 속도"))
-            elif widget_object_name == "session_management_link_label":
-                widget.setText(LanguageManager.translate("세션 저장 및 불러오기 🖜"))
-            elif widget_object_name == "photosort_info_label":
-                widget.setText(self.create_translated_info_text())
+        # --- 그룹 제목 업데이트 ---
+        group_title_keys = {
+            "group_title_UI_설정": "UI 설정",
+            "group_title_작업_설정": "작업 설정",
+            "group_title_도구_및_고급_설정": "도구 및 고급 설정"
+        }
+        for name, key in group_title_keys.items():
+            label = parent_widget.findChild(QLabel, name)
+            if label:
+                label.setText(LanguageManager.translate(key))
 
-        elif isinstance(widget, QRadioButton):
-            if widget.text() in ["사진 넘기기", "Photo Navigation"]:
-                widget.setText(LanguageManager.translate("사진 넘기기"))
-            elif widget.text() in ["없음", "None"]:
-                widget.setText(LanguageManager.translate("없음"))
-            elif widget.text() in ["좌측", "Left"]:
-                widget.setText(LanguageManager.translate("좌측"))
-            elif widget.text() in ["우측", "Right"]:
-                widget.setText(LanguageManager.translate("우측"))
+        # --- 개별 설정 항목 라벨 업데이트 ---
+        setting_row_keys = {
+            "언어_label": "언어",
+            "테마_label": "테마",
+            "컨트롤_패널_label": "컨트롤 패널",
+            "날짜_형식_label": "날짜 형식",
+            "불러올_이미지_형식_label": "불러올 이미지 형식",
+            "분류_폴더_개수_label": "분류 폴더 개수",
+            "뷰포트_이동_속도_label": "뷰포트 이동 속도",
+            "마우스_휠_동작_label": "마우스 휠 동작",
+            "세션_저장_및_불러오기_🖜_label": "세션 저장 및 불러오기 🖜",
+            "저장된_RAW_처리_방식_label": "저장된 RAW 처리 방식",
+            "단축키_확인_🖜_label": "단축키 확인 🖜"
+        }
+        for name, key in setting_row_keys.items():
+            label = parent_widget.findChild(QLabel, name)
+            if label:
+                label.setText(LanguageManager.translate(key))
         
-        # 🎯 새로 추가: QPushButton 처리 (초기화 버튼)
-        elif isinstance(widget, QPushButton):
-            if hasattr(self, 'reset_camera_settings_button') and widget is self.reset_camera_settings_button:
-                widget.setText(LanguageManager.translate("초기화"))
+        # --- 라디오 버튼 텍스트 업데이트 ---
+        if hasattr(self, 'panel_pos_left_radio'):
+            self.panel_pos_left_radio.setText(LanguageManager.translate("좌측"))
+        if hasattr(self, 'panel_pos_right_radio'):
+            self.panel_pos_right_radio.setText(LanguageManager.translate("우측"))
+        if hasattr(self, 'mouse_wheel_photo_radio'):
+            self.mouse_wheel_photo_radio.setText(LanguageManager.translate("사진 넘기기"))
+        if hasattr(self, 'mouse_wheel_none_radio'):
+            self.mouse_wheel_none_radio.setText(LanguageManager.translate("없음"))
+
+        # --- 버튼 텍스트 업데이트 ---
+        # reset_camera_settings_button의 텍스트를 "RAW 처리 방식 초기화"로 변경합니다.
+        if hasattr(self, 'reset_camera_settings_button'):
+            self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
+        if hasattr(self, 'session_management_button'):
+            self.session_management_button.setText(LanguageManager.translate("세션 관리"))
+        if hasattr(self, 'shortcuts_button'):
+            self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
         
-        # 🎯 새로 추가: QRLinkLabel 처리 (결제 서비스 이름)
-        elif isinstance(widget, QRLinkLabel):
-            if widget.text() in ["네이버페이", "NaverPay", "NaverPay 🇰🇷"]:
-                widget.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
-            elif widget.text() in ["카카오페이", "KakaoPay", "KakaoPay 🇰🇷"]:
-                widget.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
-        
-        # 자식 위젯이 있는 경우 재귀적으로 검색
-        for child in widget.findChildren(QObject):
-            if isinstance(child, QWidget) and child is not widget:
-                self.update_settings_labels_texts(child)
+        # --- 정보 및 후원 섹션 텍스트 업데이트 ---
+        info_label = parent_widget.findChild(QLabel, "photosort_info_label")
+        if info_label:
+            info_label.setText(self.create_translated_info_text())
+
+        # QRLinkLabel은 objectName이 없으므로 직접 찾아서 업데이트 (기존 방식 유지)
+        for qr_label in parent_widget.findChildren(QRLinkLabel):
+            if qr_label.url == "": # URL이 없는 QR 라벨(카카오페이, 네이버페이)을 대상으로 함
+                if "KakaoPay" in qr_label.text() or "카카오페이" in qr_label.text():
+                     qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
+                elif "NaverPay" in qr_label.text() or "네이버페이" in qr_label.text():
+                     qr_label.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
 
     def update_date_formats(self):
         """날짜 형식이 변경되었을 때 UI 업데이트"""
@@ -15229,7 +15032,7 @@ def main():
         "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택": "▪ Ctrl + A: Select All Images in Grid Mode",
         "▪ Delete: 작업 상태 초기화": "▪ Delete: Reset Working State", # "프로그램 초기화"에서 변경
         "▪ Enter: 파일 목록 표시": "▪ Enter: Show File List",
-        "단축키 확인 🖜": "View Shortcuts 🖜",
+        "단축키 확인": "View Shortcuts",
         "개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is free software that you can use freely for personal purposes.",
         "상업적 이용은 허용되지 않습니다.": "Commercial use is not permitted.",
         "이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.": "If you truly enjoy this app, consider supporting it with a cup of coffee!",
@@ -15257,7 +15060,7 @@ def main():
             "Due to compatibility issues, RAW files from {model_name_placeholder} cannot be decoded.<br>"
             "The embedded preview image with resolution <b>{prev_res_placeholder}</b> will be used.<br>"
             "(Note: The original image resolution for {model_name_placeholder} is <b>{orig_res_placeholder}</b>.)",
-        "저장된 RAW 처리 방식": "Saved RAW Processing Methods",
+        "RAW 처리 방식 초기화": "Reset RAW Processing Methods",
         "초기화": "Reset",
         "썸네일": "Thumbnails",
         "저장된 모든 카메라 모델의 RAW 파일 처리 방식을 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset the RAW file processing method for all saved camera models? This action cannot be undone.",
@@ -15299,6 +15102,15 @@ def main():
         "없음": "None",
         "이동 - 폴더 {0}": "Move to Folder {0}",
         "이동 - 폴더 {0} [{1}]": "Move to Folder {0} [{1}]",
+        "▪ F5: 폴더 새로고침": "▪ F5: Refresh Folder",
+        "UI 설정": "UI Settings",
+        "작업 설정": "Workflow Settings",
+        "도구 및 고급 설정": "Tools & Advanced",
+        "빠른 분류 폴더": "Quick Sort Folders",
+        "E 키 폴더명": "E Key Folder Name",
+        "F 키 폴더명": "F Key Folder Name",
+        "잘못된 폴더명입니다.": "Invalid folder name.",
+        "빠른 분류": "Quick Sort",
     }
     
     LanguageManager.initialize_translations(translations)
