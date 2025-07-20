@@ -12365,26 +12365,33 @@ class PhotoSortApp(QMainWindow):
             focal_str = "▪ "
             focal_parts = []
             
-            # 초점 거리
-            if exif_data["exif_focal_mm"] is not None:
-                if isinstance(exif_data["exif_focal_mm"], (int, float)):
-                    focal_parts.append(f"{exif_data['exif_focal_mm']:.0f}mm")
-                else:
-                    focal_parts.append(exif_data["exif_focal_mm"])
-                    if "mm" not in str(exif_data["exif_focal_mm"]).lower():
-                        focal_parts[-1] += "mm"
-            
-            # 35mm 환산 초점 거리
-            if exif_data["exif_focal_35mm"] is not None:
-                focal_conversion = f"({LanguageManager.translate('환산')}: "
-                if isinstance(exif_data["exif_focal_35mm"], (int, float)):
-                    focal_conversion += f"{exif_data['exif_focal_35mm']:.0f}mm"
-                else:
-                    focal_conversion += str(exif_data["exif_focal_35mm"])
-                    if "mm" not in str(exif_data["exif_focal_35mm"]).lower():
-                        focal_conversion += "mm"
-                focal_conversion += ")"
-                focal_parts.append(focal_conversion)
+            # 1. 숫자 값으로 변환하여 비교 준비
+            focal_mm_num = None
+            focal_35mm_num = None
+            try:
+                val = exif_data.get("exif_focal_mm")
+                if val is not None:
+                    # 정수로 비교하기 위해 float으로 변환 후 int로 캐스팅
+                    focal_mm_num = int(float(str(val).lower().replace(" mm", "")))
+            except (ValueError, TypeError):
+                pass # 변환 실패 시 None 유지
+            try:
+                val = exif_data.get("exif_focal_35mm")
+                if val is not None:
+                    focal_35mm_num = int(float(str(val).lower().replace(" mm", "")))
+            except (ValueError, TypeError):
+                pass
+
+            # 2. 기본 초점 거리(focal_mm)가 있으면 먼저 추가
+            if focal_mm_num is not None:
+                focal_parts.append(f"{focal_mm_num}mm")
+
+            # 3. 35mm 환산 초점 거리가 있고, 기본 초점 거리와 다를 경우에만 추가
+            if focal_35mm_num is not None:
+                # 조건: 기본 초점 거리가 없거나(None), 두 값이 다를 때
+                if focal_mm_num is None or focal_mm_num != focal_35mm_num:
+                    focal_conversion = f"({LanguageManager.translate('환산')}: {focal_35mm_num}mm)"
+                    focal_parts.append(focal_conversion)
             
             if focal_parts:
                 focal_str += " ".join(focal_parts)
@@ -14094,8 +14101,9 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'image_loader') and hasattr(self.image_loader, 'cache'):
             self.image_loader.cache.clear()
         self.fit_pixmap_cache.clear()
-        self.grid_thumbnail_cache_2x2.clear()
-        self.grid_thumbnail_cache_3x3.clear()
+        if hasattr(self, 'grid_thumbnail_cache'):
+            for key in self.grid_thumbnail_cache:
+                self.grid_thumbnail_cache[key].clear()
         self.original_pixmap = None
         
         # 모든 백그라운드 작업 취소
