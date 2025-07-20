@@ -765,267 +765,322 @@ class QRLinkLabel(QLabel):
                 self._create_non_mac_qr_popup()
         # macOS에서는 enterEvent에서 바로 처리하므로 별도 업데이트 불필요
 
-class FolderPathLabel(QLabel):
-    """폴더 경로를 보여주는 레이블 클래스, 더블클릭 시 탐색기 열기"""
+class InfoFolderPathLabel(QLabel):
+    """
+    JPG/RAW 폴더 경로를 표시하기 위한 QLabel 기반 레이블. (기존 FolderPathLabel)
+    2줄 높이, 줄 바꿈, 폴더 드래그 호버 효과를 지원합니다.
+    """
     doubleClicked = Signal(str)
-    imageDropped = Signal(int, str)  # 폴더 인덱스, 드롭 데이터 전달
+    folderDropped = Signal(str) # 폴더 경로만 전달
 
-    def __init__(self, text="", fixed_height_padding=10, parent=None):
+    def __init__(self, text="", parent=None):
         super().__init__(parent=parent)
         self.full_path = ""
-        self.folder_index = -1  # 폴더 인덱스 저장
-        self.original_style = ""  # 원본 스타일 저장
-        self.fixed_height_padding = fixed_height_padding
+        self.original_style = ""
+        self.folder_index = -1 # 기본값 설정
+        
+        fixed_height_padding = UIScaleManager.get("folder_label_padding")
+        
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)")
         font = QFont("Arial", UIScaleManager.get("font_size"))
         self.setFont(font)
         fm = QFontMetrics(font)
         line_height = fm.height()
-        default_height = (line_height * 2) + self.fixed_height_padding
+        default_height = (line_height * 2) + fixed_height_padding
         self.setFixedHeight(default_height)
         self.setWordWrap(True)
-        self.setStyleSheet(f"""
-            QLabel {{
-                color: #AAAAAA;
-                padding: 5px;
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border-radius: 1px;
-            }}
-        """)
-        self.original_style = self.styleSheet()  # 원본 스타일 저장
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        # === 드롭 기능 활성화 ===
         self.setAcceptDrops(True)
+        
+        self.set_style(is_valid=False)
+        self.original_style = self.styleSheet()
         self.setText(text)
 
     def set_folder_index(self, index):
-        """폴더 인덱스 설정 및 높이 조정"""
+        """폴더 인덱스를 저장합니다."""
         self.folder_index = index
-        logging.debug(f"FolderPathLabel {index} 드롭 기능 활성화됨")
 
-        # 분류 폴더(index >= 0)일 경우, 높이를 1줄로 재조정
-        if index >= 0:
-            fm = QFontMetrics(self.font())
-            line_height = fm.height()
-            # 1줄 높이로 계산
-            single_line_height = line_height + self.fixed_height_padding
-            self.setFixedHeight(single_line_height)
-            self.setWordWrap(False) # 1줄이므로 줄바꿈 비활성화
+    def set_style(self, is_valid):
+        """경로 유효성에 따라 스타일을 설정합니다."""
+        if is_valid:
+            style = f"""
+                QLabel {{
+                    color: #AAAAAA;
+                    padding: 5px;
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border-radius: 1px;
+                }}
+            """
+        else:
+            style = f"""
+                QLabel {{
+                    color: {ThemeManager.get_color('text_disabled')};
+                    padding: 5px;
+                    background-color: {ThemeManager.get_color('bg_disabled')};
+                    border-radius: 1px;
+                }}
+            """
+        self.setStyleSheet(style)
+        self.original_style = style
 
     def dragEnterEvent(self, event):
-        """드래그 진입 시 호출"""
-        try:
-            if event.mimeData().hasText():
-                drag_data = event.mimeData().text()
-                if drag_data.startswith("image_drag:"):
-                    # 분류 폴더 레이블에만 드래그 허용 (folder_index >= 0)
-                    if self.folder_index >= 0:
-                        event.acceptProposedAction()
-                        self._apply_drop_hover_style()
-                        logging.debug(f"폴더 {self.folder_index}: 드래그 진입 허용")
-                    else:
-                        # JPG/RAW 폴더 레이블에는 드래그 거부
-                        event.ignore()
-                        logging.debug(f"폴더 {self.folder_index}: 드래그 진입 거부 (분류 폴더 아님)")
-                    return
-            
-            event.ignore()
-        except Exception as e:
-            logging.error(f"FolderPathLabel.dragEnterEvent 오류: {e}")
-            event.ignore()
-
-    def dragMoveEvent(self, event):
-        """드래그 이동 시 호출"""
-        try:
-            if event.mimeData().hasText():
-                drag_data = event.mimeData().text()
-                if drag_data.startswith("image_drag:"):
-                    # 분류 폴더 레이블에만 드래그 허용 (folder_index >= 0)
-                    if self.folder_index >= 0:
-                        event.acceptProposedAction()
-                    else:
-                        # JPG/RAW 폴더 레이블에는 드래그 거부
-                        event.ignore()
-                    return
-            
-            event.ignore()
-        except Exception as e:
-            logging.error(f"FolderPathLabel.dragMoveEvent 오류: {e}")
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        """드래그 벗어날 때 호출"""
-        try:
-            self._restore_original_style()
-            logging.debug(f"폴더 {self.folder_index}: 드래그 벗어남")
-        except Exception as e:
-            logging.error(f"FolderPathLabel.dragLeaveEvent 오류: {e}")
-
-    def dropEvent(self, event):
-        """드롭 시 호출"""
-        try:
-            if event.mimeData().hasText():
-                drag_data = event.mimeData().text()
-                if drag_data.startswith("image_drag:"):
-                    # 분류 폴더 레이블에만 드롭 허용 (folder_index >= 0)
-                    if self.folder_index >= 0:
-                        # 스타일 복원
-                        self._restore_original_style()
-                        
-                        # 이미지 드롭 시그널 발생
-                        self.imageDropped.emit(self.folder_index, drag_data)
-                        event.acceptProposedAction()
-                        
-                        logging.info(f"폴더 {self.folder_index}에 이미지 드롭됨: {drag_data}")
-                    else:
-                        # JPG/RAW 폴더 레이블에는 드롭 거부
-                        event.ignore()
-                        logging.debug(f"폴더 {self.folder_index}: 드롭 거부 (분류 폴더 아님)")
-                    return
-            
-            event.ignore()
-        except Exception as e:
-            logging.error(f"FolderPathLabel.dropEvent 오류: {e}")
-            event.ignore()
-
-    def _apply_drop_hover_style(self):
-        """드롭 가능 시 hover 스타일 적용 (분류 폴더 레이블에만)"""
-        try:
-            # 분류 폴더 레이블에만 스타일 적용 (folder_index가 0 이상인 경우)
-            if self.folder_index >= 0:
-                # 폴더 경로가 실제로 설정되어 있는지 확인
-                parent_app = None
-                current_widget = self.parent()
-                
-                # PhotoSortApp 인스턴스 찾기
-                while current_widget is not None:
-                    if hasattr(current_widget, 'target_folders'):
-                        parent_app = current_widget
-                        break
-                    current_widget = current_widget.parent()
-                
-                # 폴더 경로 유효성 검사
-                if (parent_app and 
-                    hasattr(parent_app, 'target_folders') and 
-                    self.folder_index < len(parent_app.target_folders) and 
-                    parent_app.target_folders[self.folder_index] and 
-                    os.path.isdir(parent_app.target_folders[self.folder_index])):
-                    
-                    hover_style = f"""
-                        QLabel {{
-                            color: #FFFFFF;
-                            padding: 5px;
-                            background-color: {ThemeManager.get_color('accent')};
-                            border: 2px solid {ThemeManager.get_color('accent_hover')};
-                            border-radius: 1px;
-                        }}
-                    """
-                    self.setStyleSheet(hover_style)
-                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 적용 안함
-                
-            # JPG/RAW 폴더 레이블들(folder_index == -1)은 스타일 적용 안함
-        except Exception as e:
-            logging.error(f"_apply_drop_hover_style 오류: {e}")
-
-    def update_original_style(self, new_style):
-        """원본 스타일 업데이트 (외부에서 스타일이 변경될 때 호출)"""
-        self.original_style = new_style
-
-    def _restore_original_style(self):
-        """현재 상태에 맞는 올바른 스타일 복원"""
-        try:
-            # PhotoSortApp 인스턴스 찾기
-            parent_app = None
-            current_widget = self.parent()
-            while current_widget is not None:
-                if hasattr(current_widget, 'target_folders'):
-                    parent_app = current_widget
-                    break
-                current_widget = current_widget.parent()
-            
-            # 폴더 상태에 따라 적절한 스타일 적용
-            if (parent_app and 
-                hasattr(parent_app, 'target_folders') and 
-                self.folder_index >= 0 and
-                self.folder_index < len(parent_app.target_folders) and 
-                parent_app.target_folders[self.folder_index] and 
-                os.path.isdir(parent_app.target_folders[self.folder_index])):
-                # 폴더가 설정된 경우 - 활성화 스타일
-                style = f"""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if len(urls) == 1 and Path(urls[0].toLocalFile()).is_dir():
+                event.acceptProposedAction()
+                self.setStyleSheet(f"""
                     QLabel {{
                         color: #AAAAAA;
                         padding: 5px;
                         background-color: {ThemeManager.get_color('bg_primary')};
+                        border: 2px solid {ThemeManager.get_color('accent')};
                         border-radius: 1px;
                     }}
-                """
-            else:
-                # 폴더가 설정되지 않은 경우 - 비활성화 스타일
-                style = f"""
-                    QLabel {{
-                        color: {ThemeManager.get_color('text_disabled')};
-                        padding: 5px;
-                        background-color: {ThemeManager.get_color('bg_disabled')};
-                        border-radius: 1px;
-                    }}
-                """
-            
-            self.setStyleSheet(style)
-        except Exception as e:
-            logging.error(f"_restore_original_style 오류: {e}")
+                """)
+                return
+        event.ignore()
 
-    def setText(self, text: str, max_length=None, prefix_length=None, suffix_length=None):
-            """
-            라벨 텍스트 설정 및 긴 경로 생략 처리 (분류 폴더/기타 폴더 분기 처리)
-            """
-            self.full_path = text
-            self.setToolTip(text)
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(self.original_style)
 
-            # <<< [수정 시작] 분류 폴더(folder_index >= 0)와 기타 폴더를 분기하여 처리 >>>
-            if self.folder_index >= 0:
-                # --- 분류 폴더 (1줄 높이) 처리 ---
-                # 1줄이므로 최대 길이를 짧게 설정하여 잘림이 잘 일어나도록 함
-                max_len = 18 
-                suf_len = 13
-                
-                if len(text) > max_len:
-                    # prefix_length가 0이므로, 앞부분을 "..."로 대체
-                    display_text = "..." + text[-suf_len:]
-                else:
-                    display_text = text
-                super().setText(display_text)
-            else:
-                # --- JPG/RAW 폴더 (2줄 높이) 처리  ---
-                # 파라미터로 전달된 값을 우선 사용, None이면 해상도에 따라 기본값 적용
-                screen = QGuiApplication.primaryScreen()
-                if screen:
-                    geometry = screen.geometry()
-                    width = geometry.width()
-                    height = geometry.height()
-                    aspect_ratio = width / height if height else 0
-                    if abs(aspect_ratio - 1.6) < 0.05:
-                        if max_length is None: max_length = 30
-                        if prefix_length is None: prefix_length = 12
-                        if suffix_length is None: suffix_length = 15
-                    else:
-                        if max_length is None: max_length = 60
-                        if prefix_length is None: prefix_length = 20
-                        if suffix_length is None: suffix_length = 35
-                # 경로가 너무 길면 중간을 '...'로 표시
-                if len(text) > max_length:
-                    display_text = text[:prefix_length] + "..." + text[-suffix_length:]
-                else:
-                    display_text = text
-                super().setText(display_text)
+    def dropEvent(self, event):
+        self.setStyleSheet(self.original_style)
+        if event.mimeData().hasUrls():
+            file_path = event.mimeData().urls()[0].toLocalFile()
+            if Path(file_path).is_dir():
+                self.folderDropped.emit(file_path)
+                event.acceptProposedAction()
+                return
+        event.ignore()
 
-    def text(self) -> str:
-        return super().text()
+    def setText(self, text: str):
+        self.full_path = text
+        self.setToolTip(text)
+        
+        # 긴 경로 생략 로직
+        max_length = 60
+        prefix_length = 20
+        suffix_length = 35
+        # QGuiApplication.primaryScreen()을 사용하여 현재 화면의 비율을 얻는 것이 더 안정적입니다.
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geometry = screen.geometry()
+            aspect_ratio = geometry.width() / geometry.height() if geometry.height() else 0
+            if abs(aspect_ratio - 1.6) < 0.1: # 대략 16:10 비율
+                max_length=30; prefix_length=12; suffix_length=15
+
+        if len(text) > max_length:
+            display_text = text[:prefix_length] + "..." + text[-suffix_length:]
+        else:
+            display_text = text
+        super().setText(display_text)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if self.full_path and self.full_path != "폴더 경로":
+        if self.full_path and self.full_path != LanguageManager.translate("폴더 경로"):
             self.doubleClicked.emit(self.full_path)
+
+class EditableFolderPathLabel(QLineEdit):
+    """
+    분류 폴더 경로를 위한 QLineEdit 기반 위젯.
+    상태에 따라 편집 가능/읽기 전용 모드를 전환하며 하위 폴더 생성을 지원합니다.
+    """
+    STATE_DISABLED = 0
+    STATE_EDITABLE = 1
+    STATE_SET = 2
+
+    doubleClicked = Signal(str)
+    imageDropped = Signal(int, str)
+    folderDropped = Signal(int, str)
+    stateChanged = Signal(int, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.full_path = ""
+        self.folder_index = -1
+        self._current_state = self.STATE_DISABLED
+        self.original_style = ""
+        
+        self.setAcceptDrops(True)
+        self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
+        self.set_state(self.STATE_DISABLED)
+
+    def set_folder_index(self, index):
+        self.folder_index = index
+        fm = QFontMetrics(self.font())
+        line_height = fm.height()
+        padding = UIScaleManager.get("sort_folder_label_padding")
+        single_line_height = line_height + padding
+        self.setFixedHeight(single_line_height)
+
+    def set_state(self, state, path=None):
+        self._current_state = state
+        
+        if self._current_state == self.STATE_DISABLED:
+            self.setReadOnly(True)
+            self.setCursor(Qt.ArrowCursor)
+            style = f"""
+                QLineEdit {{
+                    color: {ThemeManager.get_color('text_disabled')};
+                    background-color: {ThemeManager.get_color('bg_disabled')};
+                    border: 1px solid {ThemeManager.get_color('bg_disabled')};
+                    padding: 5px; border-radius: 1px;
+                }}
+            """
+            self.setPlaceholderText("")
+            self.setText(LanguageManager.translate("폴더 경로"))
+            self.setToolTip(LanguageManager.translate("폴더를 드래그하여 지정하세요."))
+        elif self._current_state == self.STATE_EDITABLE:
+            self.setReadOnly(False)
+            self.setCursor(Qt.IBeamCursor)
+            style = f"""
+                QLineEdit {{
+                    color: {ThemeManager.get_color('text')};
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 1px solid {ThemeManager.get_color('bg_primary')};
+                    padding: 5px; border-radius: 1px;
+                }}
+                QLineEdit:focus {{ border: 1px solid {ThemeManager.get_color('accent')}; }}
+            """
+            self.setText("")
+            self.setPlaceholderText(LanguageManager.translate("폴더 경로"))
+            self.setToolTip(LanguageManager.translate("새 폴더명을 입력하거나 폴더를 드래그하여 지정하세요."))
+        elif self._current_state == self.STATE_SET:
+            self.setReadOnly(True)
+            self.setCursor(Qt.PointingHandCursor)
+            style = f"""
+                QLineEdit {{
+                    color: #AAAAAA;
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 1px solid {ThemeManager.get_color('bg_primary')};
+                    padding: 5px; border-radius: 1px;
+                }}
+            """
+            self.setPlaceholderText("")
+            if path:
+                self.set_path_text(path)
+            self.setToolTip(f"{self.full_path}\n{LanguageManager.translate('더블클릭하면 해당 폴더가 열립니다.')}")
+        
+        self.setStyleSheet(style)
+        self.original_style = style
+        self.stateChanged.emit(self.folder_index, self._current_state)
+
+    def set_path_text(self, text: str):
+        self.full_path = text
+        self.setToolTip(text)
+        max_len = 25; suf_len = 20
+        display_text = text
+        if len(text) > max_len:
+            display_text = "..." + text[-suf_len:]
+        super().setText(display_text)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if self._current_state == self.STATE_SET and self.full_path:
+            self.doubleClicked.emit(self.full_path)
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def dragEnterEvent(self, event):
+        if self._can_accept_drop(event):
+            event.acceptProposedAction()
+            self.apply_drag_hover_style()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self._can_accept_drop(event):
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.restore_original_style()
+
+    def dropEvent(self, event):
+        self.restore_original_style()
+        if event.mimeData().hasUrls():
+            file_path = event.mimeData().urls()[0].toLocalFile()
+            if Path(file_path).is_dir():
+                self.folderDropped.emit(self.folder_index, file_path)
+                event.acceptProposedAction()
+                return
+        elif event.mimeData().hasText():
+            drag_data = event.mimeData().text()
+            if drag_data.startswith("image_drag:"):
+                if self.folder_index >= 0 and self._current_state == self.STATE_SET:
+                    self.imageDropped.emit(self.folder_index, drag_data)
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def _can_accept_drop(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            return len(urls) == 1 and Path(urls[0].toLocalFile()).is_dir()
+        
+        can_accept_image = (self.folder_index >= 0 and self._current_state == self.STATE_SET)
+        if event.mimeData().hasText() and event.mimeData().text().startswith("image_drag:") and can_accept_image:
+            return True
+            
+        return False
+
+    def apply_drag_hover_style(self):
+        """드래그 호버 시 테두리만 강조하는 스타일을 적용합니다."""
+        hover_style = ""
+        # <<< 수정 시작: 각 상태에 맞는 완전한 호버 스타일을 정의 >>>
+        if self._current_state == self.STATE_DISABLED:
+            hover_style = f"""
+                QLineEdit {{
+                    color: {ThemeManager.get_color('text_disabled')};
+                    background-color: {ThemeManager.get_color('bg_disabled')};
+                    border: 2px solid {ThemeManager.get_color('accent')};
+                    padding: 4px; border-radius: 1px;
+                }}
+            """
+        elif self._current_state == self.STATE_EDITABLE:
+            hover_style = f"""
+                QLineEdit {{
+                    color: {ThemeManager.get_color('text')};
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    border: 2px solid {ThemeManager.get_color('accent')};
+                    padding: 4px; border-radius: 1px;
+                }}
+                QLineEdit:focus {{ border: 2px solid {ThemeManager.get_color('accent')}; }}
+            """
+        elif self._current_state == self.STATE_SET:
+            hover_style = f"""
+                QLineEdit {{
+                    color: #AAAAAA;
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    border: 2px solid {ThemeManager.get_color('accent')};
+                    padding: 4px; border-radius: 1px;
+                }}
+            """
+        # <<< 수정 끝 >>>
+        if hover_style:
+            self.setStyleSheet(hover_style)
+
+    def apply_keypress_highlight(self, highlight: bool):
+        if self._current_state != self.STATE_SET:
+            return
+
+        if highlight:
+            style = f"""
+                QLineEdit {{
+                    color: #FFFFFF;
+                    background-color: {ThemeManager.get_color('accent')};
+                    border: 1px solid {ThemeManager.get_color('accent')};
+                    padding: 5px; border-radius: 1px;
+                }}
+            """
+            self.setStyleSheet(style)
+        else:
+            self.restore_original_style()
+
+    def restore_original_style(self):
+        self.setStyleSheet(self.original_style)
 
 class FilenameLabel(QLabel):
     """파일명을 표시하는 레이블 클래스, 더블클릭 시 파일 열기"""
@@ -4024,12 +4079,13 @@ class PhotoSortApp(QMainWindow):
 
         # JPG 폴더 경로 표시 레이블 추가
         folder_label_padding = UIScaleManager.get("folder_label_padding")
-        self.folder_path_label = FolderPathLabel(LanguageManager.translate("폴더 경로"), fixed_height_padding=folder_label_padding)
-        self.folder_path_label.setWordWrap(True)
+        self.folder_path_label = InfoFolderPathLabel(LanguageManager.translate("폴더 경로"))
+        self.folder_path_label.set_folder_index(-2) # JPG 폴더 인덱스: -2
         self.folder_path_label.doubleClicked.connect(self.open_folder_in_explorer)
+        self.folder_path_label.folderDropped.connect(lambda path: self._handle_image_folder_drop(path))
 
         # JPG 폴더 클리어 버튼 (X) 추가
-        self.jpg_clear_button = QPushButton("X")
+        self.jpg_clear_button = QPushButton("✕")
         delete_button_style = f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('bg_secondary')};
@@ -4102,12 +4158,13 @@ class PhotoSortApp(QMainWindow):
 
         # RAW 폴더 경로 표시 레이블 추가
         folder_label_padding = UIScaleManager.get("folder_label_padding")
-        self.raw_folder_path_label = FolderPathLabel(LanguageManager.translate("폴더 경로"), fixed_height_padding=folder_label_padding)
-        self.raw_folder_path_label.setWordWrap(True)
+        self.raw_folder_path_label = InfoFolderPathLabel(LanguageManager.translate("폴더 경로"))
+        self.raw_folder_path_label.set_folder_index(-1) # RAW 폴더 인덱스: -1
         self.raw_folder_path_label.doubleClicked.connect(self.open_raw_folder_in_explorer)
+        self.raw_folder_path_label.folderDropped.connect(lambda path: self._handle_raw_folder_drop(path))
 
         # RAW 폴더 클리어 버튼 (X) 추가
-        self.raw_clear_button = QPushButton("X")
+        self.raw_clear_button = QPushButton("✕")
         self.raw_clear_button.setStyleSheet(delete_button_style) # JPG 클리어 버튼과 동일 스타일
         fm_label = QFontMetrics(self.raw_folder_path_label.font()) # raw 폴더 레이블 폰트 기준
         label_line_height = fm_label.height()
@@ -4262,8 +4319,8 @@ class PhotoSortApp(QMainWindow):
 
         # --- 초기 UI 상태 설정 추가 ---
         self.update_raw_toggle_state() # RAW 토글 초기 상태 설정
-        self.update_folder_label_style(self.folder_path_label, self.current_folder) # JPG 폴더 레이블 초기 스타일
-        self.update_folder_label_style(self.raw_folder_path_label, self.raw_folder) # RAW 폴더 레이블 초기 스타일
+        self.update_info_folder_label_style(self.folder_path_label, self.current_folder) # JPG 폴더 레이블 초기 스타일
+        self.update_info_folder_label_style(self.raw_folder_path_label, self.raw_folder) # RAW 폴더 레이블 초기 스타일
         self.update_match_raw_button_state() # <--- 추가: RAW 관련 버튼 초기 상태 업데이트      
         
         # 화면 해상도 기반 면적 75% 크기로 중앙 배치
@@ -4368,6 +4425,9 @@ class PhotoSortApp(QMainWindow):
 
         # 설정 창에 사용될 UI 컨트롤들을 미리 생성합니다.
         self._create_settings_controls()
+
+        self.update_all_folder_labels_state()
+
 
     def refresh_folder_contents(self):
         """F5 키를 눌렀을 때 현재 로드된 폴더의 내용을 새로고침합니다."""
@@ -4690,7 +4750,7 @@ class PhotoSortApp(QMainWindow):
                 logging.error(f"_rebuild_folder_selection_ui에서 삽입 위치 찾기 실패: {e}. 레이아웃 끝에 추가합니다.")
                 self.control_layout.addWidget(self.category_folder_container)
 
-            self.update_folder_buttons()
+            self.update_all_folder_labels_state()
 
     def on_folder_count_changed(self, index):
         """분류 폴더 개수 콤보박스 변경 시 호출되는 슬롯"""
@@ -5058,7 +5118,8 @@ class PhotoSortApp(QMainWindow):
                 # JPG 버튼 활성화
                 self.load_button.setEnabled(True)
                 if self.session_management_popup and self.session_management_popup.isVisible():
-                    self.session_management_popup.update_all_button_states()                
+                    self.session_management_popup.update_all_button_states()          
+                self.update_all_folder_labels_state()      
                 return False
             
             # --- 1. 첫 번째 RAW 파일 분석 ---
@@ -5250,6 +5311,7 @@ class PhotoSortApp(QMainWindow):
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
 
+            self.update_all_folder_labels_state()
             return True
             
         except Exception as e:
@@ -5291,25 +5353,12 @@ class PhotoSortApp(QMainWindow):
         """분류 폴더 드랍 처리"""
         try:
             if 0 <= folder_index < len(self.target_folders):
-                # 기존 select_category_folder 로직 재사용
                 self.target_folders[folder_index] = folder_path
-                
-                # 레이블 텍스트 업데이트
-                if UIScaleManager.is_16_10_or_less():
-                    self.folder_path_labels[folder_index].setText(
-                        folder_path,
-                        max_length=20, prefix_length=2, suffix_length=12
-                    )
-                else:
-                    self.folder_path_labels[folder_index].setText(
-                        folder_path,
-                        max_length=60, prefix_length=20, suffix_length=25
-                    )
-                
-                # UI 업데이트
-                self.update_folder_buttons()
+                # <<< 수정 시작 >>>
+                # setText 대신 set_state를 사용하여 UI와 상태를 한 번에 업데이트합니다.
+                self.folder_path_labels[folder_index].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
+                # <<< 수정 끝 >>>
                 self.save_state()
-                
                 logging.info(f"드래그 앤 드랍으로 분류 폴더 {folder_index+1} 설정 완료: {folder_path}")
                 return True
             else:
@@ -5941,19 +5990,16 @@ class PhotoSortApp(QMainWindow):
         for i in range(self.folder_count):
             if i < len(self.target_folders) and self.target_folders[i] and Path(self.target_folders[i]).is_dir():
                 folder_path = self.target_folders[i]
-                # 16:10 이하 해상도에서는 더 긴 값을 사용
-                if UIScaleManager.is_16_10_or_less():
-                    self.folder_path_labels[i].setText(
-                        folder_path,
-                        max_length=20, prefix_length=2, suffix_length=12
-                    )
-                else:
-                    self.folder_path_labels[i].setText(
-                        folder_path,
-                        max_length=60, prefix_length=20, suffix_length=25
-                    )
+                # <<< 수정 시작 >>>
+                # 복잡한 setText 호출 대신 set_state를 사용합니다.
+                self.folder_path_labels[i].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
+                # <<< 수정 끝 >>>
             else:
-                self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
+                # 경로가 없거나 유효하지 않으면 상태에 따라 editable 또는 disabled로 설정
+                if self.image_files:
+                    self.folder_path_labels[i].set_state(EditableFolderPathLabel.STATE_EDITABLE)
+                else:
+                    self.folder_path_labels[i].set_state(EditableFolderPathLabel.STATE_DISABLED)
 
         # 5. UI 관련 상태 복원
         self.minimap_toggle.setChecked(session_data.get("minimap_visible", True))
@@ -5986,7 +6032,7 @@ class PhotoSortApp(QMainWindow):
         # 7. 로드 후 폴더 UI 상태 업데이트
         self.update_jpg_folder_ui_state()
         self.update_raw_folder_ui_state()
-        self.update_folder_buttons()
+        self.update_all_folder_labels_state()
         self.update_match_raw_button_state()
 
         # 8. ImageLoader 전략 설정
@@ -7399,17 +7445,16 @@ class PhotoSortApp(QMainWindow):
         
     
     def update_folder_styles(self):
-        """폴더 관련 UI 요소의 스타일을 업데이트"""
-        # 폴더 경로 레이블 스타일 업데이트
+        """폴더 관련 UI 요소의 스타일을 업데이트 (테마 변경 시 호출됨)"""
+        # 1. JPG/RAW 폴더 UI 상태 업데이트 (내부적으로 InfoFolderPathLabel의 스타일 재설정)
         if hasattr(self, 'folder_path_label'):
             self.update_jpg_folder_ui_state()
         if hasattr(self, 'raw_folder_path_label'):
             self.update_raw_folder_ui_state()
-        
-        # 카테고리 폴더 경로 레이블 스타일 업데이트
+
+        # 2. 분류 폴더 UI 상태 업데이트 (내부적으로 EditableFolderPathLabel의 스타일 재설정)
         if hasattr(self, 'folder_path_labels'):
-            for i, label in enumerate(self.folder_path_labels):
-                self.update_folder_label_style(label, self.target_folders[i] if hasattr(self, 'target_folders') else None)
+            self.update_all_folder_labels_state()
     
     def show_settings_popup(self):
         """설정 버튼 클릭 시 호출되는 메서드, 2컬럼 구조의 설정 팝업을 표시"""
@@ -8288,6 +8333,7 @@ class PhotoSortApp(QMainWindow):
             self.update_match_raw_button_state() # <--- RAW 버튼 상태 업데이트
             self.load_button.setEnabled(True) # <--- JPG 버튼 활성화 (실패 시)
             self.update_raw_folder_ui_state() # <--- RAW 토글 상태 업데이트
+            self.update_all_folder_labels_state() 
             return False # 파일 로드 실패 반환
         # --- 검사 끝 ---
 
@@ -8342,6 +8388,7 @@ class PhotoSortApp(QMainWindow):
         if self.current_image_index >= 0:
             self.thumbnail_panel.set_current_index(self.current_image_index)
 
+        self.update_all_folder_labels_state() 
         return True  # 파일 로드 성공 반환
 
     
@@ -9664,93 +9711,174 @@ class PhotoSortApp(QMainWindow):
             return False
 
     def setup_folder_selection_ui(self):
-            """분류 폴더 설정 UI를 동적으로 구성하고 컨테이너 위젯을 반환합니다."""
-            # 1. UI 요소 리스트 초기화 (재생성 시 이전 위젯 참조 제거)
-            self.folder_buttons = []
-            self.folder_path_labels = []
-            self.folder_delete_buttons = []
-            # 2. 모든 폴더 행을 담을 메인 컨테이너 위젯 생성
-            main_container = QWidget()
-            main_layout = QVBoxLayout(main_container)
-            main_layout.setContentsMargins(0, 0, 0, 0)
-            main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
-            # UIScaleManager 값 미리 가져오기
-            button_padding = UIScaleManager.get("button_padding")
-            button_min_height = UIScaleManager.get("button_min_height")
-            folder_label_padding = UIScaleManager.get("sort_folder_label_padding")
-            delete_button_width = UIScaleManager.get("delete_button_width")
-            folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
-            temp_label_font = QFont("Arial", UIScaleManager.get("font_size"))
-            fm_label = QFontMetrics(temp_label_font)
+        """분류 폴더 설정 UI를 동적으로 구성하고 컨테이너 위젯을 반환합니다."""
+        self.folder_buttons = []
+        self.folder_path_labels = []
+        self.folder_action_buttons = []
+        
+        main_container = QWidget()
+        main_layout = QVBoxLayout(main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
+        
+        # UIScaleManager 값 미리 가져오기
+        button_padding = UIScaleManager.get("button_padding")
+        delete_button_width = UIScaleManager.get("delete_button_width")
+        folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
+
+        # 버튼 스타일 미리 정의
+        number_button_style = f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: none; padding: {button_padding}px; border-radius: 1px;
+            }}
+            QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
+            QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
+        """
+        action_button_style = f"""
+            QPushButton {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: none; padding: 4px; border-radius: 1px;
+            }}
+            QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; color: white; }}
+            QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; color: white; }}
+            QPushButton:disabled {{
+                background-color: {ThemeManager.get_color('bg_disabled')};
+                color: {ThemeManager.get_color('text_disabled')};
+            }}
+        """
+        
+        for i in range(self.folder_count):
+            folder_container = QWidget()
+            folder_layout = QHBoxLayout(folder_container)
+            folder_layout.setContentsMargins(0, 0, 0, 0)
+            folder_layout.setSpacing(folder_container_spacing)
+
+            folder_button = QPushButton(f"{i+1}")
+            folder_button.setStyleSheet(number_button_style)
+            folder_button.clicked.connect(lambda checked=False, idx=i: self.select_category_folder(idx))
+
+            folder_path_label = EditableFolderPathLabel()
+            folder_path_label.set_folder_index(i)
+            folder_path_label.imageDropped.connect(self.on_folder_image_dropped)
+            folder_path_label.folderDropped.connect(lambda index, path: self._handle_category_folder_drop(path, index))
+            folder_path_label.doubleClicked.connect(lambda full_path, idx=i: self.open_category_folder(idx, full_path))
+            folder_path_label.stateChanged.connect(self.update_folder_action_button)
+            folder_path_label.returnPressed.connect(lambda idx=i: self.confirm_subfolder_creation(idx))
+
+            action_button = QPushButton("✕")
+            action_button.setStyleSheet(action_button_style)
+            
+            # 높이 동기화
+            fm_label = QFontMetrics(folder_path_label.font())
             label_line_height = fm_label.height()
-            # <<< [수정] 버튼 높이를 1줄 기준으로 계산하도록 변경 ( * 2 를 * 1 로) >>>
-            label_fixed_height = (label_line_height * 1) + folder_label_padding
-            # 3. self.folder_count 만큼 루프를 돌며 각 폴더 행 UI 생성
-            for i in range(self.folder_count):
-                folder_container = QWidget()
-                folder_layout = QHBoxLayout(folder_container)
-                folder_layout.setContentsMargins(0, 0, 0, 0)
-                folder_layout.setSpacing(folder_container_spacing)
-                # 폴더 버튼 생성
-                folder_button = QPushButton(f"{i+1}")
-                folder_button.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {ThemeManager.get_color('bg_secondary')};
-                        color: {ThemeManager.get_color('text')};
-                        border: none;
-                        padding: {button_padding}px;
-                        border-radius: 1px;
-                        height: {label_fixed_height}px;
-                    }}
-                    QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
-                    QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
-                """)
-                folder_button.clicked.connect(lambda checked=False, idx=i: self.select_category_folder(idx))
-                folder_button.setFixedWidth(delete_button_width)
-                folder_button.setFixedHeight(label_fixed_height)
-                # 삭제 버튼 생성
-                delete_button = QPushButton("X")
-                delete_button.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {ThemeManager.get_color('bg_secondary')};
-                        color: {ThemeManager.get_color('text')};
-                        border: none;
-                        padding: 4px;
-                        border-radius: 1px;
-                        height: {label_fixed_height}px;
-                    }}
-                    QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; color: white; }}
-                    QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; color: white; }}
-                    QPushButton:disabled {{ background-color: {ThemeManager.get_color('bg_disabled')}; color: {ThemeManager.get_color('text_disabled')}; }}
-                """)
-                delete_button.clicked.connect(lambda checked=False, idx=i: self.clear_category_folder(idx))
-                delete_button.setFixedWidth(delete_button_width)
-                delete_button.setFixedHeight(label_fixed_height)
+            padding = UIScaleManager.get("sort_folder_label_padding")
+            fixed_height = label_line_height + padding
+            folder_button.setFixedHeight(fixed_height)
+            action_button.setFixedHeight(fixed_height)
+            folder_button.setFixedWidth(delete_button_width)
+            action_button.setFixedWidth(delete_button_width)
+            
+            folder_layout.addWidget(folder_button)
+            folder_layout.addWidget(folder_path_label, 1)
+            folder_layout.addWidget(action_button)
+            
+            main_layout.addWidget(folder_container)
+            
+            self.folder_buttons.append(folder_button)
+            self.folder_path_labels.append(folder_path_label)
+            self.folder_action_buttons.append(action_button)
 
-                # 1. 레이블을 빈 텍스트로 먼저 생성
-                folder_path_label = FolderPathLabel("", fixed_height_padding=folder_label_padding)
-                
-                # 2. 인덱스를 설정하여 레이블의 타입(1줄/2줄)과 높이를 먼저 결정
-                folder_path_label.set_folder_index(i)
-                folder_path_label.imageDropped.connect(self.on_folder_image_dropped)
-                folder_path_label.doubleClicked.connect(lambda full_path_emitted, idx=i: self.open_category_folder(idx, full_path_emitted))
+        self.update_all_folder_labels_state()
+        return main_container
 
-                # 3. 저장된 경로를 가져와서 마지막에 setText 호출
-                folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
-                display_text = folder_path if folder_path else LanguageManager.translate("폴더 경로")
-                folder_path_label.setText(display_text)
 
-                folder_layout.addWidget(folder_button)
-                folder_layout.addWidget(folder_path_label, 1)
-                folder_layout.addWidget(delete_button)
-                # 4. 생성된 한 줄의 폴더 UI를 메인 레이아웃에 추가
-                main_layout.addWidget(folder_container)
-                self.folder_buttons.append(folder_button)
-                self.folder_path_labels.append(folder_path_label)
-                self.folder_delete_buttons.append(delete_button)
-            # 5. 최종 컨테이너 위젯 반환
-            return main_container
-    
+    def update_all_folder_labels_state(self):
+        """모든 분류 폴더 레이블의 상태를 현재 앱 상태에 맞게 업데이트합니다."""
+        if not hasattr(self, 'folder_path_labels'):
+            return
+
+        images_loaded = bool(self.image_files)
+        
+        for i, label in enumerate(self.folder_path_labels):
+            has_path = bool(i < len(self.target_folders) and self.target_folders[i])
+            
+            if has_path:
+                label.set_state(EditableFolderPathLabel.STATE_SET, self.target_folders[i])
+            elif images_loaded:
+                label.set_state(EditableFolderPathLabel.STATE_EDITABLE)
+            else:
+                label.set_state(EditableFolderPathLabel.STATE_DISABLED)
+
+    def update_folder_action_button(self, index, state):
+        """지정된 인덱스의 액션 버튼('X'/'V')을 상태에 맞게 업데이트합니다."""
+        if index < 0 or index >= len(self.folder_action_buttons):
+            return
+            
+        button = self.folder_action_buttons[index]
+        
+        # 기존 연결 모두 해제
+        try:
+            button.clicked.disconnect()
+        except (TypeError, RuntimeError):
+            pass # 연결이 없으면 오류 발생하므로 무시
+
+        if state == EditableFolderPathLabel.STATE_DISABLED:
+            button.setText("✕")
+            button.setEnabled(False)
+        elif state == EditableFolderPathLabel.STATE_EDITABLE:
+            button.setText("✓") # 체크 표시 (V)
+            button.setEnabled(True)
+            button.clicked.connect(lambda checked=False, idx=index: self.confirm_subfolder_creation(idx))
+        elif state == EditableFolderPathLabel.STATE_SET:
+            button.setText("✕")
+            button.setEnabled(True)
+            button.clicked.connect(lambda checked=False, idx=index: self.clear_category_folder(idx))
+
+    def confirm_subfolder_creation(self, index):
+        """입력된 이름으로 하위 폴더를 생성하고 UI를 업데이트합니다."""
+        if index < 0 or index >= len(self.folder_path_labels):
+            return
+            
+        label = self.folder_path_labels[index]
+        new_folder_name = label.text().strip()
+
+        # 1. 유효성 검사
+        if not self._is_valid_foldername(new_folder_name):
+            self.show_themed_message_box(QMessageBox.Warning, 
+                                        LanguageManager.translate("경고"), 
+                                        LanguageManager.translate("잘못된 폴더명입니다."))
+            return
+
+        # 2. 기본 경로 설정
+        base_path_str = self.raw_folder if self.is_raw_only_mode else self.current_folder
+        if not base_path_str:
+            self.show_themed_message_box(QMessageBox.Warning, 
+                                        LanguageManager.translate("경고"), 
+                                        LanguageManager.translate("기준 폴더가 로드되지 않았습니다."))
+            return
+            
+        base_path = Path(base_path_str)
+        new_full_path = base_path / new_folder_name
+
+        # 3. 폴더 생성
+        try:
+            new_full_path.mkdir(parents=True, exist_ok=True)
+            logging.info(f"하위 폴더 생성 성공: {new_full_path}")
+        except Exception as e:
+            logging.error(f"하위 폴더 생성 실패: {e}")
+            self.show_themed_message_box(QMessageBox.Critical, 
+                                        LanguageManager.translate("에러"), 
+                                        f"{LanguageManager.translate('폴더 생성 실패')}:\n{e}")
+            return
+
+        # 4. 상태 업데이트
+        self.target_folders[index] = str(new_full_path)
+        label.set_state(EditableFolderPathLabel.STATE_SET, str(new_full_path))
+        self.save_state()
+
     def update_folder_buttons(self):
         """폴더 설정 상태에 따라 UI 업데이트"""
         # 안전한 범위 검사 추가
@@ -9803,31 +9931,23 @@ class PhotoSortApp(QMainWindow):
             self, f"{LanguageManager.translate('폴더 선택')} {index+1}", "", 
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
-        
         if folder_path:
             self.target_folders[index] = folder_path
-            # 16:10 이하 해상도에서는 더 긴 값을 사용
-            if UIScaleManager.is_16_10_or_less():
-                self.folder_path_labels[index].setText(
-                    folder_path,
-                    max_length=20, prefix_length=2, suffix_length=12
-                )
-            else:
-                self.folder_path_labels[index].setText(
-                    folder_path,
-                    max_length=60, prefix_length=20, suffix_length=25
-                )
-            # 폴더 설정 후 UI 업데이트
-            self.update_folder_buttons()
-            self.save_state() # <<< 저장
+            # <<< 수정 시작 >>>
+            # setText 대신 set_state를 사용하여 UI와 상태를 한 번에 업데이트합니다.
+            self.folder_path_labels[index].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
+            # <<< 수정 끝 >>>
+            self.save_state()
     
     def clear_category_folder(self, index):
         """분류 폴더 지정 취소"""
         self.target_folders[index] = ""
-        self.folder_path_labels[index].setText(LanguageManager.translate("폴더 경로"))
-        # 폴더 설정 취소 후 UI 업데이트
-        self.update_folder_buttons()
-        self.save_state() # <<< 저장
+        # 현재 이미지 로드 상태에 따라 editable 또는 disabled 상태로 변경
+        if self.image_files:
+            self.folder_path_labels[index].set_state(EditableFolderPathLabel.STATE_EDITABLE)
+        else:
+            self.folder_path_labels[index].set_state(EditableFolderPathLabel.STATE_DISABLED)
+        self.save_state()
 
     
     def open_category_folder(self, index, folder_path): # folder_path 인자 추가
@@ -11724,20 +11844,26 @@ class PhotoSortApp(QMainWindow):
             # 결과 메시지 표시
             if user_canceled:
                 if successful_moves:
-                    message = f"작업 취소됨.\n성공: {len(successful_moves)}개, 실패: {len(failed_moves)}개"
+                    # <<< 수정 시작 >>>
+                    msg_template = LanguageManager.translate("작업 취소됨.\n성공: {success_count}개, 실패: {fail_count}개")
+                    message = msg_template.format(success_count=len(successful_moves), fail_count=len(failed_moves))
+                    # <<< 수정 끝 >>>
                     self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
                 else:
                     logging.info("사용자 취소로 인해 이동된 파일 없음")
             elif successful_moves and failed_moves:
-                # 일부 성공, 일부 실패
-                message = f"성공: {len(successful_moves)}개\n실패: {len(failed_moves)}개"
+                # <<< 수정 시작 >>>
+                msg_template = LanguageManager.translate("성공: {success_count}개\n실패: {fail_count}개")
+                message = msg_template.format(success_count=len(successful_moves), fail_count=len(failed_moves))
+                # <<< 수정 끝 >>>
                 self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
             elif failed_moves:
-                # 모두 실패
-                message = f"모든 파일 이동 실패: {len(failed_moves)}개"
+                # <<< 수정 시작 >>>
+                msg_template = LanguageManager.translate("모든 파일 이동 실패: {fail_count}개")
+                message = msg_template.format(fail_count=len(failed_moves))
+                # <<< 수정 끝 >>>
                 self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), message)
             else:
-                # 모두 성공 (로그만, 메시지 박스 없음)
                 logging.info(f"다중 이미지 이동 완료: {len(successful_moves)}개 파일")
 
             # --- 그리드 뷰 업데이트 로직 ---
@@ -12040,7 +12166,6 @@ class PhotoSortApp(QMainWindow):
             for i in range(self.folder_count):
                 self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
 
-            self.update_folder_buttons() # 분류 폴더 UI 업데이트
             self.update_jpg_folder_ui_state() # JPG 폴더 UI 상태 업데이트
             self.update_raw_folder_ui_state() # RAW 폴더 UI 상태 업데이트
 
@@ -12071,6 +12196,8 @@ class PhotoSortApp(QMainWindow):
             QTimer.singleShot(0, self._apply_panel_position)
             # ==============================================
             self.save_state() 
+
+            self.update_all_folder_labels_state()
 
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
@@ -12400,12 +12527,13 @@ class PhotoSortApp(QMainWindow):
                 subprocess.run(['xdg-open', str(file_path)])
         except Exception as e:
             logging.error(f"파일 열기 실패: {e}")
-
-            # 사용자에게 오류 메시지 표시 (선택 사항)
+            title = LanguageManager.translate("오류")
+            line1 = LanguageManager.translate("파일 열기 실패")
+            line2 = LanguageManager.translate("연결된 프로그램이 없거나 파일을 열 수 없습니다.")
             self.show_themed_message_box(
                 QMessageBox.Warning,
-                LanguageManager.translate("오류"),
-                f"{LanguageManager.translate('파일 열기 실패')}: {filename}\n\n{LanguageManager.translate('연결된 프로그램이 없거나 파일을 열 수 없습니다.')}"
+                title,
+                f"{line1}: {filename}\n\n{line2}"
             )
 
     def display_current_image(self):
@@ -13563,7 +13691,7 @@ class PhotoSortApp(QMainWindow):
             label.setText(LanguageManager.translate("폴더 경로"))
         self.update_jpg_folder_ui_state()
         self.update_raw_folder_ui_state()
-        self.update_folder_buttons()
+        self.update_all_folder_labels_state()
         self.update_match_raw_button_state()
         self.grid_mode = "Off"; self.grid_off_radio.setChecked(True)
         self.zoom_mode = "Fit"; self.fit_radio.setChecked(True)
@@ -14103,28 +14231,13 @@ class PhotoSortApp(QMainWindow):
         self.setFocus()
 
     def highlight_folder_label(self, folder_index, highlight):
-        """폴더 레이블 하이라이트 처리"""
+        """분류 폴더 레이블에 숫자 키 누름 하이라이트를 적용합니다."""
         if folder_index < 0 or folder_index >= len(self.folder_path_labels):
             return
-        
         try:
             label = self.folder_path_labels[folder_index]
-            
-            # 폴더 경로 유효성 검사 - 유효하지 않으면 스타일 변경 안함
-            has_folder = bool(folder_index < len(self.target_folders) and 
-                            self.target_folders[folder_index] and 
-                            os.path.isdir(self.target_folders[folder_index]))
-            
-            if not has_folder:
-                # 폴더가 설정되지 않았거나 유효하지 않으면 스타일 변경 안함
-                return
-                
-            if highlight:
-                # accent 색으로 변경 (유효한 폴더만)
-                label._apply_drop_hover_style()
-            else:
-                # 원본 스타일 복원 (유효한 폴더만)
-                label._restore_original_style()
+            # EditableFolderPathLabel에 새로 추가한 메서드 호출
+            label.apply_keypress_highlight(highlight)
         except Exception as e:
             logging.error(f"highlight_folder_label 오류: {e}")
 
@@ -14216,17 +14329,24 @@ class PhotoSortApp(QMainWindow):
                 return super().eventFilter(obj, event)
             if self.is_input_dialog_active:
                 return super().eventFilter(obj, event)
-
+            
             key = event.key()
             modifiers = event.modifiers()
-            is_auto_repeat = event.isAutoRepeat()
+            
+            # --- 숫자 키 처리 (하이라이트만) ---
+            if Qt.Key_1 <= key <= (Qt.Key_1 + self.folder_count - 1):
+                if not event.isAutoRepeat():
+                    folder_index = key - Qt.Key_1
+                    self.highlight_folder_label(folder_index, True)
+                    self.pressed_number_keys.add(key)
+                return True # 다른 키 처리를 막기 위해 True 반환
+
+            # --- 다른 키 처리들 (기존과 동일) ---
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
-
             if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
             elif modifiers == ctrl_modifier and key == Qt.Key_Y: self.redo_move(); return True
             elif (modifiers & ctrl_modifier) and (modifiers & Qt.ShiftModifier) and key == Qt.Key_Z: self.redo_move(); return True
-
             if key == Qt.Key_Return or key == Qt.Key_Enter:
                 if self.file_list_dialog is None or not self.file_list_dialog.isVisible():
                     if self.image_files:
@@ -14241,10 +14361,6 @@ class PhotoSortApp(QMainWindow):
                             self.file_list_dialog = FileListDialog(self.image_files, current_selected_index, self.image_loader, self)
                             self.file_list_dialog.finished.connect(self.on_file_list_dialog_closed)
                             self.file_list_dialog.show()
-                        else:
-                            logging.debug("Enter 키: 유효한 선택된 이미지가 없습니다.")
-                    else:
-                        logging.debug("Enter 키: 로드된 이미지가 없습니다.")
                 else:
                     self.file_list_dialog.activateWindow()
                     self.file_list_dialog.raise_()
@@ -14257,7 +14373,7 @@ class PhotoSortApp(QMainWindow):
             if key == Qt.Key_Escape:
                 if self.file_list_dialog and self.file_list_dialog.isVisible(): self.file_list_dialog.reject(); return True
                 if self.zoom_mode != "Fit":
-                    self.last_active_zoom_mode = self.zoom_mode # [추가] ESC로 Fit 전환 시에도 마지막 줌 모드 저장
+                    self.last_active_zoom_mode = self.zoom_mode
                     self.fit_radio.setChecked(True)
                     self.on_zoom_changed(self.fit_radio)
                     return True
@@ -14266,9 +14382,7 @@ class PhotoSortApp(QMainWindow):
                     elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
                     return True
             if key == Qt.Key_R:
-                if (self.grid_mode == "Off" and 
-                    self.zoom_mode in ["100%", "Spin"] and 
-                    self.original_pixmap):
+                if (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap):
                     self.center_viewport()
                     return True
             if key == Qt.Key_Space:
@@ -14276,43 +14390,17 @@ class PhotoSortApp(QMainWindow):
                     if self.zoom_mode == "Fit":
                         if self.original_pixmap:
                             target_zoom_mode = self.last_active_zoom_mode
-                            logging.debug(f"Space 키: Fit -> {target_zoom_mode} 요청")
-                            current_orientation = self.current_image_orientation
-                            if current_orientation:
-                                saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
-                                self.current_active_rel_center = saved_rel_center
-                                self.current_active_zoom_level = target_zoom_mode
-                                logging.debug(f"Space 키 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
-                            else:
-                                self.current_active_rel_center = QPointF(0.5, 0.5)
-                                self.current_active_zoom_level = target_zoom_mode
-                            self.zoom_change_trigger = "space_key_to_zoom"
                             self.zoom_mode = target_zoom_mode
-                            if target_zoom_mode == "100%":
-                                self.zoom_100_radio.setChecked(True)
-                            elif target_zoom_mode == "Spin":
-                                self.zoom_spin_btn.setChecked(True)
-                            self.apply_zoom_to_image()
-                    elif self.zoom_mode in ["100%", "Spin"]:
-                        logging.debug(f"Space 키: {self.zoom_mode} -> Fit 요청")
-                        current_orientation = self.current_image_orientation
-                        if current_orientation:
-                            current_rel_center = self._get_current_view_relative_center()
-                            logging.debug(f"Space 키 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
-                            self.current_active_rel_center = current_rel_center
-                            self.current_active_zoom_level = self.zoom_mode
-                            self._save_orientation_viewport_focus(
-                                current_orientation,
-                                current_rel_center,
-                                self.zoom_mode
-                            )
+                            if target_zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
+                            elif target_zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
+                            self.on_zoom_changed(self.zoom_group.button(self.zoom_group.id(self.zoom_100_radio if target_zoom_mode == "100%" else self.zoom_spin_btn)))
+                    else: # 100% or Spin
                         self.last_active_zoom_mode = self.zoom_mode
-                        logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
                         self.zoom_mode = "Fit"
                         self.fit_radio.setChecked(True)
-                        self.apply_zoom_to_image()
+                        self.on_zoom_changed(self.fit_radio)
                     return True
-                else:
+                else: # Grid On
                     current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
                     if 0 <= current_selected_grid_index < len(self.image_files):
                         self.current_image_index = current_selected_grid_index
@@ -14325,9 +14413,8 @@ class PhotoSortApp(QMainWindow):
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
                     return True
-            is_viewport_move_condition = (self.grid_mode == "Off" and
-                                        self.zoom_mode in ["100%", "Spin"] and
-                                        self.original_pixmap)
+
+            is_viewport_move_condition = (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap)
             key_to_add_for_viewport = None
             if is_viewport_move_condition:
                 if modifiers & Qt.ShiftModifier:
@@ -14341,7 +14428,7 @@ class PhotoSortApp(QMainWindow):
                     elif key == Qt.Key_Up: key_to_add_for_viewport = Qt.Key_Up
                     elif key == Qt.Key_Down: key_to_add_for_viewport = Qt.Key_Down
             if key_to_add_for_viewport:
-                if not is_auto_repeat:
+                if not event.isAutoRepeat():
                     if key_to_add_for_viewport not in self.pressed_keys_for_viewport:
                         self.pressed_keys_for_viewport.add(key_to_add_for_viewport)
                     if not self.viewport_move_timer.isActive():
@@ -14357,50 +14444,41 @@ class PhotoSortApp(QMainWindow):
             elif self.grid_mode != "Off":
                 rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
                 if modifiers & Qt.ShiftModifier:
-                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): 
-                        self.navigate_to_adjacent_page(-1); return True
+                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): self.navigate_to_adjacent_page(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_to_adjacent_page(1); return True
                 else:
-                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): 
-                        self.navigate_grid(-1); return True
+                    if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): self.navigate_grid(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_grid(1); return True
                     elif key == Qt.Key_W or key == Qt.Key_Up: self.navigate_grid(-cols); return True
                     elif key == Qt.Key_S or key == Qt.Key_Down: self.navigate_grid(cols); return True
-            if Qt.Key_1 <= key <= (Qt.Key_1 + self.folder_count - 1):
-                if event.isAutoRepeat():
-                    return True
-                if self.image_processing:
-                    return True
-                folder_index = key - Qt.Key_1
-                self.highlight_folder_label(folder_index, True)
-                self.image_processing = True
-                if self.grid_mode != "Off":
-                    self.move_grid_image(folder_index)
-                else:
-                    self.move_current_image_to_folder(folder_index)
-                self.image_processing = False
-                return True
             if key == Qt.Key_A and (modifiers & Qt.ControlModifier):
                 if self.grid_mode != "Off" and self.image_files:
                     self.toggle_select_all_in_page()
                 return True
             return False
-        elif event.type() == QEvent.KeyRelease:
-            # <<< [수정] key 변수 정의 추가 >>>
-            key = event.key()
 
-            if self.is_input_dialog_active:
+        elif event.type() == QEvent.KeyRelease:
+            key = event.key()
+            if self.is_input_dialog_active or event.isAutoRepeat():
                 return super().eventFilter(obj, event)
-            if event.isAutoRepeat():
-                return super().eventFilter(obj, event)
-            if Qt.Key_1 <= key <= Qt.Key_9:
+
+            if key in self.pressed_number_keys:
                 folder_index = key - Qt.Key_1
                 self.highlight_folder_label(folder_index, False)
+                self.pressed_number_keys.remove(key)
+                
+                if not self.image_processing:
+                    self.image_processing = True
+                    if self.grid_mode != "Off":
+                        self.move_grid_image(folder_index)
+                    else:
+                        self.move_current_image_to_folder(folder_index)
+                    self.image_processing = False
                 return True
+
             key_to_remove_from_viewport = None
             if key == Qt.Key_Shift:
-                if self.pressed_keys_for_viewport:
-                    self.pressed_keys_for_viewport.clear()
+                if self.pressed_keys_for_viewport: self.pressed_keys_for_viewport.clear()
             elif key == Qt.Key_Left: key_to_remove_from_viewport = Qt.Key_Left
             elif key == Qt.Key_Right: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_Up: key_to_remove_from_viewport = Qt.Key_Up
@@ -14409,22 +14487,25 @@ class PhotoSortApp(QMainWindow):
             elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up
             elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down
+            
             action_taken = False
             if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
                 self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
                 action_taken = True
+            
             if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
                 self.viewport_move_timer.stop()
                 if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap:
-                    current_image_path_str = str(self.image_files[self.current_image_index])
                     final_rel_center = self._get_current_view_relative_center()
-                    final_zoom_level = self.zoom_mode
                     self.current_active_rel_center = final_rel_center
-                    self.current_active_zoom_level = final_zoom_level
-                    self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, final_zoom_level)
+                    self.current_active_zoom_level = self.zoom_mode
+                    self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, self.zoom_mode)
+            
             if action_taken or key == Qt.Key_Shift:
                 return True
+            
             return False
+            
         return super().eventFilter(obj, event)
 
     def on_file_list_dialog_closed(self, result):
@@ -14474,45 +14555,26 @@ class PhotoSortApp(QMainWindow):
             self.match_raw_button.setEnabled(True)
             self.load_button.setEnabled(True)  # 둘 다 로드 안됨: JPG 버튼 활성화
 
-    def update_folder_label_style(self, label, folder_path):
-        """폴더 경로 유효성에 따라 레이블 스타일 및 활성화 상태 업데이트"""
+    def update_info_folder_label_style(self, label: InfoFolderPathLabel, folder_path: str):
+        """InfoFolderPathLabel의 스타일을 경로 유효성에 따라 업데이트합니다."""
         is_valid = bool(folder_path and Path(folder_path).is_dir())
-        if is_valid:
-            label.setStyleSheet(f"""
-                QLabel {{
-                    color: #AAAAAA;
-                    padding: 5px;
-                    background-color: {ThemeManager.get_color('bg_primary')};
-                    border-radius: 1px;
-                }}
-            """)
-            label.setEnabled(True) # 경로 있으면 활성화
-        else:
-            label.setStyleSheet(f"""
-                QLabel {{
-                    color: {ThemeManager.get_color('text_disabled')};
-                    padding: 5px;
-                    background-color: {ThemeManager.get_color('bg_disabled')};
-                    border-radius: 1px;
-                }}
-            """)
-            label.setEnabled(False) # 경로 없으면 비활성화
+        label.set_style(is_valid=is_valid)
+
 
     def update_jpg_folder_ui_state(self):
         is_valid = bool(self.current_folder and Path(self.current_folder).is_dir())
-        self.update_folder_label_style(self.folder_path_label, self.current_folder)
-        if hasattr(self, 'jpg_clear_button'): # 버튼이 생성된 후 호출되도록 확인
+        self.update_info_folder_label_style(self.folder_path_label, self.current_folder) # <<< 수정
+        if hasattr(self, 'jpg_clear_button'):
             self.jpg_clear_button.setEnabled(is_valid)
-        # 추가: JPG 폴더가 로드된 상태에서는 버튼 비활성화
         if hasattr(self, 'load_button'):
-            self.load_button.setEnabled(not is_valid)  # 폴더가 로드되어 있으면 버튼 비활성화
+            self.load_button.setEnabled(not is_valid)
 
     def update_raw_folder_ui_state(self):
         is_valid = bool(self.raw_folder and Path(self.raw_folder).is_dir())
-        self.update_folder_label_style(self.raw_folder_path_label, self.raw_folder)
-        if hasattr(self, 'raw_clear_button'): # 버튼이 생성된 후 호출되도록 확인
+        self.update_info_folder_label_style(self.raw_folder_path_label, self.raw_folder) # <<< 수정
+        if hasattr(self, 'raw_clear_button'):
             self.raw_clear_button.setEnabled(is_valid)
-        self.update_raw_toggle_state() # RAW 토글 상태도 같이 업데이트
+        self.update_raw_toggle_state()
 
     def clear_jpg_folder(self):
         """JPG 폴더 지정 해제 및 관련 상태 초기화"""
@@ -14604,6 +14666,8 @@ class PhotoSortApp(QMainWindow):
 
         if self.session_management_popup and self.session_management_popup.isVisible():
             self.session_management_popup.update_all_button_states()
+
+        self.update_all_folder_labels_state()
 
         self.save_state() # <<< 초기화 후 상태 저장
 
@@ -14745,6 +14809,8 @@ class PhotoSortApp(QMainWindow):
 
             self.save_state() # <<< 상태 변경 후 저장
 
+            self.update_all_folder_labels_state()
+
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
 
@@ -14781,9 +14847,7 @@ class PhotoSortApp(QMainWindow):
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         if not self.raw_folder:
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-        for i, label in enumerate(self.folder_path_labels):
-            if not (i < len(self.target_folders) and self.target_folders[i]):
-                label.setText(LanguageManager.translate("폴더 경로"))
+        self.update_all_folder_labels_state()
         
         self.update_window_title_with_selection()
         
@@ -15106,11 +15170,15 @@ def main():
         "UI 설정": "UI Settings",
         "작업 설정": "Workflow Settings",
         "도구 및 고급 설정": "Tools & Advanced",
-        "빠른 분류 폴더": "Quick Sort Folders",
-        "E 키 폴더명": "E Key Folder Name",
-        "F 키 폴더명": "F Key Folder Name",
-        "잘못된 폴더명입니다.": "Invalid folder name.",
-        "빠른 분류": "Quick Sort",
+        "새 폴더명을 입력하고 Enter를 누르거나 ✓ 버튼을 클릭하세요.": "Enter a new folder name and press Enter or click the ✓ button.",
+        "기준 폴더가 로드되지 않았습니다.": "Base folder has not been loaded.",
+        "폴더 생성 실패": "Folder Creation Failed",
+        "이미지 이동 중...": "Moving images...",
+        "작업 취소됨.\n성공: {success_count}개, 실패: {fail_count}개": "Operation canceled.\nSuccess: {success_count}, Failed: {fail_count}",
+        "성공: {success_count}개\n실패: {fail_count}개": "Success: {success_count}\nFailed: {fail_count}",
+        "모든 파일 이동 실패: {fail_count}개": "All file moves failed: {fail_count}",
+        "파일 열기 실패": "Failed to Open File",
+        "연결된 프로그램이 없거나 파일을 열 수 없습니다.": "No associated program or the file cannot be opened.",
     }
     
     LanguageManager.initialize_translations(translations)
