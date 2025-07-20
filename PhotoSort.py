@@ -10159,14 +10159,15 @@ class PhotoSortApp(QMainWindow):
         # 대상 경로 생성
         target_path = target_dir / source_path.name
 
-        # 이미 같은 이름의 파일이 있는지 확인
+        # 이미 같은 이름의 파일이 있는지 확인 (수정: 파일명 중복 처리 로직을 재시도 로직과 분리)
         if target_path.exists():
-            # 파일명 중복 처리
             counter = 1
-            while target_path.exists():
-                # 새 파일명 형식: 원본파일명_1.확장자
+            while True:
                 new_name = f"{source_path.stem}_{counter}{source_path.suffix}"
-                target_path = target_dir / new_name
+                new_target_path = target_dir / new_name
+                if not new_target_path.exists():
+                    target_path = new_target_path # 최종 타겟 경로 업데이트
+                    break
                 counter += 1
             logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
 
@@ -15208,6 +15209,8 @@ def main():
     if hasattr(window, 'is_first_run') and window.is_first_run:
         QTimer.singleShot(100, window.show_first_run_settings_popup_delayed)
 
+    shared_memory.detach()
+    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
