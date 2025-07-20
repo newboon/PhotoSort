@@ -1174,37 +1174,30 @@ class ZoomScrollArea(QScrollArea):
     def wheelEvent(self, event: QWheelEvent):
         # 부모 위젯 (PhotoSortApp) 상태 및 마우스 휠 설정 확인
         if self.app_parent and hasattr(self.app_parent, 'mouse_wheel_action'):
-            # [신규] Ctrl 키가 눌린 상태에서 Spin 모드일 때 줌 조정
+            # Ctrl 키가 눌린 상태에서 Spin 모드일 때 줌 조정
             if (event.modifiers() & Qt.ControlModifier and 
                 hasattr(self.app_parent, 'zoom_mode') and 
                 self.app_parent.zoom_mode == "Spin"):
-                
                 wheel_delta = event.angleDelta().y()
                 if wheel_delta != 0:
                     # SpinBox에서 직접 정수 값 가져오기 (부동소수점 오차 방지)
                     if hasattr(self.app_parent, 'zoom_spin'):
                         current_zoom = self.app_parent.zoom_spin.value()  # 이미 정수값
-                        
                         # 휠 방향에 따라 10씩 증가/감소
                         if wheel_delta > 0:
                             new_zoom = min(500, current_zoom + 10)  # 최대 500%
                         else:
                             new_zoom = max(10, current_zoom - 10)   # 최소 10%
-                        
                         # 값이 실제로 변경되었을 때만 업데이트
                         if new_zoom != current_zoom:
                             # SpinBox 값 먼저 설정 (정확한 정수값 보장)
                             self.app_parent.zoom_spin.setValue(new_zoom)
-                            
                             # zoom_spin_value 동기화
                             self.app_parent.zoom_spin_value = new_zoom / 100.0
-                            
                             # 이미지에 즉시 반영
                             self.app_parent.apply_zoom_to_image()
-                    
                     event.accept()
                     return
-            
             # 마우스 휠 동작이 "없음"으로 설정된 경우 기존 방식 사용
             if getattr(self.app_parent, 'mouse_wheel_action', 'photo_navigation') == 'none':
                 # 기존 ZoomScrollArea 동작 (100%/Spin 모드에서 휠 이벤트 무시)
@@ -1214,36 +1207,31 @@ class ZoomScrollArea(QScrollArea):
                 else:
                     super().wheelEvent(event)
                     return
-            
             # 마우스 휠 동작이 "사진 넘기기"로 설정된 경우
             if hasattr(self.app_parent, 'grid_mode'):
                 wheel_delta = event.angleDelta().y()
                 if wheel_delta == 0:
                     super().wheelEvent(event)
                     return
-                
                 if self.app_parent.grid_mode == "Off":
                     # === Grid Off 모드: 이전/다음 사진 ===
                     if wheel_delta > 0:
                         self.app_parent.show_previous_image()
                     else:
                         self.app_parent.show_next_image()
-                    
                     event.accept()
                     return
-                    
-                elif self.app_parent.grid_mode in ["2x2", "3x3"]:
+                elif self.app_parent.grid_mode != "Off":
                     # === Grid 모드: 그리드 셀 간 이동 ===
                     if wheel_delta > 0:
                         self.app_parent.navigate_grid(-1)
                     else:
                         self.app_parent.navigate_grid(1)
-                    
                     event.accept()
                     return
-        
         # 기타 경우에는 기본 스크롤 동작 수행
         super().wheelEvent(event)
+
 
 class GridCellWidget(QWidget):
     def __init__(self, parent=None):
@@ -3722,7 +3710,8 @@ class PhotoSortApp(QMainWindow):
         (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
         (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
         (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
-        (0, "▪ F1, F2, F3: 그리드 옵션 변경"),
+        (0, "▪ G: 그리드 모드 켜기/끄기"),
+        (0, "▪ F1, F2, F3: 줌 옵션 변경 (Fit, 100%, Spin)"),
         (0, "▪ F5: 폴더 새로고침"),
         (0, "▪ Ctrl + Z: 파일 이동 취소"),
         (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
@@ -3827,6 +3816,7 @@ class PhotoSortApp(QMainWindow):
 
         # Grid 관련 변수 추가
         self.grid_mode = "Off" # 'Off', '2x2', '3x3'
+        self.last_active_grid_mode = "2x2"  # 마지막으로 활성화된 그리드 모드 저장 (기본값 "2x2")
         self.current_grid_index = 0 # 현재 선택된 그리드 셀 인덱스 (0부터 시작)
         self.grid_page_start_index = 0 # 현재 그리드 페이지의 시작 이미지 인덱스
         self.previous_grid_mode = None # 이전 그리드 모드 저장 변수
@@ -3849,8 +3839,7 @@ class PhotoSortApp(QMainWindow):
             self.raw_result_processor_timer.start()
 
         # --- 그리드 썸네일 사전 생성을 위한 변수 추가 ---
-        self.grid_thumbnail_cache_2x2 = {} # 2x2 그리드 썸네일 캐시 (key: image_path, value: QPixmap)
-        self.grid_thumbnail_cache_3x3 = {} # 3x3 그리드 썸네일 캐시 (key: image_path, value: QPixmap)
+        self.grid_thumbnail_cache = {"2x2": {}, "3x3": {}, "4x4": {}}
         self.active_thumbnail_futures = [] # 현재 실행 중인 백그라운드 썸네일 작업 추적
         self.grid_thumbnail_executor = ThreadPoolExecutor(
         max_workers=2, 
@@ -4246,7 +4235,7 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
         
         # Grid 설정 UI 구성 (Zoom UI 아래 추가)
-        self.setup_grid_ui() # <<< 새로운 UI 설정 메서드 호출
+        self.setup_grid_ui()
 
         # 구분선 추가
         self.control_layout.addSpacing(UIScaleManager.get("section_spacing", 20))
@@ -4498,7 +4487,7 @@ class PhotoSortApp(QMainWindow):
             if self.current_image_index >= 0:
                 self.thumbnail_panel.set_current_index(self.current_image_index)
         else: # Grid 모드
-            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+            rows, cols = self._get_grid_dimensions()
             num_cells = rows * cols
             if new_index != -1:
                 self.grid_page_start_index = (new_index // num_cells) * num_cells
@@ -5940,8 +5929,9 @@ class PhotoSortApp(QMainWindow):
         self.resource_manager.cancel_all_tasks() # 중요
         if hasattr(self, 'image_loader'): self.image_loader.clear_cache()
         self.fit_pixmap_cache.clear()
-        self.grid_thumbnail_cache_2x2.clear()
-        self.grid_thumbnail_cache_3x3.clear()
+        if hasattr(self, 'grid_thumbnail_cache'):
+            for key in self.grid_thumbnail_cache:
+                self.grid_thumbnail_cache[key].clear()
         self.original_pixmap = None
 
         # 1. 분류 폴더 개수 설정 먼저 복원 (UI 재구성 전에)
@@ -6056,7 +6046,7 @@ class PhotoSortApp(QMainWindow):
             
             if 0 <= loaded_actual_idx < total_images:
                 if self.grid_mode != "Off":
-                    rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                    rows, cols = self._get_grid_dimensions()
                     num_cells = rows * cols
                     self.grid_page_start_index = (loaded_actual_idx // num_cells) * num_cells
                     self.current_grid_index = loaded_actual_idx % num_cells
@@ -6402,8 +6392,9 @@ class PhotoSortApp(QMainWindow):
         self.last_fit_size = (0, 0)
         
         # 3. 그리드 썸네일 캐시 정리
-        self.grid_thumbnail_cache_2x2.clear()
-        self.grid_thumbnail_cache_3x3.clear()
+        if hasattr(self, 'grid_thumbnail_cache'):
+            for key in self.grid_thumbnail_cache:
+                self.grid_thumbnail_cache[key].clear()
         
         # 4. 백그라운드 작업 일부 취소
         for future in self.active_thumbnail_futures:
@@ -7278,7 +7269,7 @@ class PhotoSortApp(QMainWindow):
         # ... 기타 UI 요소 업데이트
         # 메시지 표시
         print(f"테마가 변경되었습니다: {ThemeManager.get_current_theme_name()}")
-    
+
     def update_button_styles(self):
         """버튼 스타일을 현재 테마에 맞게 업데이트"""
         # 기본 버튼 스타일
@@ -7303,7 +7294,6 @@ class PhotoSortApp(QMainWindow):
                 opacity: 0.7;
             }}
         """
-            
         # 삭제 버튼 스타일
         delete_button_style = f"""
             QPushButton {{
@@ -7327,7 +7317,6 @@ class PhotoSortApp(QMainWindow):
                 color: {ThemeManager.get_color('text_disabled')};
             }}
         """
-        
         # 라디오 버튼 스타일
         radio_style = f"""
             QRadioButton {{
@@ -7352,33 +7341,30 @@ class PhotoSortApp(QMainWindow):
                 border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
             }}
         """
-        
         # 메인 버튼들 스타일 적용
         if hasattr(self, 'load_button'):
             self.load_button.setStyleSheet(button_style)
         if hasattr(self, 'match_raw_button'):
             self.match_raw_button.setStyleSheet(button_style)
-        
         # 삭제 버튼 스타일 적용
         if hasattr(self, 'jpg_clear_button'):
             self.jpg_clear_button.setStyleSheet(delete_button_style)
         if hasattr(self, 'raw_clear_button'):
             self.raw_clear_button.setStyleSheet(delete_button_style)
-        
         # 폴더 버튼과 삭제 버튼 스타일 적용
         if hasattr(self, 'folder_buttons'):
             for button in self.folder_buttons:
                 button.setStyleSheet(button_style)
-        if hasattr(self, 'folder_delete_buttons'):
-            for button in self.folder_delete_buttons:
+        if hasattr(self, 'folder_action_buttons'): # folder_delete_buttons -> folder_action_buttons
+            for button in self.folder_action_buttons:
                 button.setStyleSheet(delete_button_style)
-        
-        # 줌 및 그리드 라디오 버튼 스타일 적용
+        # 줌 라디오 버튼 스타일 적용
         if hasattr(self, 'zoom_group'):
             for button in self.zoom_group.buttons():
                 button.setStyleSheet(radio_style)
-        if hasattr(self, 'grid_group'):
-            for button in self.grid_group.buttons():
+                
+        if hasattr(self, 'grid_mode_group'):
+            for button in self.grid_mode_group.buttons():
                 button.setStyleSheet(radio_style)
                 
     def resource_path(self, relative_path: str) -> str:
@@ -9612,7 +9598,7 @@ class PhotoSortApp(QMainWindow):
                         # 단일 선택된 경우 (기존 코드)
                         global_index = int(indices_str)
                         if 0 <= global_index < len(self.image_files):
-                            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                            rows, cols = self._get_grid_dimensions()
                             num_cells = rows * cols
                             self.grid_page_start_index = (global_index // num_cells) * num_cells
                             self.current_grid_index = global_index % num_cells
@@ -9678,7 +9664,7 @@ class PhotoSortApp(QMainWindow):
                 self.move_current_image_to_folder(folder_index)
                 return True
                 
-            elif self.grid_mode in ["2x2", "3x3"]:
+            elif self.grid_mode != "Off":
                 # Grid 모드: move_grid_image 사용
                 logging.info(f"Grid 모드: 현재 그리드 이미지 폴더 {folder_index}로 이동")
                 
@@ -9974,7 +9960,8 @@ class PhotoSortApp(QMainWindow):
         if self.grid_mode == "Off" or not self.image_files:
             return
 
-        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+        rows, cols = self._get_grid_dimensions()
+        if rows == 0: return
         num_cells = rows * cols
         total_images = len(self.image_files)
         if total_images == 0: return # 이미지가 없으면 중단
@@ -10852,18 +10839,14 @@ class PhotoSortApp(QMainWindow):
         return base_size  # 스케일 정보를 얻을 수 없으면 기본값 사용
 
     def setup_grid_ui(self):
-        """Grid 설정 UI 구성"""
-
+        """Grid 설정 UI 구성 (라디오 버튼 + 콤보박스)"""
         # Grid 제목 레이블
         grid_title = QLabel("Grid")
-        grid_title.setAlignment(Qt.AlignCenter) # --- 가운데 정렬 ---
-        grid_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};") # --- 스타일 시트에서 마진 제거 ---
-        # --- 폰트 설정 시작 (Zoom과 동일하게) ---
-        font = QFont(self.font()) # 기본 폰트 속성 복사
-        # font.setBold(True) # 볼드 적용
-        font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 크기 적용
-        grid_title.setFont(font) # 새 폰트 적용
-        # --- 폰트 설정 끝 ---
+        grid_title.setAlignment(Qt.AlignCenter)
+        grid_title.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
+        font = QFont(self.font())
+        font.setPointSize(UIScaleManager.get("zoom_grid_font_size"))
+        grid_title.setFont(font)
         self.control_layout.addWidget(grid_title)
         self.control_layout.addSpacing(UIScaleManager.get("title_spacing"))
 
@@ -10871,23 +10854,45 @@ class PhotoSortApp(QMainWindow):
         grid_container = QWidget()
         grid_layout_h = QHBoxLayout(grid_container)
         grid_layout_h.setContentsMargins(0, 0, 0, 0)
-        grid_layout_h.setSpacing(UIScaleManager.get("group_box_spacing")) 
+        grid_layout_h.setSpacing(UIScaleManager.get("group_box_spacing"))
 
-        # 라디오 버튼 생성
+        # --- UI 요소 생성 ---
         self.grid_off_radio = QRadioButton("Off")
-        self.grid_2x2_radio = QRadioButton("2 x 2")
-        self.grid_3x3_radio = QRadioButton("3 x 3")
+        self.grid_on_radio = QRadioButton() # 텍스트 없는 라디오 버튼
 
-        # 버튼 그룹에 추가
-        self.grid_group = QButtonGroup(self)
-        self.grid_group.addButton(self.grid_off_radio, 0)
-        self.grid_group.addButton(self.grid_2x2_radio, 1)
-        self.grid_group.addButton(self.grid_3x3_radio, 2)
+        self.grid_size_combo = QComboBox()
+        self.grid_size_combo.addItems(["2 x 2", "3 x 3", "4 x 4"])
+        combobox_style = f"""
+            QComboBox {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: 1px;
+                padding: {UIScaleManager.get("combobox_padding")}px;
+            }}
+            QComboBox:hover {{
+                background-color: #555555;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                selection-background-color: #505050;
+                selection-color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+            }}
+        """
+        self.grid_size_combo.setStyleSheet(combobox_style)
+
+        # 버튼 그룹으로 Off/On 상태 관리
+        self.grid_mode_group = QButtonGroup(self)
+        self.grid_mode_group.addButton(self.grid_off_radio, 0) # ID 0: Off
+        self.grid_mode_group.addButton(self.grid_on_radio, 1)  # ID 1: On
 
         # 기본값: Off
         self.grid_off_radio.setChecked(True)
+        self.grid_size_combo.setEnabled(False) # 초기에는 콤보박스 비활성화
 
-        # 버튼 스타일 설정 (Zoom 스타일 재사용)
+        # 스타일 설정
         radio_style = f"""
             QRadioButton {{
                 color: {ThemeManager.get_color('text')};
@@ -10912,27 +10917,30 @@ class PhotoSortApp(QMainWindow):
             }}
         """
         self.grid_off_radio.setStyleSheet(radio_style)
-        self.grid_2x2_radio.setStyleSheet(radio_style)
-        self.grid_3x3_radio.setStyleSheet(radio_style)
+        self.grid_on_radio.setStyleSheet(radio_style)
 
-        # 이벤트 연결
-        self.grid_group.buttonClicked.connect(self.on_grid_changed)
+        # --- 이벤트 연결 ---
+        self.grid_mode_group.buttonClicked.connect(self._on_grid_mode_toggled)
+        self.grid_size_combo.currentTextChanged.connect(self._on_grid_size_changed)
 
-        # 레이아웃에 위젯 추가 (가운데 정렬)
+        # --- 레이아웃에 위젯 추가 ---
         grid_layout_h.addStretch()
         grid_layout_h.addWidget(self.grid_off_radio)
-        grid_layout_h.addWidget(self.grid_2x2_radio)
-        grid_layout_h.addWidget(self.grid_3x3_radio)
+        # On 라디오 버튼과 콤보박스를 묶어서 추가
+        grid_on_container = QHBoxLayout()
+        grid_on_container.setContentsMargins(0, 0, 0, 0)
+        grid_on_container.setSpacing(5)
+        grid_on_container.addWidget(self.grid_on_radio)
+        grid_on_container.addWidget(self.grid_size_combo)
+        grid_layout_h.addLayout(grid_on_container)
         grid_layout_h.addStretch()
 
         self.control_layout.addWidget(grid_container)
 
-        # --- "파일명" 토글 체크박스 추가 ---
-        self.filename_toggle_grid = QCheckBox(LanguageManager.translate("파일명")) # "파일명" 키를 translations에 추가 필요
-        self.filename_toggle_grid.setChecked(self.show_grid_filenames) # 초기 상태 반영
+        # "파일명" 토글 체크박스는 기존과 동일하게 유지
+        self.filename_toggle_grid = QCheckBox(LanguageManager.translate("파일명"))
+        self.filename_toggle_grid.setChecked(self.show_grid_filenames)
         self.filename_toggle_grid.toggled.connect(self.on_filename_toggle_changed)
-
-        # 미니맵 토글과 동일한 스타일 적용
         checkbox_style = f"""
             QCheckBox {{
                 color: {ThemeManager.get_color('text')};
@@ -10957,106 +10965,79 @@ class PhotoSortApp(QMainWindow):
             }}
         """
         self.filename_toggle_grid.setStyleSheet(checkbox_style)
-
-        # 파일명 토글을 중앙에 배치하기 위한 컨테이너
         filename_toggle_container = QWidget()
         filename_toggle_layout = QHBoxLayout(filename_toggle_container)
         filename_toggle_layout.setContentsMargins(0, 10, 0, 0)
         filename_toggle_layout.addStretch()
         filename_toggle_layout.addWidget(self.filename_toggle_grid)
         filename_toggle_layout.addStretch()
-
         self.control_layout.addWidget(filename_toggle_container)
-        # --- "파일명" 토글 체크박스 추가 끝 ---
 
-    def on_grid_changed(self, button):
-        """Grid 모드 변경 처리"""
-        previous_grid_mode = self.grid_mode
-        new_grid_mode = "" # 초기화
+    def _on_grid_mode_toggled(self, button):
+        """Grid On/Off 라디오 버튼 클릭 시 호출"""
+        is_on = (self.grid_mode_group.id(button) == 1)
+        self.grid_size_combo.setEnabled(is_on)
 
-        # last_selected_image_index는 Grid On -> Off로 전환 시에만 의미가 있음
-        last_selected_image_index_from_grid = -1
-        if previous_grid_mode != "Off": # 이전 모드가 Grid On이었을 때만 계산
-            global_idx = self.grid_page_start_index + self.current_grid_index
-            if 0 <= global_idx < len(self.image_files):
-                last_selected_image_index_from_grid = global_idx
-            elif self.image_files: # 유효한 선택이 없었지만 이미지가 있다면 첫번째 이미지로
-                last_selected_image_index_from_grid = 0
+        new_mode = "Off"
+        if is_on:
+            # Grid를 켤 때, 콤보박스의 현재 값 또는 마지막 활성 모드를 사용
+            combo_text = self.grid_size_combo.currentText().replace(" ", "") # "2x2"
+            new_mode = combo_text if combo_text else self.last_active_grid_mode
+        
+        if self.grid_mode != new_mode:
+            self.grid_mode = new_mode
+            self._update_view_for_grid_change()
 
+    def _on_grid_size_changed(self, text):
+        """Grid 크기 콤보박스 변경 시 호출"""
+        new_mode = text.replace(" ", "") # "2x2"
+        self.last_active_grid_mode = new_mode # 마지막으로 선택한 그리드 모드 저장
+        
+        if self.grid_mode != new_mode:
+            self.grid_mode = new_mode
+            # 콤보박스가 변경되었다는 것은 Grid가 On 상태임을 의미하므로 라디오 버튼 체크
+            if not self.grid_on_radio.isChecked():
+                self.grid_on_radio.setChecked(True)
+            self._update_view_for_grid_change()
 
-        if button == self.grid_off_radio:
-            new_grid_mode = "Off"
-        elif button == self.grid_2x2_radio:
-            new_grid_mode = "2x2"
-        elif button == self.grid_3x3_radio:
-            new_grid_mode = "3x3"
-        else:
-            return # 알 수 없는 버튼이면 아무것도 안 함
+    def _update_view_for_grid_change(self):
+        """Grid 모드 변경에 따른 공통 UI 업데이트 로직"""
+        logging.debug(f"Grid mode changed to: {self.grid_mode}")
+        self.clear_grid_selection()
+        self.update_thumbnail_panel_visibility()
 
-        # --- 모드가 실제로 변경되었을 때만 주요 로직 수행 ---
-        if previous_grid_mode != new_grid_mode:
-            logging.debug(f"Grid mode changed: {previous_grid_mode} -> {new_grid_mode}")
-            self.clear_grid_selection()
-            self.grid_mode = new_grid_mode
+        if self.grid_mode == "Off":
+            if self.image_files:
+                # Grid On -> Off 전환 시 현재 선택된 셀을 기준으로 이미지 인덱스 설정
+                global_idx = self.grid_page_start_index + self.current_grid_index
+                self.current_image_index = global_idx if 0 <= global_idx < len(self.image_files) else 0
+            else:
+                self.current_image_index = -1
+            self.force_refresh = True
+        else: # Grid On
+            if self.zoom_mode != "Fit":
+                self.zoom_mode = "Fit"
+                self.fit_radio.setChecked(True)
+            # Grid Off -> On 전환 시, 현재 이미지를 기준으로 페이지 위치 계산
+            if self.current_image_index != -1:
+                rows, cols = self._get_grid_dimensions()
+                num_cells = rows * cols
+                self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
+                self.current_grid_index = self.current_image_index % num_cells
+        
+        self.update_grid_view()
+        self.update_zoom_radio_buttons_state()
+        self.update_counter_layout()
 
-            # === 썸네일 패널 표시 상태 업데이트 추가 ===
-            self.update_thumbnail_panel_visibility()
-
-            if new_grid_mode == "Off":
-                # Grid On -> Off 로 변경된 경우
-                if not self.space_pressed:
-                    self.previous_grid_mode = None
-                else:
-                    self.space_pressed = False
-                
-                if last_selected_image_index_from_grid != -1:
-                    self.current_image_index = last_selected_image_index_from_grid
-                elif self.image_files: # 이전 그리드에서 유효 선택 없었지만 파일은 있으면
-                    self.current_image_index = 0 
-                else:
-                    self.current_image_index = -1
-                
-                self.force_refresh = True
-                if self.zoom_mode == "Fit": # Fit 모드 캐시 관련
-                    self.last_fit_size = (0, 0)
-                    self.fit_pixmap_cache.clear()
-
-            else: # Grid Off -> Grid On 또는 Grid On -> 다른 Grid On 으로 변경된 경우
-                if self.zoom_mode != "Fit": # Grid On으로 갈 땐 강제로 Fit
-                    self.zoom_mode = "Fit"
-                    self.fit_radio.setChecked(True)
-
-                if previous_grid_mode == "Off" and self.current_image_index != -1:
-                    # Grid Off에서 Grid On으로 전환: 현재 이미지를 기준으로 그리드 위치 설정
-                    rows, cols = (2, 2) if new_grid_mode == '2x2' else (3, 3)
-                    num_cells = rows * cols
-                    self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
-                    self.current_grid_index = self.current_image_index % num_cells
-                # else: Grid On -> 다른 Grid On. 이 경우 페이지/셀 인덱스는 어떻게 할지 정책 필요.
-                    # 현재는 특별한 처리 없이 기존 self.grid_page_start_index, self.current_grid_index 유지.
-                    # 또는 0으로 초기화하거나, 이전 그리드 셀의 내용을 최대한 유지하려는 시도 가능.
-                    # 예를 들어, (2x2의 1번셀 -> 3x3의 몇번셀?) 같은 변환 로직.
-                    # 지금은 유지하는 것으로 가정.
-
-            self.update_grid_view() # 뷰 업데이트는 모드 변경 시 항상 필요
-            self.update_zoom_radio_buttons_state()
-            self.update_counter_layout()
-
-        # Grid Off 상태에서 F1 (즉, Off->Off)을 눌렀을 때 force_refresh가 설정되었으므로
-        # display_current_image를 호출하여 화면을 다시 그리도록 함 (선택적)
-        # 하지만 current_image_index가 바뀌지 않았으므로 실제로는 큰 변화 없을 것임.
-        # 만약 Off->Off일 때 아무것도 안 하게 하려면, 위 if 블록 밖에서 처리하거나,
-        # F1 키 처리 부분에서 self.force_refresh를 조건부로 설정.
-        elif new_grid_mode == "Off" and getattr(self, 'force_refresh', False): # 모드 변경은 없지만 강제 새로고침 요청
-            logging.debug("Grid mode Off, force_refresh 요청됨. display_current_image 호출.")
-            self.display_current_image() # 겉보기엔 변화 없어도 강제 리드로우
-            # self.force_refresh = False # 사용 후 초기화는 display_current_image에서 할 수도 있음
-
-        # 미니맵 상태 업데이트 (모드 변경 여부와 관계없이 현재 grid_mode에 따라)
-        if self.grid_mode != "Off":
-            self.toggle_minimap(False)
-        else:
-            self.toggle_minimap(self.minimap_toggle.isChecked())
+    def _get_grid_dimensions(self):
+        """현재 grid_mode에 맞는 (행, 열)을 반환합니다."""
+        if self.grid_mode == '2x2':
+            return 2, 2
+        if self.grid_mode == '3x3':
+            return 3, 3
+        if self.grid_mode == '4x4':
+            return 4, 4
+        return 0, 0 # Grid Off 또는 예외 상황
 
     def update_zoom_radio_buttons_state(self):
         """그리드 모드에 따라 줌 라디오 버튼 활성화/비활성화"""
@@ -11297,7 +11278,10 @@ class PhotoSortApp(QMainWindow):
         self.grid_labels.clear()
         self.grid_layout = None # QGridLayout 참조 해제
 
-        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+        rows, cols = self._get_grid_dimensions()
+        if rows == 0: # Grid Off인데 여기까지 온 경우 (안전장치)
+            self.display_current_image()
+            return
         num_cells = rows * cols
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(0)
@@ -11519,7 +11503,9 @@ class PhotoSortApp(QMainWindow):
         if self.grid_mode == "Off" or not self.image_files:
             return
         
-        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+        rows, cols = self._get_grid_dimensions()
+        if rows == 0: return
+
         num_cells = rows * cols
         
         # 현재 페이지에 실제로 있는 이미지 수 계산
@@ -11606,7 +11592,8 @@ class PhotoSortApp(QMainWindow):
         total_images = len(self.image_files)
         if total_images <= 0: return # 이미지가 없으면 중단
 
-        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+        rows, cols = self._get_grid_dimensions()
+        if rows == 0: return
         num_cells = rows * cols
 
         # 현재 페이지의 셀 개수 계산 (마지막 페이지는 다를 수 있음)
@@ -11705,100 +11692,78 @@ class PhotoSortApp(QMainWindow):
             self.update_grid_view()
             logging.debug(f"Navigating grid: Page changed to start index {self.grid_page_start_index}, grid index {self.current_grid_index}") # 디버깅 로그
 
-
-
     def move_grid_image(self, folder_index):
         """Grid 모드에서 선택된 이미지(들)를 지정된 폴더로 이동 (다중 선택 지원)"""
         if self.grid_mode == "Off" or not self.grid_labels:
             return
-
-        # 다중 선택된 이미지들 수집
+        
         if hasattr(self, 'selected_grid_indices') and self.selected_grid_indices:
-            # 다중 선택된 이미지들의 전역 인덱스 계산
             selected_global_indices = []
             for grid_index in self.selected_grid_indices:
                 global_index = self.grid_page_start_index + grid_index
                 if 0 <= global_index < len(self.image_files):
                     selected_global_indices.append(global_index)
-            
             if not selected_global_indices:
                 logging.warning("선택된 이미지가 없습니다.")
                 return
-                
             logging.info(f"다중 이미지 이동 시작: {len(selected_global_indices)}개 파일")
         else:
-            # 기존 단일 선택 방식 (호환성)
             image_list_index = self.grid_page_start_index + self.current_grid_index
             if not (0 <= image_list_index < len(self.image_files)):
                 logging.warning("선택된 셀에 이동할 이미지가 없습니다.")
                 return
             selected_global_indices = [image_list_index]
             logging.info(f"단일 이미지 이동: index {image_list_index}")
-
+            
         target_folder = self.target_folders[folder_index]
         if not target_folder or not os.path.isdir(target_folder):
             return
-
-        # 이동할 이미지들을 역순으로 정렬 (리스트에서 제거할 때 인덱스 변화 방지)
+            
         selected_global_indices.sort(reverse=True)
         
-        # 대량 이동 시 진행 상황 표시 (2개 이상일 때)
         show_progress = len(selected_global_indices) >= 2
         progress_dialog = None
         if show_progress:
             progress_dialog = QProgressDialog(
                 LanguageManager.translate("이미지 이동 중..."),
-                "",  # 취소 버튼 텍스트를 빈 문자열로 설정
+                "", 
                 0, len(selected_global_indices), self
             )
-            progress_dialog.setCancelButton(None)  # 취소 버튼 완전히 제거
+            progress_dialog.setCancelButton(None)
             progress_dialog.setWindowModality(Qt.WindowModal)
             progress_dialog.setMinimumDuration(0)
             progress_dialog.show()
-            QApplication.processEvents()  # 즉시 표시
-        
-        # 이동 결과 추적
+            QApplication.processEvents()
+
         successful_moves = []
         failed_moves = []
         move_history_entries = []
         user_canceled = False
-
         try:
             for idx, global_index in enumerate(selected_global_indices):
-                # 진행 상황 업데이트
                 if show_progress and progress_dialog:
                     progress_dialog.setValue(idx)
                     if progress_dialog.wasCanceled():
                         logging.info("사용자가 이동 작업을 취소했습니다.")
                         user_canceled = True
                         break
-                    QApplication.processEvents()  # UI 업데이트
+                    QApplication.processEvents()
                 
                 if global_index >= len(self.image_files):
-                    # 이전 이동으로 인해 인덱스가 변경된 경우 건너뛰기
                     continue
-                    
-                current_image_path = self.image_files[global_index]
                 
-                # ======================================================================== #
-                # ========== UNDO/REDO VARIABLES START ==========
+                current_image_path = self.image_files[global_index]
                 moved_jpg_path = None
                 moved_raw_path = None
                 raw_path_before_move = None
-                # ========== UNDO/REDO VARIABLES END ==========
-                # ======================================================================== #
-
+                
                 try:
-                    # --- JPG 파일 이동 ---
                     moved_jpg_path = self.move_file(current_image_path, target_folder)
-
-                    # --- 이동 실패 시 처리 ---
                     if moved_jpg_path is None:
                         failed_moves.append(current_image_path.name)
                         logging.error(f"파일 이동 실패: {current_image_path.name}")
                         continue
-
-                    # --- RAW 파일 이동 ---
+                    
                     raw_moved_successfully = True
                     if self.move_raw_files:
                         base_name = current_image_path.stem
@@ -11810,13 +11775,10 @@ class PhotoSortApp(QMainWindow):
                                 raw_moved_successfully = False
                             else:
                                 del self.raw_files[base_name]
-
-                    # --- 이미지 목록에서 제거 ---
+                    
                     self.image_files.pop(global_index)
                     successful_moves.append(moved_jpg_path.name)
-
-                    # ======================================================================== #
-                    # ========== UNDO/REDO HISTORY ADDITION START ==========
+                    
                     if moved_jpg_path:
                         history_entry = {
                             "jpg_source": str(current_image_path),
@@ -11824,101 +11786,71 @@ class PhotoSortApp(QMainWindow):
                             "raw_source": str(raw_path_before_move) if raw_path_before_move else None,
                             "raw_target": str(moved_raw_path) if moved_raw_path and raw_moved_successfully else None,
                             "index_before_move": global_index,
-                            "mode": self.grid_mode # 이동 당시 모드 기록
+                            "mode": self.grid_mode
                         }
                         move_history_entries.append(history_entry)
-                    # ========== UNDO/REDO HISTORY ADDITION END ==========
-                    # ======================================================================== #
-
                 except Exception as e:
                     failed_moves.append(current_image_path.name)
                     logging.error(f"이미지 이동 중 오류 발생 ({current_image_path.name}): {str(e)}")
-
-            # 진행 상황 다이얼로그 닫기
+            
             if show_progress and progress_dialog:
                 progress_dialog.close()
                 progress_dialog = None
 
-            # 중복 히스토리 추가 코드 제거 (10766-10770라인)
-            # 아래 배치 처리 코드에서 통합 처리하므로 이 부분 삭제
-            
-            # 결과 메시지 표시
             if user_canceled:
                 if successful_moves:
-                    # <<< 수정 시작 >>>
                     msg_template = LanguageManager.translate("작업 취소됨.\n성공: {success_count}개, 실패: {fail_count}개")
                     message = msg_template.format(success_count=len(successful_moves), fail_count=len(failed_moves))
-                    # <<< 수정 끝 >>>
                     self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
-                else:
-                    logging.info("사용자 취소로 인해 이동된 파일 없음")
             elif successful_moves and failed_moves:
-                # <<< 수정 시작 >>>
                 msg_template = LanguageManager.translate("성공: {success_count}개\n실패: {fail_count}개")
                 message = msg_template.format(success_count=len(successful_moves), fail_count=len(failed_moves))
-                # <<< 수정 끝 >>>
                 self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), message)
             elif failed_moves:
-                # <<< 수정 시작 >>>
                 msg_template = LanguageManager.translate("모든 파일 이동 실패: {fail_count}개")
                 message = msg_template.format(fail_count=len(failed_moves))
-                # <<< 수정 끝 >>>
                 self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), message)
-            else:
-                logging.info(f"다중 이미지 이동 완료: {len(successful_moves)}개 파일")
-
-            # --- 그리드 뷰 업데이트 로직 ---
-            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
-            num_cells = rows * cols
             
-            # 선택 상태 초기화
+            ### 변경 시작: num_cells 계산 방식 수정 ###
+            rows, cols = self._get_grid_dimensions()
+            num_cells = rows * cols
+            ### 변경 끝 ###
+            
             if hasattr(self, 'selected_grid_indices'):
                 self.clear_grid_selection(preserve_current_index=True)
-            
-            # 현재 페이지 검증 및 조정
+                
             current_page_image_count = min(num_cells, len(self.image_files) - self.grid_page_start_index)
             if self.current_grid_index >= current_page_image_count and current_page_image_count > 0:
                 self.current_grid_index = current_page_image_count - 1
-
             if current_page_image_count == 0 and len(self.image_files) > 0:
                 self.grid_page_start_index = max(0, self.grid_page_start_index - num_cells)
-                # 이전 페이지의 유효한 셀로 이동 (마지막 셀이 더 적절)
                 new_page_image_count = min(num_cells, len(self.image_files) - self.grid_page_start_index)
                 self.current_grid_index = max(0, new_page_image_count - 1)
-
+            
             self.update_grid_view()
-
-            # 모든 이미지가 이동된 경우
+            
             if not self.image_files:
                 self.grid_mode = "Off"
                 self.grid_off_radio.setChecked(True)
                 self.update_grid_view()
-                # 미니맵 숨기기
                 if self.minimap_visible:
                     self.minimap_widget.hide()
                     self.minimap_visible = False
-
                 if self.session_management_popup and self.session_management_popup.isVisible():
                     self.session_management_popup.update_all_button_states()
-                
                 self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("완료"), LanguageManager.translate("모든 이미지가 분류되었습니다."))
-
+            
             self.update_counters()
-
         except Exception as e:
-            # 예외 발생 시 진행 상황 다이얼로그 닫기
             if show_progress and progress_dialog:
                 progress_dialog.close()
             self.show_themed_message_box(QMessageBox.Critical, LanguageManager.translate("에러"), f"{LanguageManager.translate('파일 이동 중 오류 발생')}: {str(e)}")
-
-        # 히스토리에 이동 기록 추가 (성공한 것들만) - 단일 처리로 통합
+        
         if move_history_entries:
             if len(move_history_entries) == 1:
-                # 단일 이동은 기존 방식으로
                 self.add_move_history(move_history_entries[0])
                 logging.info(f"단일 이동 히스토리 추가: 1개 항목")
             else:
-                # 다중 이동은 배치 작업으로
                 self.add_batch_move_history(move_history_entries)
                 logging.info(f"배치 이동 히스토리 추가: {len(move_history_entries)}개 항목")
 
@@ -11962,6 +11894,7 @@ class PhotoSortApp(QMainWindow):
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True) # 라디오 버튼 상태 업데이트
                     
+                    self.update_thumbnail_panel_visibility()
                     # Grid Off 모드로 변경 및 이미지 표시
                     # update_grid_view()가 내부적으로 display_current_image() 호출
                     self.update_grid_view()
@@ -12152,9 +12085,9 @@ class PhotoSortApp(QMainWindow):
             self.thumbnail_panel.clear_selection()
 
             # --- 그리드 썸네일 캐시 및 백그라운드 작업 초기화 ---
-            self.grid_thumbnail_cache_2x2.clear()  # 2x2 그리드 캐시 초기화
-            self.grid_thumbnail_cache_3x3.clear()  # 3x3 그리드 캐시 초기화
-
+            if hasattr(self, 'grid_thumbnail_cache'):
+                for key in self.grid_thumbnail_cache:
+                    self.grid_thumbnail_cache[key].clear()
             # --- 뷰포트 포커스 정보 초기화 ---
             self.viewport_focus_by_orientation.clear()
             self.current_active_rel_center = QPointF(0.5, 0.5)
@@ -13211,7 +13144,7 @@ class PhotoSortApp(QMainWindow):
                 if 0 <= selected_image_list_index < total:
                     current_display_index = selected_image_list_index + 1
 
-                rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                rows, cols = self._get_grid_dimensions()
                 num_cells = rows * cols
                 total_pages = (total + num_cells - 1) // num_cells
                 current_page = (self.grid_page_start_index // num_cells) + 1
@@ -13536,9 +13469,20 @@ class PhotoSortApp(QMainWindow):
                 total_images = len(self.image_files)
                 
                 self.grid_mode = loaded_data.get("grid_mode", "Off")
-                if self.grid_mode == "Off": self.grid_off_radio.setChecked(True)
-                elif self.grid_mode == "2x2": self.grid_2x2_radio.setChecked(True)
-                elif self.grid_mode == "3x3": self.grid_3x3_radio.setChecked(True)
+                if self.grid_mode == "Off":
+                    self.grid_off_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(False)
+                else: # "2x2", "3x3", "4x4" 등
+                    self.grid_on_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(True)
+                    # 콤보박스 텍스트를 저장된 grid_mode 값으로 설정
+                    combo_text = self.grid_mode.replace("x", " x ")
+                    index = self.grid_size_combo.findText(combo_text)
+                    if index != -1:
+                        self.grid_size_combo.setCurrentIndex(index)
+                    else: # 저장된 값이 콤보박스에 없으면 기본값으로
+                        self.grid_size_combo.setCurrentIndex(0)
+                        self.grid_mode = self.grid_size_combo.currentText().replace(" ", "")
                 self.update_zoom_radio_buttons_state()
 
                 loaded_actual_current_image_index = loaded_data.get("current_image_index", -1)
@@ -13548,7 +13492,7 @@ class PhotoSortApp(QMainWindow):
 
                 if 0 <= loaded_actual_current_image_index < total_images:
                     if self.grid_mode != "Off":
-                        rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                        rows, cols = self._get_grid_dimensions()
                         num_cells = rows * cols
                         self.grid_page_start_index = (loaded_actual_current_image_index // num_cells) * num_cells
                         self.current_grid_index = loaded_actual_current_image_index % num_cells
@@ -13869,17 +13813,25 @@ class PhotoSortApp(QMainWindow):
             self.display_current_image()
         else:
             # Grid 모드
-            rows, cols = (2, 2) if mode_before_move == '2x2' else (3, 3)
+            self.grid_mode = mode_before_move # grid_mode를 먼저 설정해야 올바른 값을 가져옴
+            rows, cols = self._get_grid_dimensions()
             num_cells = rows * cols
             self.grid_page_start_index = (index_before_move // num_cells) * num_cells
             self.current_grid_index = index_before_move % num_cells
             
             if self.grid_mode != mode_before_move:
                 self.grid_mode = mode_before_move
-                if mode_before_move == "2x2":
-                    self.grid_2x2_radio.setChecked(True)
-                elif mode_before_move == "3x3":
-                    self.grid_3x3_radio.setChecked(True)
+                if self.grid_mode == "Off":
+                    self.grid_off_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(False)
+                else:
+                    self.grid_on_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(True)
+                    combo_text = self.grid_mode.replace("x", " x ")
+                    index = self.grid_size_combo.findText(combo_text)
+                    if index != -1:
+                        self.grid_size_combo.setCurrentIndex(index)
+
                 self.update_zoom_radio_buttons_state()
                 self.update_counter_layout()
             
@@ -13891,17 +13843,30 @@ class PhotoSortApp(QMainWindow):
         """ 배치 Undo 후 UI 업데이트 """
         if not batch_entries:
             return
-            
-        # 첫 번째 엔트리의 모드를 기준으로 UI 업데이트
+
+        # 첫 번째 엔트리의 모드와 인덱스를 기준으로 UI 상태 복원
         first_entry = batch_entries[0]
         mode_before_move = first_entry.get("mode", "Off")
-        
-        # 첫 번째 복원된 이미지의 인덱스로 이동
         first_index = first_entry["index_before_move"]
         
         # 강제 새로고침 플래그 설정
         self.force_refresh = True
-        
+
+        # 복원할 이미지들의 페이지 내 인덱스 계산
+        restored_grid_indices = set()
+        target_page_start_index = -1
+
+        if mode_before_move != "Off":
+            rows, cols = self._get_grid_dimensions() # 올바른 그리드 크기 가져오기
+            num_cells = rows * cols
+            target_page_start_index = (first_index // num_cells) * num_cells
+            
+            for entry in batch_entries:
+                idx = entry["index_before_move"]
+                if target_page_start_index <= idx < target_page_start_index + num_cells:
+                    restored_grid_indices.add(idx - target_page_start_index)
+
+        # UI 업데이트
         if mode_before_move == "Off":
             self.current_image_index = first_index
             if self.grid_mode != "Off":
@@ -13909,30 +13874,27 @@ class PhotoSortApp(QMainWindow):
                 self.grid_off_radio.setChecked(True)
                 self.update_zoom_radio_buttons_state()
                 self.update_counter_layout()
-            
             if self.zoom_mode == "Fit":
                 self.last_fit_size = (0, 0)
                 self.fit_pixmap_cache.clear()
-                
             self.display_current_image()
-        else:
-            # Grid 모드
-            rows, cols = (2, 2) if mode_before_move == '2x2' else (3, 3)
-            num_cells = rows * cols
-            self.grid_page_start_index = (first_index // num_cells) * num_cells
-            self.current_grid_index = first_index % num_cells
-            
+        else: # Grid 모드 복원
+            self.grid_page_start_index = target_page_start_index
+            self.current_grid_index = first_index - target_page_start_index # primary 선택
+            self.selected_grid_indices = restored_grid_indices # 다중 선택 상태 복원
+            self.primary_selected_index = first_index
+
             if self.grid_mode != mode_before_move:
                 self.grid_mode = mode_before_move
-                if mode_before_move == "2x2":
-                    self.grid_2x2_radio.setChecked(True)
-                elif mode_before_move == "3x3":
-                    self.grid_3x3_radio.setChecked(True)
+                if mode_before_move == "2x2": self.grid_size_combo.setCurrentIndex(0)
+                elif mode_before_move == "3x3": self.grid_size_combo.setCurrentIndex(1)
+                elif mode_before_move == "4x4": self.grid_size_combo.setCurrentIndex(2)
+                self.grid_on_radio.setChecked(True)
                 self.update_zoom_radio_buttons_state()
                 self.update_counter_layout()
-            
+                
             self.update_grid_view()
-        
+
         self.update_counters()
 
     def redo_move(self):
@@ -14012,19 +13974,15 @@ class PhotoSortApp(QMainWindow):
         if not batch_entries:
             return
             
-        # 첫 번째 엔트리의 모드를 기준으로 UI 업데이트
         first_entry = batch_entries[0]
         mode_at_move = first_entry.get("mode", "Off")
         
-        # 강제 새로고침 플래그 설정
         self.force_refresh = True
         
         if self.image_files:
-            # 첫 번째 제거된 이미지의 인덱스를 기준으로 새 인덱스 계산
             first_removed_index = first_entry["index_before_move"]
             new_index = min(first_removed_index, len(self.image_files) - 1)
-            if new_index < 0:
-                new_index = 0
+            if new_index < 0: new_index = 0
             
             if mode_at_move == "Off":
                 self.current_image_index = new_index
@@ -14033,28 +13991,27 @@ class PhotoSortApp(QMainWindow):
                     self.grid_off_radio.setChecked(True)
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
-                
                 if self.zoom_mode == "Fit":
                     self.last_fit_size = (0, 0)
                     self.fit_pixmap_cache.clear()
-                    
                 self.display_current_image()
             else:
                 # Grid 모드
-                rows, cols = (2, 2) if mode_at_move == '2x2' else (3, 3)
+                if self.grid_mode != mode_at_move:
+                    self.grid_mode = mode_at_move
+                    # 새로운 UI 상태로 업데이트
+                    self.grid_on_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(True)
+                    combo_text = self.grid_mode.replace("x", " x ")
+                    index = self.grid_size_combo.findText(combo_text)
+                    if index != -1: self.grid_size_combo.setCurrentIndex(index)
+                    self.update_zoom_radio_buttons_state()
+                    self.update_counter_layout()
+
+                rows, cols = self._get_grid_dimensions()
                 num_cells = rows * cols
                 self.grid_page_start_index = (new_index // num_cells) * num_cells
                 self.current_grid_index = new_index % num_cells
-                
-                if self.grid_mode != mode_at_move:
-                    self.grid_mode = mode_at_move
-                    if mode_at_move == "2x2":
-                        self.grid_2x2_radio.setChecked(True)
-                    elif mode_at_move == "3x3":
-                        self.grid_3x3_radio.setChecked(True)
-                    self.update_zoom_radio_buttons_state()
-                    self.update_counter_layout()
-                
                 self.update_grid_view()
         else:
             # 모든 파일이 이동된 경우
@@ -14071,16 +14028,13 @@ class PhotoSortApp(QMainWindow):
         """ 단일 이동 작업을 다시 실행 (기존 로직) """
         self.redo_single_move_internal(move_info)
         
-        # UI 업데이트
         mode_at_move = move_info.get("mode", "Off")
         
         if self.image_files:
             redo_removed_index = move_info["index_before_move"]
             new_index = min(redo_removed_index, len(self.image_files) - 1)
-            if new_index < 0:
-                new_index = 0
+            if new_index < 0: new_index = 0
             
-            # 강제 새로고침 플래그 설정
             self.force_refresh = True
 
             if mode_at_move == "Off":
@@ -14089,27 +14043,26 @@ class PhotoSortApp(QMainWindow):
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True)
                     self.update_zoom_radio_buttons_state()
-                
                 if self.zoom_mode == "Fit":
                     self.last_fit_size = (0, 0)
                     self.fit_pixmap_cache.clear()
-                    
                 self.display_current_image()
             else:
                 # Grid 모드
-                rows, cols = (2, 2) if mode_at_move == '2x2' else (3, 3)
+                if self.grid_mode != mode_at_move:
+                    self.grid_mode = mode_at_move
+                    # 새로운 UI 상태로 업데이트
+                    self.grid_on_radio.setChecked(True)
+                    self.grid_size_combo.setEnabled(True)
+                    combo_text = self.grid_mode.replace("x", " x ")
+                    index = self.grid_size_combo.findText(combo_text)
+                    if index != -1: self.grid_size_combo.setCurrentIndex(index)
+                    self.update_zoom_radio_buttons_state()
+
+                rows, cols = self._get_grid_dimensions()
                 num_cells = rows * cols
                 self.grid_page_start_index = (new_index // num_cells) * num_cells
                 self.current_grid_index = new_index % num_cells
-                
-                if self.grid_mode != mode_at_move:
-                    self.grid_mode = mode_at_move
-                    if mode_at_move == '2x2':
-                        self.grid_2x2_radio.setChecked(True)
-                    else:
-                        self.grid_3x3_radio.setChecked(True)
-                    self.update_zoom_radio_buttons_state()
-                
                 self.update_grid_view()
         else:
             # 모든 파일이 이동된 경우
@@ -14198,7 +14151,7 @@ class PhotoSortApp(QMainWindow):
         
         if self.grid_mode != "Off":
             # Grid 모드: 해당 인덱스가 포함된 페이지로 이동하고 셀 선택
-            rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+            rows, cols = self._get_grid_dimensions()
             num_cells = rows * cols
             self.grid_page_start_index = (index // num_cells) * num_cells
             self.current_grid_index = index % num_cells
@@ -14330,19 +14283,16 @@ class PhotoSortApp(QMainWindow):
                 return super().eventFilter(obj, event)
             if self.is_input_dialog_active:
                 return super().eventFilter(obj, event)
-            
             key = event.key()
             modifiers = event.modifiers()
-            
             # --- 숫자 키 처리 (하이라이트만) ---
             if Qt.Key_1 <= key <= (Qt.Key_1 + self.folder_count - 1):
                 if not event.isAutoRepeat():
                     folder_index = key - Qt.Key_1
                     self.highlight_folder_label(folder_index, True)
                     self.pressed_number_keys.add(key)
-                return True # 다른 키 처리를 막기 위해 True 반환
-
-            # --- 다른 키 처리들 (기존과 동일) ---
+                return True
+            # --- 다른 키 처리들 ---
             is_mac = sys.platform == 'darwin'
             ctrl_modifier = Qt.MetaModifier if is_mac else Qt.ControlModifier
             if modifiers == ctrl_modifier and key == Qt.Key_Z: self.undo_move(); return True
@@ -14366,9 +14316,31 @@ class PhotoSortApp(QMainWindow):
                     self.file_list_dialog.activateWindow()
                     self.file_list_dialog.raise_()
                 return True
-            if key == Qt.Key_F1: self.force_refresh=True; self.space_pressed = False; self.grid_off_radio.setChecked(True); self.on_grid_changed(self.grid_off_radio); return True
-            elif key == Qt.Key_F2: self.force_refresh=True; self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio); return True
-            elif key == Qt.Key_F3: self.force_refresh=True; self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio); return True
+            
+            if key == Qt.Key_G:
+                if self.grid_mode == "Off":
+                    self.grid_on_radio.setChecked(True)
+                    self._on_grid_mode_toggled(self.grid_on_radio)
+                else:
+                    self.grid_off_radio.setChecked(True)
+                    self._on_grid_mode_toggled(self.grid_off_radio)
+                return True
+
+            if key == Qt.Key_F1: # Zoom Fit
+                self.fit_radio.setChecked(True)
+                self.on_zoom_changed(self.fit_radio)
+                return True
+            elif key == Qt.Key_F2: # Zoom 100%
+                if self.zoom_100_radio.isEnabled():
+                    self.zoom_100_radio.setChecked(True)
+                    self.on_zoom_changed(self.zoom_100_radio)
+                return True
+            elif key == Qt.Key_F3: # Zoom Spin
+                if self.zoom_spin_btn.isEnabled():
+                    self.zoom_spin_btn.setChecked(True)
+                    self.on_zoom_changed(self.zoom_spin_btn)
+                return True
+                
             elif key == Qt.Key_F5: self.refresh_folder_contents(); return True
             elif key == Qt.Key_Delete: self.reset_program_state(); return True
             if key == Qt.Key_Escape:
@@ -14379,8 +14351,10 @@ class PhotoSortApp(QMainWindow):
                     self.on_zoom_changed(self.fit_radio)
                     return True
                 elif self.grid_mode == "Off" and self.previous_grid_mode and self.previous_grid_mode != "Off":
-                    if self.previous_grid_mode == "2x2": self.grid_2x2_radio.setChecked(True); self.on_grid_changed(self.grid_2x2_radio)
-                    elif self.previous_grid_mode == "3x3": self.grid_3x3_radio.setChecked(True); self.on_grid_changed(self.grid_3x3_radio)
+                    self.grid_on_radio.setChecked(True)
+                    idx = self.grid_size_combo.findText(self.previous_grid_mode.replace("x", " x "))
+                    if idx != -1: self.grid_size_combo.setCurrentIndex(idx)
+                    self._on_grid_mode_toggled(self.grid_on_radio)
                     return True
             if key == Qt.Key_R:
                 if (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap):
@@ -14388,18 +14362,40 @@ class PhotoSortApp(QMainWindow):
                     return True
             if key == Qt.Key_Space:
                 if self.grid_mode == "Off":
-                    if self.zoom_mode == "Fit":
-                        if self.original_pixmap:
+                    if self.original_pixmap:
+                        if self.zoom_mode == "Fit":
                             target_zoom_mode = self.last_active_zoom_mode
+                            
+                            ### 변경 시작: 뷰포트 복구 로직 추가 ###
+                            # 1. 현재 이미지의 방향 가져오기
+                            current_orientation = self.current_image_orientation
+                            if current_orientation:
+                                # 2. 해당 방향에 저장된 뷰포트 정보 가져오기
+                                saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
+                                # 3. '활성' 뷰포트 정보를 복구된 값으로 설정
+                                self.current_active_rel_center = saved_rel_center
+                            else:
+                                # 방향 정보가 없으면 중앙으로 (안전 장치)
+                                self.current_active_rel_center = QPointF(0.5, 0.5)
+                            ### 변경 끝 ###
+
+                            # 4. 줌 모드 및 UI 업데이트
                             self.zoom_mode = target_zoom_mode
                             if target_zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
                             elif target_zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
-                            self.on_zoom_changed(self.zoom_group.button(self.zoom_group.id(self.zoom_100_radio if target_zoom_mode == "100%" else self.zoom_spin_btn)))
-                    else: # 100% or Spin
-                        self.last_active_zoom_mode = self.zoom_mode
-                        self.zoom_mode = "Fit"
-                        self.fit_radio.setChecked(True)
-                        self.on_zoom_changed(self.fit_radio)
+
+                            # 5. apply_zoom_to_image를 위한 상태 설정
+                            self.current_active_zoom_level = target_zoom_mode
+                            self.zoom_change_trigger = "space_key_to_zoom" # 이 트리거는 이제 복구된 active_rel_center를 사용
+                            
+                            # 6. 뷰 적용
+                            self.apply_zoom_to_image()
+                            self.toggle_minimap(self.minimap_toggle.isChecked())
+                        else: # 100% or Spin
+                            self.last_active_zoom_mode = self.zoom_mode
+                            self.zoom_mode = "Fit"
+                            self.fit_radio.setChecked(True)
+                            self.apply_zoom_to_image()
                     return True
                 else: # Grid On
                     current_selected_grid_index = self.grid_page_start_index + self.current_grid_index
@@ -14410,11 +14406,11 @@ class PhotoSortApp(QMainWindow):
                     self.grid_mode = "Off"
                     self.grid_off_radio.setChecked(True)
                     self.space_pressed = True
+                    self.update_thumbnail_panel_visibility() # 썸네일 패널 표시
                     self.update_grid_view()
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
                     return True
-
             is_viewport_move_condition = (self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap)
             key_to_add_for_viewport = None
             if is_viewport_move_condition:
@@ -14443,7 +14439,7 @@ class PhotoSortApp(QMainWindow):
                     if key == Qt.Key_Left: self.show_previous_image(); return True
                     elif key == Qt.Key_Right: self.show_next_image(); return True
             elif self.grid_mode != "Off":
-                rows, cols = (2, 2) if self.grid_mode == '2x2' else (3, 3)
+                rows, cols = self._get_grid_dimensions()
                 if modifiers & Qt.ShiftModifier:
                     if (key == Qt.Key_A or key == Qt.Key_Left) and not (modifiers & Qt.ControlModifier): self.navigate_to_adjacent_page(-1); return True
                     elif key == Qt.Key_D or key == Qt.Key_Right: self.navigate_to_adjacent_page(1); return True
@@ -14457,17 +14453,14 @@ class PhotoSortApp(QMainWindow):
                     self.toggle_select_all_in_page()
                 return True
             return False
-
         elif event.type() == QEvent.KeyRelease:
             key = event.key()
             if self.is_input_dialog_active or event.isAutoRepeat():
                 return super().eventFilter(obj, event)
-
             if key in self.pressed_number_keys:
                 folder_index = key - Qt.Key_1
                 self.highlight_folder_label(folder_index, False)
                 self.pressed_number_keys.remove(key)
-                
                 if not self.image_processing:
                     self.image_processing = True
                     if self.grid_mode != "Off":
@@ -14476,7 +14469,6 @@ class PhotoSortApp(QMainWindow):
                         self.move_current_image_to_folder(folder_index)
                     self.image_processing = False
                 return True
-
             key_to_remove_from_viewport = None
             if key == Qt.Key_Shift:
                 if self.pressed_keys_for_viewport: self.pressed_keys_for_viewport.clear()
@@ -14488,12 +14480,10 @@ class PhotoSortApp(QMainWindow):
             elif key == Qt.Key_D: key_to_remove_from_viewport = Qt.Key_Right
             elif key == Qt.Key_W: key_to_remove_from_viewport = Qt.Key_Up
             elif key == Qt.Key_S: key_to_remove_from_viewport = Qt.Key_Down
-            
             action_taken = False
             if key_to_remove_from_viewport and key_to_remove_from_viewport in self.pressed_keys_for_viewport:
                 self.pressed_keys_for_viewport.remove(key_to_remove_from_viewport)
                 action_taken = True
-            
             if not self.pressed_keys_for_viewport and self.viewport_move_timer.isActive():
                 self.viewport_move_timer.stop()
                 if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and self.original_pixmap:
@@ -14501,12 +14491,9 @@ class PhotoSortApp(QMainWindow):
                     self.current_active_rel_center = final_rel_center
                     self.current_active_zoom_level = self.zoom_mode
                     self._save_orientation_viewport_focus(self.current_image_orientation, final_rel_center, self.zoom_mode)
-            
             if action_taken or key == Qt.Key_Shift:
                 return True
-            
             return False
-            
         return super().eventFilter(obj, event)
 
     def on_file_list_dialog_closed(self, result):
