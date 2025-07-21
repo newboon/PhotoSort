@@ -4009,6 +4009,9 @@ class PhotoSortApp(QMainWindow):
 
         self.pressed_number_keys = set()  # 현재 눌린 숫자키 추적
 
+        # --- 첫 RAW 파일 디코딩 진행률 대화상자 ---
+        self.first_raw_load_progress = None
+
         # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
         # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
         self.camera_raw_settings = {} 
@@ -4438,6 +4441,63 @@ class PhotoSortApp(QMainWindow):
 
         self.update_all_folder_labels_state()
 
+    def _show_first_raw_decode_progress(self):
+        """첫 RAW 파일 디코딩 시 진행률 대화상자를 표시합니다."""
+        if self.first_raw_load_progress is None:
+            line1 = LanguageManager.translate("쾌적한 작업을 위해 RAW 파일을 준비하고 있습니다.")
+            line2 = LanguageManager.translate("잠시만 기다려주세요.")
+            progress_text = f"<p style='margin-bottom: 10px;'>{line1}</p><p>{line2}</p>"
+            progress_title = LanguageManager.translate("파일 준비 중")
+
+            # min/max를 0으로 설정하여 "Busy Indicator" (움직이는 바) 활성화
+            self.first_raw_load_progress = QProgressDialog(
+                progress_text,
+                "", 0, 0, self
+            )
+            self.first_raw_load_progress.setWindowTitle(progress_title)
+            self.first_raw_load_progress.setCancelButton(None)
+            self.first_raw_load_progress.setWindowModality(Qt.WindowModal)
+            self.first_raw_load_progress.setMinimumDuration(0)
+            
+            apply_dark_title_bar(self.first_raw_load_progress)
+            
+            self.first_raw_load_progress.setStyleSheet(f"""
+                QProgressDialog {{
+                    background-color: {ThemeManager.get_color('bg_primary')};
+                    color: {ThemeManager.get_color('text')};
+                }}
+                QProgressDialog > QLabel {{
+                    padding-top: 20px;
+                    padding-bottom: 30px;
+                }}
+                QProgressBar {{
+                    text-align: center;
+                    background-color: {ThemeManager.get_color('bg_secondary')};
+                    border: 1px solid {ThemeManager.get_color('border')};
+                    border-radius: 4px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {ThemeManager.get_color('accent')};
+                    width: 20px; /* 움직이는 청크의 너비 */
+                }}
+            """)
+
+        # 대화상자를 메인 윈도우 중앙에 위치시키는 로직
+        parent_geometry = self.geometry()
+        self.first_raw_load_progress.adjustSize()
+        dialog_size = self.first_raw_load_progress.size()
+        new_x = parent_geometry.x() + (parent_geometry.width() - dialog_size.width()) // 2
+        new_y = parent_geometry.y() + (parent_geometry.height() - dialog_size.height()) // 2
+        self.first_raw_load_progress.move(new_x, new_y)
+
+        self.first_raw_load_progress.show()
+        QApplication.processEvents()
+
+    def _close_first_raw_decode_progress(self):
+        """진행률 대화상자를 닫습니다."""
+        if self.first_raw_load_progress is not None and self.first_raw_load_progress.isVisible():
+            self.first_raw_load_progress.close()
+            self.first_raw_load_progress = None
 
     def refresh_folder_contents(self):
         """F5 키를 눌렀을 때 현재 로드된 폴더의 내용을 새로고침합니다."""
@@ -5266,6 +5326,10 @@ class PhotoSortApp(QMainWindow):
                 return False
             
             logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}")
+
+            # --- "decode" 모드일 경우 진행률 대화상자 표시 ---
+            if chosen_method == "decode":
+                self._show_first_raw_decode_progress()
 
             # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
             # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
@@ -9058,6 +9122,10 @@ class PhotoSortApp(QMainWindow):
             
             logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}") # <<< 로그 추가
 
+            # --- "decode" 모드일 경우 진행률 대화상자 표시 ---
+            if chosen_method == "decode":
+                self._show_first_raw_decode_progress()
+
 
             # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
             # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
@@ -12481,92 +12549,67 @@ class PhotoSortApp(QMainWindow):
     def _on_raw_decoded_for_display(self, result: dict, requested_index: int, is_main_display_image: bool = False):
         file_path = result.get('file_path')
         success = result.get('success', False)
-        logging.info(f"_on_raw_decoded_for_display 시작: 파일='{Path(file_path).name if file_path else 'N/A'}', 요청 인덱스={requested_index}, 성공={success}") # 상세 로그
+        logging.info(f"_on_raw_decoded_for_display 시작: 파일='{Path(file_path).name if file_path else 'N/A'}', 요청 인덱스={requested_index}, 성공={success}, 메인={is_main_display_image}")
 
-        current_path_to_display = None
-        if self.grid_mode == "Off":
-            if 0 <= self.current_image_index < len(self.image_files):
-                current_path_to_display = str(self.image_files[self.current_image_index])
-        # Grid 모드일 때도 현재 선택된 셀의 이미지 경로를 가져와 비교할 수 있습니다 (생략).
-        # 여기서는 Grid Off 모드를 기준으로 단순화하여 현재 current_image_index만 고려합니다.
-
-        # requested_index는 submit_raw_decoding 시점의 current_image_index 입니다.
-        # 디코딩 완료 시점의 self.current_image_index와 비교하는 것이 더 정확할 수 있습니다.
-        # 하지만 file_path를 직접 비교하는 것이 더 확실합니다.
-        # 현재 표시되어야 할 이미지의 경로와, 디코딩 완료된 파일의 경로를 비교
-        
-        path_match = False
-        if file_path and current_path_to_display and Path(file_path).resolve() == Path(current_path_to_display).resolve():
-            path_match = True
-        
-        # 로그 추가: 어떤 인덱스/경로로 비교하는지 확인
-        logging.debug(f"  _on_raw_decoded_for_display: 비교 - current_path_to_display='{current_path_to_display}', decoded_file_path='{file_path}', path_match={path_match}")
-        logging.debug(f"  _on_raw_decoded_for_display: 비교 - self.current_image_index={self.current_image_index}, requested_index(from submit)={requested_index}")
-
-
-        # if self.current_image_index != requested_index: # 이전 조건
-        if not path_match and self.current_image_index != requested_index: # 경로 불일치 및 인덱스 불일치 모두 고려
-            logging.info(f"  _on_raw_decoded_for_display: RAW 디코딩 결과 무시 (다른 이미지 표시 중 / 인덱스 불일치). 파일='{Path(file_path).name if file_path else 'N/A'}'")
-            return
-
-        if hasattr(self, 'loading_indicator_timer'):
-            self.loading_indicator_timer.stop()
-            logging.debug("  _on_raw_decoded_for_display: 로딩 인디케이터 타이머 중지됨.")
-
-        if success:
-            try:
-                # ... (기존 QPixmap 생성 로직) ...
-                data_bytes = result.get('data')
-                shape = result.get('shape')
-                if not data_bytes or not shape:
-                    raise ValueError("디코딩 결과 데이터 또는 형태 정보 누락")
-                height, width, _ = shape
-                qimage = QImage(data_bytes, width, height, width * 3, QImage.Format_RGB888)
-                pixmap = QPixmap.fromImage(qimage)
-                if pixmap.isNull():
-                    raise ValueError("디코딩된 데이터로 QPixmap 생성 실패")
-                # ... (이하 UI 업데이트 로직) ...
-                logging.info(f"  _on_raw_decoded_for_display: QPixmap 생성 성공, UI 업데이트 시도. 파일='{Path(file_path).name}'")
-
-                if hasattr(self, 'image_loader'):
-                    self.image_loader._add_to_cache(file_path, pixmap)
-
-                self.previous_image_orientation = self.current_image_orientation
-                self.current_image_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
-                self.original_pixmap = pixmap # 여기서 original_pixmap 설정!
-                
-                # apply_zoom_to_image는 original_pixmap을 사용하므로, 그 전에 설정되어야 합니다.
-                self.apply_zoom_to_image() 
-                
-                if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
-                self.update_counters()
-                logging.info(f"  _on_raw_decoded_for_display: UI 업데이트 완료. 파일='{Path(file_path).name}'")
-
-                # --- 이미지 표시 완료 후 상태 저장 타이머 시작 ---
-                if is_main_display_image and result.get('success') and self.grid_mode == "Off":
-                    # 현재 화면에 표시하기 위한 RAW 디코딩이었고 성공했다면
-                    self.state_save_timer.start()
-                    logging.debug(f"_on_raw_decoded_for_display: Index save timer (re)started for index {self.current_image_index} (main display RAW)")
-                # --- 타이머 시작 끝 ---
-
-            except Exception as e:
-                logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 성공 후 QPixmap 처리 오류 ({Path(file_path).name if file_path else 'N/A'}): {e}")
-                # ... (기존 오류 시 UI 처리) ...
-                self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: 디코딩 데이터 처리 오류")
+        # 1. 디코딩에 실패했으면 아무것도 하지 않고 종료
+        if not success:
+            error_msg = result.get('error', 'Unknown error')
+            logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 실패 ({Path(file_path).name if file_path else 'N/A'}): {error_msg}")
+            # 메인 이미지 로딩 실패 시에만 사용자에게 알림
+            if is_main_display_image:
+                self._close_first_raw_decode_progress()
+                self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_msg}")
                 self.original_pixmap = None
                 self.update_counters()
                 if file_path and hasattr(self, 'image_loader'):
                     self.image_loader.decodingFailedForFile.emit(file_path)
-        else: # 디코딩 실패 (result['success'] == False)
-            error_msg = result.get('error', 'Unknown error')
-            logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 실패 ({Path(file_path).name if file_path else 'N/A'}): {error_msg}")
-            # ... (기존 오류 시 UI 처리) ...
-            self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_msg}")
-            self.original_pixmap = None
+            return
+
+        # 2. 디코딩에 성공했으면, 먼저 QPixmap을 만들고 즉시 캐시에 저장
+        try:
+            data_bytes = result.get('data')
+            shape = result.get('shape')
+            if not data_bytes or not shape:
+                raise ValueError("디코딩 결과 데이터 또는 형태 정보 누락")
+            height, width, _ = shape
+            qimage = QImage(data_bytes, width, height, width * 3, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimage)
+            if pixmap.isNull():
+                raise ValueError("디코딩된 데이터로 QPixmap 생성 실패")
+
+            # *** 핵심 수정: 성공한 모든 결과를 캐시에 저장 ***
+            if hasattr(self, 'image_loader'):
+                self.image_loader._add_to_cache(file_path, pixmap)
+            logging.info(f"  _on_raw_decoded_for_display: RAW 이미지 캐싱 성공: '{Path(file_path).name}'")
+
+        except Exception as e:
+            logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 성공 후 QPixmap 처리 오류 ({Path(file_path).name if file_path else 'N/A'}): {e}")
+            return # QPixmap 생성 실패 시 더 이상 진행 불가
+
+        # 3. 이 결과가 현재 화면에 표시해야 할 '메인 이미지'인 경우에만 UI 업데이트 수행
+        current_path_to_display = self.get_current_image_path()
+        path_match = file_path and current_path_to_display and Path(file_path).resolve() == Path(current_path_to_display).resolve()
+
+        if is_main_display_image and path_match:
+            logging.info(f"  _on_raw_decoded_for_display: 메인 이미지 UI 업데이트 시작. 파일='{Path(file_path).name}'")
+            if hasattr(self, 'loading_indicator_timer'):
+                self.loading_indicator_timer.stop()
+
+            self.previous_image_orientation = self.current_image_orientation
+            self.current_image_orientation = "landscape" if pixmap.width() >= pixmap.height() else "portrait"
+            self.original_pixmap = pixmap
+            self.apply_zoom_to_image()
+            if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
             self.update_counters()
-            if file_path and hasattr(self, 'image_loader'):
-                self.image_loader.decodingFailedForFile.emit(file_path)
-        
+            
+            if self.grid_mode == "Off":
+                self.state_save_timer.start()
+            
+            self._close_first_raw_decode_progress() # UI 업데이트 후 진행률 대화상자 닫기
+            logging.info(f"  _on_raw_decoded_for_display: 메인 이미지 UI 업데이트 완료.")
+        else:
+            logging.info(f"  _on_raw_decoded_for_display: 프리로드된 이미지 캐싱 완료, UI 업데이트는 건너뜀. 파일='{Path(file_path).name}'")
+
         logging.info(f"_on_raw_decoded_for_display 종료: 파일='{Path(file_path).name if file_path else 'N/A'}'")
 
     def process_pending_raw_results(self):
@@ -12700,16 +12743,14 @@ class PhotoSortApp(QMainWindow):
             raw_processing_method_preload = self.image_loader._raw_load_strategy # ImageLoader의 현재 전략
 
             if is_raw_preload and raw_processing_method_preload == "decode":
-                logging.debug(f"Preloading adjacent RAW (decode): {file_path_obj_preload.name} ...")
+                logging.debug(f"Preloading adjacent RAW (decode): {file_path_obj_preload.name}, is_main=False")
                 # --- 콜백 래핑 시작 ---
                 wrapped_preload_callback = lambda result_dict, req_idx=idx: self._on_raw_decoded_for_display(
                     result_dict,
                     requested_index=req_idx, # 람다 기본 인자로 캡처
                     is_main_display_image=False # 미리 로딩이므로 False
                 )
-                # --- 콜백 래핑 끝 ---
                 self.resource_manager.submit_raw_decoding(img_path, wrapped_preload_callback)
-                # --- 수정 끝 ---
             else:
                 # JPG 또는 RAW (preview 모드) 미리 로딩
                 logging.debug(f"Preloading adjacent JPG/RAW_Preview: {Path(img_path).name} with priority {priority_str_to_use}")
@@ -13147,6 +13188,11 @@ class PhotoSortApp(QMainWindow):
                 # 앱 재시작 시에는 저장된 last_loaded_raw_method_from_state를 사용
                 self.image_loader.set_raw_load_strategy(self.last_loaded_raw_method_from_state)
                 logging.info(f"PhotoSortApp.load_state: ImageLoader 처리 방식 설정됨 (재시작): {self.last_loaded_raw_method_from_state}")
+
+                # --- 재실행 시 RAW 디코딩 모드이면 진행률 대화상자 표시 ---
+                if self.is_raw_only_mode and self.last_loaded_raw_method_from_state == "decode":
+                    self._show_first_raw_decode_progress()
+
             elif hasattr(self, 'image_loader'): # 이미지가 없더라도 ImageLoader는 존재하므로 기본값 설정
                 self.image_loader.set_raw_load_strategy("preview") # 이미지가 없으면 기본 preview
                 logging.info(f"PhotoSortApp.load_state: 이미지 로드 실패/없음. ImageLoader 기본 'preview' 설정.")
@@ -14674,6 +14720,9 @@ def main():
         "모든 파일 이동 실패: {fail_count}개": "All file moves failed: {fail_count}",
         "파일 열기 실패": "Failed to Open File",
         "연결된 프로그램이 없거나 파일을 열 수 없습니다.": "No associated program or the file cannot be opened.",
+        "파일 준비 중": "Preparing Files",
+        "쾌적한 작업을 위해 RAW 파일을 준비하고 있습니다.": "Preparing RAW files for a smooth workflow.",
+        "잠시만 기다려주세요.": "Please wait a moment.",
     }
     
     LanguageManager.initialize_translations(translations)
