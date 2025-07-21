@@ -4159,7 +4159,7 @@ class PhotoSortApp(QMainWindow):
         self.folder_path_label = InfoFolderPathLabel(LanguageManager.translate("폴더 경로"))
         self.folder_path_label.set_folder_index(-2) # JPG 폴더 인덱스: -2
         self.folder_path_label.doubleClicked.connect(self.open_folder_in_explorer)
-        self.folder_path_label.folderDropped.connect(lambda path: self._handle_image_folder_drop(path))
+        self.folder_path_label.folderDropped.connect(self._handle_canvas_folder_drop)
 
         # JPG 폴더 클리어 버튼 (X) 추가
         self.jpg_clear_button = QPushButton("✕")
@@ -5517,11 +5517,25 @@ class PhotoSortApp(QMainWindow):
             layout.setSpacing(10)
             layout.setContentsMargins(20, 20, 20, 20)
             
-            # 메시지 레이블
-            message_label = QLabel(LanguageManager.translate("폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?"))
+            # 메시지 레이블 생성 (줄바꿈 포함된 키 사용)
+            message_text = LanguageManager.translate("폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다.\n무엇을 불러오시겠습니까?")
+            message_label = QLabel(message_text)
             message_label.setWordWrap(True)
             message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             layout.addWidget(message_label)
+
+            # 폰트 정보를 가져와서 텍스트의 픽셀 너비를 계산합니다.
+            fm = message_label.fontMetrics()
+            # 텍스트가 여러 줄일 경우 가장 긴 줄을 기준으로 너비를 계산합니다.
+            lines = message_text.split('\n')
+            max_width = 0
+            for line in lines:
+                line_width = fm.horizontalAdvance(line)
+                if line_width > max_width:
+                    max_width = line_width
+            
+            # 계산된 너비에 좌우 여백을 더해 최소 너비로 설정합니다.
+            dialog.setMinimumWidth(max_width + 60) # 60px 정도의 여유 공간 추가
             
             # 라디오 버튼 그룹
             radio_group = QButtonGroup(dialog)
@@ -8159,7 +8173,7 @@ class PhotoSortApp(QMainWindow):
         # JPG 파일 검색 - 대소문자 구분 없이 중복 방지
         target_path = Path(folder_path)
 
-        # 대소문자 구분 없이 JPG 파일 검색
+        # 대소문자 구분 없이 지원 이미지 파일 검색
         all_image_files = []
         for file_path in target_path.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
@@ -14635,7 +14649,7 @@ def main():
         "최소 하나 이상의 확장자는 선택되어야 합니다.": "At least one extension must be selected.",
         "선택한 폴더에 지원하는 이미지 파일이 없습니다.": "No supported image files found in the selected folder.",
         "폴더 불러오기": "Load Folder",
-        "폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다. 무엇을 불러오시겠습니까?": "The folder contains both regular image files and RAW files. What would you like to load?",
+        "폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다.\n무엇을 불러오시겠습니까?": "The folder contains both regular image files and RAW files.\nWhat would you like to load?",
         "파일명이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기": "Match and load image files and RAW files with the same file names",
         "일반 이미지 파일만 불러오기": "Load only regular image files",
         "RAW 파일만 불러오기": "Load only RAW files",
