@@ -2853,30 +2853,26 @@ class ImageLoader(QObject):
         # Should not be reached, but as fallback
         return None, None, None
     
-    def load_image_with_orientation(self, file_path):
+    def load_image_with_orientation(self, file_path, strategy_override=None):
         """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 방식은 _raw_load_strategy 따름)
            RAW 디코딩은 ResourceManager를 통해 요청하고, 이 메서드는 디코딩된 데이터 또는 미리보기를 반환합니다.
            실제 디코딩 작업은 비동기로 처리될 수 있으며, 이 함수는 즉시 QPixmap을 반환하지 않을 수 있습니다.
            대신 PhotoSortApp의 _load_image_task 에서 이 함수를 호출하고 콜백으로 결과를 받습니다.
         """
-        logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 현재 내부 전략: {self._raw_load_strategy}")
-
+        logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 내부 전략: {self._raw_load_strategy}, 오버라이드: {strategy_override}")
         if not ResourceManager.instance()._running:
             logging.info(f"ImageLoader.load_image_with_orientation: ResourceManager 종료 중, 로드 중단 ({Path(file_path).name})")
             return QPixmap()
-
-        if file_path in self.cache:
+        # strategy_override가 사용된 경우 캐시를 건너뛰지 않도록 캐시 확인 로직 유지
+        if strategy_override is None and file_path in self.cache:
             self.cache.move_to_end(file_path)
             return self.cache[file_path]
-
         file_path_obj = Path(file_path)
         is_raw = file_path_obj.suffix.lower() in self.raw_extensions
         pixmap = None
-
         if is_raw:
-            current_processing_method = self._raw_load_strategy
-            logging.debug(f"ImageLoader ({id(self)}): RAW 파일 '{file_path_obj.name}' 처리 시작, 방식: {current_processing_method}")
-
+            current_processing_method = strategy_override if strategy_override else self._raw_load_strategy
+            logging.debug(f"ImageLoader ({id(self)}): RAW 파일 '{file_path_obj.name}' 처리 시작, 최종 방식: {current_processing_method}")
             if current_processing_method == "preview":
                 logging.info(f"ImageLoader: 'preview' 방식으로 로드 시도 ({file_path_obj.name})")
                 preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
@@ -2885,26 +2881,8 @@ class ImageLoader(QObject):
                 else:
                     logging.warning(f"'preview' 방식 실패, 미리보기 로드 불가 ({file_path_obj.name})")
                     pixmap = QPixmap()
-
             elif current_processing_method == "decode":
-                # "decode" 전략일 경우, 실제 디코딩은 PhotoSortApp._handle_raw_decode_request 를 통해
-                # ResourceManager.submit_raw_decoding 로 요청되고, 콜백으로 처리됩니다.
-                # 이 함수(load_image_with_orientation)는 해당 비동기 작업의 "결과"를 기다리거나
-                # 즉시 반환하는 동기적 디코딩을 수행하는 대신,
-                # "디코딩이 필요하다"는 신호나 플레이스홀더를 반환하고 실제 데이터는 콜백에서 처리되도록 설계해야 합니다.
-                # PhotoSortApp._load_image_task 에서 이미 이 함수를 호출하고 있으므로,
-                # 여기서는 "decode"가 필요하다는 것을 나타내는 특별한 값을 반환하거나,
-                # PhotoSortApp._load_image_task에서 이 분기를 직접 처리하도록 합니다.
-
-                # 현재 설계에서는 PhotoSortApp._load_image_task가 이 함수를 호출하고,
-                # 여기서 직접 rawpy 디코딩을 "시도"합니다. 만약 RawDecoderPool을 사용하려면,
-                # 이 부분이 크게 변경되어야 합니다.
-                # 여기서는 기존 방식(직접 rawpy 호출)을 유지하되, 그 호출이 스레드 풀 내에서 일어난다는 점을 명시합니다.
-                # RawDecoderPool을 사용하려면 PhotoSortApp._load_image_task에서 분기해야 합니다.
-
-                # --- 기존 직접 rawpy 디코딩 로직 (스레드 풀 내에서 실행됨) ---
                 logging.info(f"ImageLoader: 'decode' 방식으로 *직접* 로드 시도 (스레드 풀 내) ({file_path_obj.name})")
-                # (중복 디코딩 방지 로직 등은 기존대로 유지)
                 current_time = time.time()
                 if file_path_obj.name in self.recently_decoded:
                     last_decode_time = self.recently_decoded[file_path_obj.name]
@@ -2912,51 +2890,45 @@ class ImageLoader(QObject):
                         logging.debug(f"최근 디코딩한 파일(성공/실패 무관): {file_path_obj.name}, 플레이스홀더 반환")
                         placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
                         return placeholder
-                
                 try:
-                    self.recently_decoded[file_path_obj.name] = current_time # 시도 기록
-                    if not ResourceManager.instance()._running: # 추가 확인
+                    self.recently_decoded[file_path_obj.name] = current_time
+                    if not ResourceManager.instance()._running:
                         return QPixmap()
-
                     with rawpy.imread(file_path) as raw:
                         rgb = raw.postprocess(use_camera_wb=True, output_bps=8, no_auto_bright=False)
                         height, width, _ = rgb.shape
                         rgb_contiguous = np.ascontiguousarray(rgb)
                         qimage = QImage(rgb_contiguous.data, width, height, rgb_contiguous.strides[0], QImage.Format_RGB888)
                         pixmap_result = QPixmap.fromImage(qimage)
-
                         if pixmap_result and not pixmap_result.isNull():
                             pixmap = pixmap_result
                             logging.info(f"RAW 직접 디코딩 성공 (스레드 풀 내) ({file_path_obj.name})")
-                        else: # QPixmap 변환 실패
+                        else:
                             logging.warning(f"RAW 직접 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
                             pixmap = QPixmap()
-                            self.decodingFailedForFile.emit(file_path) # 시그널 발생
+                            self.decodingFailedForFile.emit(file_path)
                 except Exception as e_raw_decode:
                     logging.error(f"RAW 직접 디코딩 실패 (스레드 풀 내) ({file_path_obj.name}): {e_raw_decode}")
                     pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path) # 시그널 발생
-                
+                    self.decodingFailedForFile.emit(file_path)
                 self._clean_old_decoding_history(current_time)
-                # --- 기존 직접 rawpy 디코딩 로직 끝 ---
-
-            else: # 알 수 없는 전략
+            else:
                 logging.warning(f"ImageLoader: 알 수 없거나 설정되지 않은 _raw_load_strategy ('{current_processing_method}'). 'preview' 사용 ({file_path_obj.name})")
-                # ... (preview 로직과 동일) ...
                 preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
                 if preview_pixmap_result and not preview_pixmap_result.isNull():
                     pixmap = preview_pixmap_result
                 else:
                     pixmap = QPixmap()
-
+            
+            # strategy_override가 사용되지 않은 경우에만 캐시에 저장
             if pixmap and not pixmap.isNull():
-                self._add_to_cache(file_path, pixmap)
+                if strategy_override is None:
+                    self._add_to_cache(file_path, pixmap)
                 return pixmap
             else:
                 logging.error(f"RAW 처리 최종 실패 ({file_path_obj.name}), 빈 QPixmap 반환됨.")
                 return QPixmap()
-        else: # JPG 파일
-            # ... (기존 JPG 로직은 변경 없음) ...
+        else:
             try:
                 if not ResourceManager.instance()._running:
                     return QPixmap()
@@ -2968,7 +2940,7 @@ class ImageLoader(QObject):
                     exif = image.getexif()
                     if exif and 0x0112 in exif:
                         orientation = exif[0x0112]
-                if orientation > 1: # ... (방향 전환 로직) ...
+                if orientation > 1:
                     if orientation == 2: image = image.transpose(Image.FLIP_LEFT_RIGHT)
                     elif orientation == 3: image = image.transpose(Image.ROTATE_180)
                     elif orientation == 4: image = image.transpose(Image.FLIP_TOP_BOTTOM)
@@ -2986,18 +2958,17 @@ class ImageLoader(QObject):
                 if pixmap and not pixmap.isNull():
                     self._add_to_cache(file_path, pixmap)
                     return pixmap
-                else: # QPixmap 변환 실패
+                else:
                     logging.warning(f"JPG QPixmap 변환 실패 ({file_path_obj.name})")
                     return QPixmap()
             except Exception as e_jpg:
                 logging.error(f"JPG 이미지 처리 오류 ({file_path_obj.name}): {e_jpg}")
-                try: # Fallback
+                try:
                     pixmap = QPixmap(file_path)
                     if not pixmap.isNull(): self._add_to_cache(file_path, pixmap); return pixmap
                     else: return QPixmap()
                 except Exception: return QPixmap()
 
-    
     def set_raw_load_strategy(self, strategy: str):
         """이 ImageLoader 인스턴스의 RAW 처리 방식을 설정합니다 ('preview' 또는 'decode')."""
         if strategy in ["preview", "decode"]:
@@ -3031,64 +3002,50 @@ class ImageLoader(QObject):
             for file_name, _ in to_remove:
                 del self.recently_decoded[file_name]
 
-
-
-    def preload_page(self, image_files, page_start_index, cells_per_page):
+    def preload_page(self, image_files, page_start_index, cells_per_page, strategy_override=None):
         """특정 페이지의 이미지를 미리 로딩"""
         self.last_requested_page = page_start_index // cells_per_page
-        
-        # 이전 작업 취소
         for future in self.active_futures:
             future.cancel()
         self.active_futures.clear()
-        
-        # 현재 페이지 이미지 로드
         end_idx = min(page_start_index + cells_per_page, len(image_files))
         futures = []
-        
         for i in range(page_start_index, end_idx):
             if i < 0 or i >= len(image_files):
                 continue
-                
             img_path = str(image_files[i])
             if img_path in self.cache:
-                # 이미 캐시에 있으면 시그널 발생
                 pixmap = self.cache[img_path]
                 self.imageLoaded.emit(i - page_start_index, pixmap, img_path)
             else:
-                # 캐시에 없으면 비동기 로딩
-                future = self.load_executor.submit(self._load_and_signal, i - page_start_index, img_path)
+                future = self.load_executor.submit(self._load_and_signal, i - page_start_index, img_path, strategy_override)
                 futures.append(future)
-                
         self.active_futures = futures
-        
-        # 다음 페이지도 미리 로드 (UI 블로킹 없이)
         next_page_start = page_start_index + cells_per_page
         if next_page_start < len(image_files):
             next_end = min(next_page_start + cells_per_page, len(image_files))
             for i in range(next_page_start, next_end):
                 if i >= len(image_files):
                     break
-                    
                 img_path = str(image_files[i])
                 if img_path not in self.cache:
-                    future = self.load_executor.submit(self._preload_image, img_path)
+                    future = self.load_executor.submit(self._preload_image, img_path, strategy_override)
                     self.active_futures.append(future)
     
-    def _load_and_signal(self, cell_index, img_path):
+    def _load_and_signal(self, cell_index, img_path, strategy_override=None):
         """이미지 로드 후 시그널 발생"""
         try:
-            pixmap = self.load_image_with_orientation(img_path)
+            pixmap = self.load_image_with_orientation(img_path, strategy_override=strategy_override)
             self.imageLoaded.emit(cell_index, pixmap, img_path)
             return True
         except Exception as e:
             logging.error(f"이미지 로드 오류 (인덱스 {cell_index}): {e}")
             return False
     
-    def _preload_image(self, img_path):
+    def _preload_image(self, img_path, strategy_override=None):
         """이미지 미리 로드 (시그널 없음)"""
         try:
-            self.load_image_with_orientation(img_path)
+            self.load_image_with_orientation(img_path, strategy_override=strategy_override)
             return True
         except:
             return False
@@ -4639,81 +4596,55 @@ class PhotoSortApp(QMainWindow):
         스레드에 안전하며, 메인 스레드에서 QPixmap으로 변환됩니다.
         """
         try:
-            # RAW 파일의 경우 내장 미리보기 우선 사용
             is_raw = Path(file_path).suffix.lower() in self.raw_extensions
             if is_raw:
-                # ImageLoader의 미리보기 추출 기능을 재활용
                 preview_pixmap, _, _ = self.image_loader._load_raw_preview_with_orientation(file_path)
                 if preview_pixmap and not preview_pixmap.isNull():
-                    # 미리보기를 QImage로 변환하여 반환
-                    return preview_pixmap.toImage()
-
-            # 일반 이미지 또는 RAW 미리보기 실패 시 QImageReader 사용
+                    return preview_pixmap.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation).toImage()
+                else:
+                    logging.warning(f"썸네일 패널용 프리뷰 없음: {file_path}")
+                    return QImage()
             reader = QImageReader(str(file_path))
             if not reader.canRead():
                 logging.warning(f"썸네일 생성을 위해 파일을 읽을 수 없음: {file_path}")
-                
-                # HEIC/HEIF 파일인 경우 PIL로 대체 시도
                 if Path(file_path).suffix.lower() in ['.heic', '.heif']:
                     try:
                         from PIL import Image
                         pil_image = Image.open(file_path)
-                        # 썸네일 크기로 리사이즈
                         pil_image.thumbnail((size, size), Image.Resampling.LANCZOS)
-                        
-                        # PIL Image를 QImage로 변환
                         if pil_image.mode != 'RGB':
                             pil_image = pil_image.convert('RGB')
-                        
                         width, height = pil_image.size
                         rgb_data = pil_image.tobytes('raw', 'RGB')
                         qimage = QImage(rgb_data, width, height, QImage.Format_RGB888)
-                        
                         logging.info(f"PIL로 HEIC 썸네일 생성 성공: {file_path}")
                         return qimage
                     except Exception as e:
                         logging.error(f"PIL로 HEIC 썸네일 생성 실패: {e}")
-                
                 return None
-            
-            # EXIF 방향 자동 변환 설정
             reader.setAutoTransform(True)
-            
-            # 원본 크기에 맞춰 스케일링된 크기 계산
             original_size = reader.size()
             scaled_size = original_size.scaled(size, size, Qt.KeepAspectRatio)
             reader.setScaledSize(scaled_size)
-            
-            # QImage 읽기
             qimage = reader.read()
             if qimage.isNull():
                 logging.error(f"QImageReader로 썸네일 읽기 실패: {file_path}")
-                
-                # HEIC/HEIF 파일인 경우 PIL로 대체 시도
                 if Path(file_path).suffix.lower() in ['.heic', '.heif']:
                     try:
                         from PIL import Image
                         pil_image = Image.open(file_path)
-                        # 썸네일 크기로 리사이즈
                         pil_image.thumbnail((size, size), Image.Resampling.LANCZOS)
-                        
-                        # PIL Image를 QImage로 변환
                         if pil_image.mode != 'RGB':
                             pil_image = pil_image.convert('RGB')
-                        
                         width, height = pil_image.size
                         rgb_data = pil_image.tobytes('raw', 'RGB')
                         qimage = QImage(rgb_data, width, height, QImage.Format_RGB888)
-                        
                         logging.info(f"PIL로 HEIC 썸네일 생성 성공 (QImageReader 실패 후): {file_path}")
                         return qimage
                     except Exception as e:
                         logging.error(f"PIL로 HEIC 썸네일 생성 실패 (QImageReader 실패 후): {e}")
-                
                 return None
-            
             return qimage
-
         except Exception as e:
             logging.error(f"썸네일 생성 작업 중 오류 ({Path(file_path).name}): {e}")
             return None
@@ -5349,6 +5280,9 @@ class PhotoSortApp(QMainWindow):
             # --- RAW 로드 성공 시 ---
             logging.info(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
             self.image_files = unique_raw_files
+
+            # 썸네일 패널에 파일 목록 설정
+            self.thumbnail_panel.set_image_files(self.image_files)
             
             self.raw_folder = folder_path
             self.is_raw_only_mode = True
@@ -9145,6 +9079,9 @@ class PhotoSortApp(QMainWindow):
             # --- RAW 로드 성공 시 ---
             print(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
             self.image_files = unique_raw_files
+
+            # 썸네일 패널에 파일 목록 설정
+            self.thumbnail_panel.set_image_files(self.image_files)
             
             self.raw_folder = folder_path
             self.is_raw_only_mode = True
@@ -11139,10 +11076,11 @@ class PhotoSortApp(QMainWindow):
             self.grid_layout.addWidget(cell_widget, row, col)
             self.grid_labels.append(cell_widget) # 이제 GridCellWidget 인스턴스 저장
 
-        self.update_grid_selection_border() # 선택 상태 업데이트
+        self.update_grid_selection_border()
         self.update_window_title_with_selection()
-        self.image_loader.preload_page(self.image_files, self.grid_page_start_index, num_cells)
-        QTimer.singleShot(0, self.resize_grid_images) # 리사이즈는 여전히 필요
+        # 그리드 뷰의 썸네일은 항상 "preview" 전략을 사용하도록 강제
+        self.image_loader.preload_page(self.image_files, self.grid_page_start_index, num_cells, strategy_override="preview")
+        QTimer.singleShot(0, self.resize_grid_images)
         selected_image_list_index_gw = self.grid_page_start_index + self.current_grid_index
         if 0 <= selected_image_list_index_gw < len(self.image_files):
             self.update_file_info_display(str(self.image_files[selected_image_list_index_gw]))
@@ -13200,6 +13138,8 @@ class PhotoSortApp(QMainWindow):
 
             # 5. 뷰 상태 복원 (이미지 로드 성공 시)
             if images_loaded_successfully and self.image_files:
+                # 재실행 시 썸네일 패널에 파일 목록을 설정
+                self.thumbnail_panel.set_image_files(self.image_files)
                 total_images = len(self.image_files)
                 
                 self.grid_mode = loaded_data.get("grid_mode", "Off")
