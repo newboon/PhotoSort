@@ -93,6 +93,19 @@ def setup_logger():
 # 로거 초기화
 logger = setup_logger()
 
+def apply_dark_title_bar(widget):
+    """주어진 위젯의 제목 표시줄에 다크 테마를 적용합니다 (Windows 전용)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            dwmapi = ctypes.WinDLL("dwmapi")
+            hwnd = int(widget.winId())
+            value = ctypes.c_int(1)
+            dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+        except Exception as e:
+            logging.error(f"{type(widget).__name__} 제목 표시줄 다크 테마 적용 실패: {e}")
+
 class UIScaleManager:
     """해상도에 따른 UI 크기를 관리하는 클래스"""
 
@@ -429,7 +442,7 @@ class ThemeManager:
         "border": "#555555",
     }   
 
-    # 모든 테마 저장 (이제 클래스 내부 변수 참조)
+    # 모든 테마 저장
     THEMES = {
         "default": _UI_COLORS_DEFAULT, # 또는 ThemeManager._UI_COLORS_DEFAULT
         "sony": _UI_COLORS_SONY,
@@ -447,6 +460,118 @@ class ThemeManager:
     _current_theme = "default"  # 현재 테마
     _theme_change_callbacks = []  # 테마 변경 시 호출할 콜백 함수 목록
     
+    @classmethod
+    def generate_radio_button_style(cls):
+        """현재 테마와 UI 스케일에 맞는 라디오 버튼 스타일시트를 생성합니다."""
+        return f"""
+            QRadioButton {{
+                color: {cls.get_color('text')};
+                padding: {UIScaleManager.get("radiobutton_padding")}px;
+            }}
+            QRadioButton::indicator {{
+                width: {UIScaleManager.get("radiobutton_size")}px;
+                height: {UIScaleManager.get("radiobutton_size")}px;
+            }}
+            QRadioButton::indicator:checked {{
+                background-color: {cls.get_color('accent')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {cls.get_color('accent')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
+            }}
+            QRadioButton::indicator:unchecked {{
+                background-color: {cls.get_color('bg_primary')};
+                border: {UIScaleManager.get("radiobutton_border")}px solid {cls.get_color('border')};
+                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
+            }}
+            QRadioButton::indicator:unchecked:hover {{
+                border: {UIScaleManager.get("radiobutton_border")}px solid {cls.get_color('text_disabled')};
+            }}
+        """
+
+    @classmethod
+    def generate_checkbox_style(cls):
+        """현재 테마와 UI 스케일에 맞는 체크박스 스타일시트를 생성합니다."""
+        return f"""
+            QCheckBox {{
+                color: {cls.get_color('text')};
+                padding: {UIScaleManager.get("checkbox_padding")}px;
+            }}
+            QCheckBox:disabled {{
+                color: {cls.get_color('text_disabled')};
+            }}
+            QCheckBox::indicator {{
+                width: {UIScaleManager.get("checkbox_size")}px;
+                height: {UIScaleManager.get("checkbox_size")}px;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {cls.get_color('accent')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {cls.get_color('accent')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background-color: {cls.get_color('bg_primary')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {cls.get_color('border')};
+                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
+            }}
+            QCheckBox::indicator:unchecked:hover {{
+                border: {UIScaleManager.get("checkbox_border")}px solid {cls.get_color('text_disabled')};
+            }}
+            QCheckBox::indicator:disabled {{
+                background-color: {cls.get_color('bg_disabled')};
+                border: {UIScaleManager.get("checkbox_border")}px solid {cls.get_color('text_disabled')};
+            }}
+        """
+
+    @classmethod
+    def generate_main_button_style(cls):
+        """현재 테마에 맞는 기본 버튼 스타일시트를 생성합니다."""
+        return f"""
+            QPushButton {{
+                background-color: {cls.get_color('bg_secondary')};
+                color: {cls.get_color('text')};
+                border: none;
+                padding: {UIScaleManager.get("button_padding")}px;
+                border-radius: 1px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.get_color('accent_hover')};
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.get_color('accent_pressed')};
+            }}
+            QPushButton:disabled {{
+                background-color: {cls.get_color('bg_disabled')};
+                color: {cls.get_color('text_disabled')};
+                opacity: 0.7;
+            }}
+        """
+
+    @classmethod
+    def generate_action_button_style(cls):
+        """현재 테마에 맞는 액션 버튼(X, ✓) 스타일시트를 생성합니다."""
+        return f"""
+            QPushButton {{
+                background-color: {cls.get_color('bg_secondary')};
+                color: {cls.get_color('text')};
+                border: none;
+                padding: 4px;
+                border-radius: 1px;
+                min-height: {UIScaleManager.get("button_min_height")}px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.get_color('accent_hover')};
+                color: white;
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.get_color('accent_pressed')};
+                color: white;
+            }}
+            QPushButton:disabled {{
+                background-color: {cls.get_color('bg_disabled')};
+                color: {cls.get_color('text_disabled')};
+            }}
+        """
+
     @classmethod
     def get_color(cls, color_key):
         """현재 테마에서 색상 코드 가져오기"""
@@ -3349,19 +3474,8 @@ class FileListDialog(QDialog):
         # 창 크기 조정 (미리보기 증가 고려)
         self.setMinimumSize(1200, 850)
 
-        # --- 제목 표시줄 다크 테마 적용 (이전 코드 유지) ---
-        if ctypes and sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                ]
-                hwnd = int(self.winId())
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception as e:
-                logging.error(f"FileListDialog 제목 표시줄 다크 테마 적용 실패: {e}")
+        # 제목표시줄 다크 테마
+        apply_dark_title_bar(self)
 
         # --- 다크 테마 배경 설정 (이전 코드 유지) ---
         palette = QPalette()
@@ -3526,12 +3640,7 @@ class SessionManagementDialog(QDialog):
         self.setMinimumSize(500, 400) # 팝업창 최소 크기
 
         # 다크 테마 적용 (PhotoSortApp의 show_themed_message_box 또는 settings_popup 참조)
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
-                hwnd = int(self.winId()); value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception: pass
+        apply_dark_title_bar(self)
         palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.setPalette(palette); self.setAutoFillBackground(True)
 
@@ -3688,7 +3797,6 @@ def format_camera_name(make, model):
     if make_str.upper().find("CANON") != -1 and model_str.upper().startswith("CANON"):
         return model_str
     return f"{make_str} {model_str}".strip()
-
 
 class PhotoSortApp(QMainWindow):
     STATE_FILE = "photosort_data.json" # 상태 저장 파일 이름 정의
@@ -3911,7 +4019,7 @@ class PhotoSortApp(QMainWindow):
         self.setup_dark_theme()
         
         # 제목 표시줄 다크 테마 적용
-        self.setup_dark_titlebar()
+        apply_dark_title_bar(self)
         
         # 중앙 위젯 설정
         self.central_widget = QWidget()
@@ -4036,27 +4144,7 @@ class PhotoSortApp(QMainWindow):
 
         # --- JPG 폴더 섹션 ---
         self.load_button = QPushButton(LanguageManager.translate("이미지 불러오기")) # 버튼 먼저 추가
-        self.load_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: {UIScaleManager.get("button_padding")}px;
-                border-radius: 1px;
-                min-height: {UIScaleManager.get("button_min_height")}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-            }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-                opacity: 0.7;
-            }}
-        """)
+        self.load_button.setStyleSheet(ThemeManager.generate_main_button_style())
         self.load_button.clicked.connect(self.load_jpg_folder)
         self.control_layout.addWidget(self.load_button) # 컨트롤 레이아웃에 직접 추가
 
@@ -4075,29 +4163,7 @@ class PhotoSortApp(QMainWindow):
 
         # JPG 폴더 클리어 버튼 (X) 추가
         self.jpg_clear_button = QPushButton("✕")
-        delete_button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: 4px;
-                border-radius: 1px;
-                min-height: {UIScaleManager.get("button_min_height")}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-                color: white;
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-                color: white;
-            }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-            }}
-        """
-        self.jpg_clear_button.setStyleSheet(delete_button_style)
+        self.jpg_clear_button.setStyleSheet(ThemeManager.generate_action_button_style())
         fm_label = QFontMetrics(self.folder_path_label.font()) # FolderPathLabel의 폰트 기준
         label_line_height = fm_label.height()
         label_fixed_height = (label_line_height * 2) + UIScaleManager.get("folder_label_padding")
@@ -4115,27 +4181,7 @@ class PhotoSortApp(QMainWindow):
 
         # --- RAW 폴더 섹션 ---
         self.match_raw_button = QPushButton(LanguageManager.translate("JPG - RAW 연결")) # 버튼 먼저 추가
-        self.match_raw_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: {UIScaleManager.get("button_padding")}px; 
-                border-radius: 1px;
-                min-height: {UIScaleManager.get("button_min_height")}px; 
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-            }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-                opacity: 0.7;
-            }}
-        """)
+        self.match_raw_button.setStyleSheet(ThemeManager.generate_main_button_style())
         self.match_raw_button.clicked.connect(self.on_match_raw_button_clicked)
         self.control_layout.addWidget(self.match_raw_button) # 컨트롤 레이아웃에 직접 추가
 
@@ -4154,7 +4200,7 @@ class PhotoSortApp(QMainWindow):
 
         # RAW 폴더 클리어 버튼 (X) 추가
         self.raw_clear_button = QPushButton("✕")
-        self.raw_clear_button.setStyleSheet(delete_button_style) # JPG 클리어 버튼과 동일 스타일
+        self.raw_clear_button.setStyleSheet(ThemeManager.generate_action_button_style())
         fm_label = QFontMetrics(self.raw_folder_path_label.font()) # raw 폴더 레이블 폰트 기준
         label_line_height = fm_label.height()
         label_fixed_height = (label_line_height * 2) + UIScaleManager.get("folder_label_padding")
@@ -4177,32 +4223,7 @@ class PhotoSortApp(QMainWindow):
         self.raw_toggle_button = QCheckBox(LanguageManager.translate("JPG + RAW 이동"))
         self.raw_toggle_button.setChecked(True)  # 기본적으로 활성화 상태로 시작
         self.raw_toggle_button.toggled.connect(self.on_raw_toggle_changed) # 자동 상태 관리로 변경
-        self.raw_toggle_button.setStyleSheet(f"""
-            QCheckBox {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("checkbox_padding")}px;
-            }}
-            QCheckBox:disabled {{
-                color: {ThemeManager.get_color('text_disabled')};
-            }}
-            QCheckBox::indicator {{
-                width: {UIScaleManager.get("checkbox_size")}px;
-                height: {UIScaleManager.get("checkbox_size")}px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """)
+        self.raw_toggle_button.setStyleSheet(ThemeManager.generate_checkbox_style())
         
         # 토글 버튼을 레이아웃에 가운데 정렬로 추가
         self.toggle_layout.addStretch()
@@ -5493,7 +5514,7 @@ class PhotoSortApp(QMainWindow):
             dialog.setAutoFillBackground(True)
             
             layout = QVBoxLayout(dialog)
-            layout.setSpacing(15)
+            layout.setSpacing(10)
             layout.setContentsMargins(20, 20, 20, 20)
             
             # 메시지 레이블
@@ -5507,7 +5528,7 @@ class PhotoSortApp(QMainWindow):
             radio_style = f"""
                 QRadioButton {{
                     color: {ThemeManager.get_color('text')};
-                    padding: {UIScaleManager.get("radiobutton_padding")}px;
+                    padding: 0px;
                 }}
                 QRadioButton::indicator {{
                     width: {UIScaleManager.get("radiobutton_size")}px;
@@ -5544,9 +5565,13 @@ class PhotoSortApp(QMainWindow):
                 
                 option1.setChecked(True)  # 기본 선택: 매칭
                 
+                layout.addSpacing(20)
                 layout.addWidget(option1)
+                layout.addSpacing(10)
                 layout.addWidget(option2)
+                layout.addSpacing(10)
                 layout.addWidget(option3)
+                layout.addSpacing(20)
             else:
                 # 2선택지: 일반 이미지, RAW
                 option1 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
@@ -5560,8 +5585,11 @@ class PhotoSortApp(QMainWindow):
                 
                 option1.setChecked(True)  # 기본 선택: 일반 이미지
                 
+                layout.addSpacing(20)
                 layout.addWidget(option1)
+                layout.addSpacing(10)
                 layout.addWidget(option2)
+                layout.addSpacing(20)
             
             # 확인 버튼
             confirm_button = QPushButton(LanguageManager.translate("확인"))
@@ -6804,14 +6832,14 @@ class PhotoSortApp(QMainWindow):
         """설정 창에 사용될 모든 UI 컨트롤들을 미리 생성하고 초기화합니다."""
         # --- 공통 스타일 ---
         radio_style = f"""
-            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("radiobutton_padding")}px; }}
+            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: 5px 10px; }}
             QRadioButton::indicator {{ width: {UIScaleManager.get("radiobutton_size")}px; height: {UIScaleManager.get("radiobutton_size")}px; }}
             QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
             QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
             QRadioButton::indicator:unchecked:hover {{ border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
         """
         checkbox_style = f"""
-            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("checkbox_padding")}px; }}
+            QCheckBox {{ color: {ThemeManager.get_color('text')}; padding: 3px 5px; }}
             QCheckBox::indicator {{ width: {UIScaleManager.get("checkbox_size")}px; height: {UIScaleManager.get("checkbox_size")}px; }}
             QCheckBox::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
             QCheckBox::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("checkbox_border_radius")}px; }}
@@ -7273,74 +7301,12 @@ class PhotoSortApp(QMainWindow):
     def update_button_styles(self):
         """버튼 스타일을 현재 테마에 맞게 업데이트"""
         # 기본 버튼 스타일
-        button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: {UIScaleManager.get("button_padding")}px;
-                border-radius: 1px;
-                min-height: {UIScaleManager.get("button_min_height")}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-            }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-                opacity: 0.7;
-            }}
-        """
+        button_style = ThemeManager.generate_main_button_style()
         # 삭제 버튼 스타일
-        delete_button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none;
-                padding: 4px;
-                border-radius: 1px;
-                min-height: {UIScaleManager.get("button_min_height")}px;
-            }}
-            QPushButton:hover {{
-                background-color: {ThemeManager.get_color('accent_hover')};
-                color: white;
-            }}
-            QPushButton:pressed {{
-                background-color: {ThemeManager.get_color('accent_pressed')};
-                color: white;
-            }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        delete_button_style = ThemeManager.generate_action_button_style()
         # 라디오 버튼 스타일
-        radio_style = f"""
-            QRadioButton {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("radiobutton_padding")}px;
-            }}
-            QRadioButton::indicator {{
-                width: {UIScaleManager.get("radiobutton_size")}px;
-                height: {UIScaleManager.get("radiobutton_size")}px;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        radio_style = ThemeManager.generate_radio_button_style()
+
         # 메인 버튼들 스타일 적용
         if hasattr(self, 'load_button'):
             self.load_button.setStyleSheet(button_style)
@@ -7389,45 +7355,13 @@ class PhotoSortApp(QMainWindow):
             for label in self.file_info_labels:
                 label.setStyleSheet(label_style)
 
-        # 체크박스 스타일 적용
-        checkbox_style = f"""
-            QCheckBox {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("checkbox_padding")}px;
-            }}
-            QCheckBox:disabled {{
-                color: {ThemeManager.get_color('text_disabled')};
-            }}
-            QCheckBox::indicator {{
-                width: {UIScaleManager.get("checkbox_size")}px;
-                height: {UIScaleManager.get("checkbox_size")}px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-            QCheckBox::indicator:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
-        
         # 미니맵 토글 및 RAW 토글 체크박스 스타일 업데이트
         if hasattr(self, 'minimap_toggle'):
-            self.minimap_toggle.setStyleSheet(checkbox_style)
+            self.minimap_toggle.setStyleSheet(ThemeManager.generate_checkbox_style())
         if hasattr(self, 'raw_toggle_button'):
-            self.raw_toggle_button.setStyleSheet(checkbox_style)
+            self.raw_toggle_button.setStyleSheet(ThemeManager.generate_checkbox_style())
         if hasattr(self, 'filename_toggle_grid'):
-            self.filename_toggle_grid.setStyleSheet(checkbox_style)
+            self.filename_toggle_grid.setStyleSheet(ThemeManager.generate_checkbox_style())
         
     
     def update_folder_styles(self):
@@ -7454,20 +7388,7 @@ class PhotoSortApp(QMainWindow):
         popup_height = UIScaleManager.get("settings_popup_height", 910)
         self.settings_popup.setMinimumSize(popup_width, popup_height)
 
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                ]
-                hwnd = int(self.settings_popup.winId())
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                                            ctypes.byref(value), ctypes.sizeof(value))
-            except Exception as e:
-                logging.error(f"설정 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
-
+        apply_dark_title_bar(self.settings_popup)
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.settings_popup.setPalette(palette)
@@ -7704,13 +7625,7 @@ class PhotoSortApp(QMainWindow):
         self.shortcuts_info_popup.setWindowTitle(LanguageManager.translate("단축키")) # 새 번역 키
         
         # 다크 테마 적용 (기존 show_themed_message_box 또는 settings_popup 참조)
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
-                # ... (타이틀바 다크모드 설정 코드) ...
-                hwnd = int(self.shortcuts_info_popup.winId()); value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception: pass
+        apply_dark_title_bar(self.shortcuts_info_popup)
         palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.shortcuts_info_popup.setPalette(palette); self.shortcuts_info_popup.setAutoFillBackground(True)
 
@@ -7791,19 +7706,7 @@ class PhotoSortApp(QMainWindow):
         licenses_popup.setMinimumSize(950, 950)
         
         # Windows용 다크 테마 제목 표시줄 설정
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                ]
-                hwnd = int(licenses_popup.winId())
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                                            ctypes.byref(value), ctypes.sizeof(value))
-            except Exception as e:
-                logging.error(f"라이선스 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
+        apply_dark_title_bar(licenses_popup)
         
         # 다크 테마 배경 설정
         palette = QPalette()
@@ -8013,38 +7916,6 @@ class PhotoSortApp(QMainWindow):
                 width: 1px;
             }}
         """)
-    
-    def setup_dark_titlebar(self):
-        """제목 표시줄에 다크 테마 적용 (Windows용)"""
-        # Windows 환경에서만 작동
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                from ctypes.wintypes import DWORD, BOOL, HKEY
-                
-                # Windows 10/11의 다크 모드를 위한 설정
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                
-                # DwmSetWindowAttribute 함수 설정
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p,  # hwnd
-                    ctypes.c_uint,    # dwAttribute
-                    ctypes.POINTER(ctypes.c_int),  # pvAttribute
-                    ctypes.c_uint     # cbAttribute
-                ]
-                
-                # 다크 모드 활성화
-                hwnd = int(self.winId())
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(
-                    hwnd,
-                    DWMWA_USE_IMMERSIVE_DARK_MODE,
-                    ctypes.byref(value),
-                    ctypes.sizeof(value)
-                )
-            except Exception as e:
-                logging.error(f"제목 표시줄 다크 테마 적용 실패: {e}")
     
     def adjust_layout(self):
         """(비율 기반) 이미지 영역 3:2 비율 유지 및 좌우 패널 크기 동적 조절"""
@@ -9234,13 +9105,7 @@ class PhotoSortApp(QMainWindow):
         dialog.setWindowTitle(LanguageManager.translate("RAW 파일 처리 방식 선택")) # 새 번역 키
         
         # 다크 테마 적용 (메인 윈도우의 show_themed_message_box 참조)
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20; dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint]
-                hwnd = int(dialog.winId()); value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception: pass
+        apply_dark_title_bar(dialog)
         palette = QPalette(); palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         dialog.setPalette(palette); dialog.setAutoFillBackground(True)
 
@@ -9266,7 +9131,7 @@ class PhotoSortApp(QMainWindow):
             QCheckBox::indicator:unchecked:hover {{ border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')}; }}
         """
         radio_style = f"""
-            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: {UIScaleManager.get("radiobutton_padding")}px 0px; }} 
+            QRadioButton {{ color: {ThemeManager.get_color('text')}; padding: 0px; }} 
             QRadioButton::indicator {{ width: {UIScaleManager.get("radiobutton_size")}px; height: {UIScaleManager.get("radiobutton_size")}px; }}
             QRadioButton::indicator:checked {{ background-color: {ThemeManager.get_color('accent')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
             QRadioButton::indicator:unchecked {{ background-color: {ThemeManager.get_color('bg_primary')}; border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')}; border-radius: {UIScaleManager.get("radiobutton_border_radius")}px; }}
@@ -9322,12 +9187,13 @@ class PhotoSortApp(QMainWindow):
             preview_radio.setChecked(True) # 기본 선택: 미리보기
 
             layout.addWidget(message_label)
-            layout.addSpacing(30) # <<< message_label과 첫 번째 라디오 버튼 사이 간격
+            layout.addSpacing(25) # <<< message_label과 첫 번째 라디오 버튼 사이 간격
             layout.addWidget(preview_radio)
+            layout.addSpacing(10)
             layout.addWidget(decode_radio)
-            layout.addSpacing(30) # 두 번째 라디오버튼과 don't ask 체크박스 사이 간격
+            layout.addSpacing(25) # 두 번째 라디오버튼과 don't ask 체크박스 사이 간격
             layout.addWidget(dont_ask_checkbox)
-            layout.addSpacing(30) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addSpacing(15) # <<< don't ask 체크박스와 확인 버튼 사이 간격
             layout.addWidget(confirm_button, 0, Qt.AlignCenter)
 
             if dialog.exec() == QDialog.Accepted:
@@ -9349,9 +9215,9 @@ class PhotoSortApp(QMainWindow):
             message_label.setText(f"{html_wrapper_start}{formatted_text}{html_wrapper_end}")
 
             layout.addWidget(message_label)
-            layout.addSpacing(30) # <<< message_label과 don't ask 체크박스 사이 간격
+            layout.addSpacing(20) # <<< message_label과 don't ask 체크박스 사이 간격
             layout.addWidget(dont_ask_checkbox) # 이 경우에도 다시 묻지 않음은 유효
-            layout.addSpacing(30) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addSpacing(15) # <<< don't ask 체크박스와 확인 버튼 사이 간격
             layout.addWidget(confirm_button, 0, Qt.AlignCenter)
 
             if dialog.exec() == QDialog.Accepted:
@@ -9497,18 +9363,7 @@ class PhotoSortApp(QMainWindow):
         """)
 
         # 제목 표시줄 다크 테마 적용 (Windows용)
-        if ctypes and sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                ]
-                hwnd = int(message_box.winId()) # message_box의 winId 사용
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception as e:
-                logging.error(f"MessageBox 제목 표시줄 다크 테마 적용 실패: {e}")
+        apply_dark_title_bar(message_box)
 
         return message_box.exec_() # 실행하고 결과 반환
     
@@ -9713,28 +9568,8 @@ class PhotoSortApp(QMainWindow):
         folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
 
         # 버튼 스타일 미리 정의
-        number_button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none; padding: {button_padding}px; border-radius: 1px;
-            }}
-            QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
-            QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }}
-        """
-        action_button_style = f"""
-            QPushButton {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                border: none; padding: 4px; border-radius: 1px;
-            }}
-            QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; color: white; }}
-            QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; color: white; }}
-            QPushButton:disabled {{
-                background-color: {ThemeManager.get_color('bg_disabled')};
-                color: {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        number_button_style = ThemeManager.generate_main_button_style()
+        action_button_style = ThemeManager.generate_action_button_style()
         
         for i in range(self.folder_count):
             folder_container = QWidget()
@@ -10266,29 +10101,8 @@ class PhotoSortApp(QMainWindow):
         self.fit_radio.setChecked(True)
         
         # 버튼 스타일 설정 (기존 코드 재사용)
-        radio_style = f"""
-            QRadioButton {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("radiobutton_padding")}px;
-            }}
-            QRadioButton::indicator {{
-                width: {UIScaleManager.get("radiobutton_size")}px;
-                height: {UIScaleManager.get("radiobutton_size")}px;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        radio_style = ThemeManager.generate_radio_button_style()
+
         self.fit_radio.setStyleSheet(radio_style)
         self.zoom_100_radio.setStyleSheet(radio_style)
         self.zoom_spin_btn.setStyleSheet(radio_style)
@@ -10318,29 +10132,7 @@ class PhotoSortApp(QMainWindow):
         self.minimap_toggle = QCheckBox(LanguageManager.translate("미니맵"))
         self.minimap_toggle.setChecked(True)  # 기본값 체크(ON)
         self.minimap_toggle.toggled.connect(self.toggle_minimap)
-        self.minimap_toggle.setStyleSheet(f"""
-            QCheckBox {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("checkbox_padding")}px;
-            }}
-            QCheckBox::indicator {{
-                width: {UIScaleManager.get("checkbox_size")}px;
-                height: {UIScaleManager.get("checkbox_size")}px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """)
+        self.minimap_toggle.setStyleSheet(ThemeManager.generate_checkbox_style())
         
         # 미니맵 토글을 중앙에 배치
         minimap_container = QWidget()
@@ -10862,26 +10654,7 @@ class PhotoSortApp(QMainWindow):
 
         self.grid_size_combo = QComboBox()
         self.grid_size_combo.addItems(["2 x 2", "3 x 3", "4 x 4"])
-        combobox_style = f"""
-            QComboBox {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                color: {ThemeManager.get_color('text')};
-                border: 1px solid {ThemeManager.get_color('border')};
-                border-radius: 1px;
-                padding: {UIScaleManager.get("combobox_padding")}px;
-            }}
-            QComboBox:hover {{
-                background-color: #555555;
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {ThemeManager.get_color('bg_secondary')};
-                color: {ThemeManager.get_color('text')};
-                selection-background-color: #505050;
-                selection-color: {ThemeManager.get_color('text')};
-                border: 1px solid {ThemeManager.get_color('border')};
-            }}
-        """
-        self.grid_size_combo.setStyleSheet(combobox_style)
+        self.grid_size_combo.setStyleSheet(self.generate_combobox_style())
 
         # 버튼 그룹으로 Off/On 상태 관리
         self.grid_mode_group = QButtonGroup(self)
@@ -10893,29 +10666,8 @@ class PhotoSortApp(QMainWindow):
         self.grid_size_combo.setEnabled(False) # 초기에는 콤보박스 비활성화
 
         # 스타일 설정
-        radio_style = f"""
-            QRadioButton {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("radiobutton_padding")}px;
-            }}
-            QRadioButton::indicator {{
-                width: {UIScaleManager.get("radiobutton_size")}px;
-                height: {UIScaleManager.get("radiobutton_size")}px;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-            }}
-            QRadioButton::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
+        radio_style = ThemeManager.generate_radio_button_style()
+
         self.grid_off_radio.setStyleSheet(radio_style)
         self.grid_on_radio.setStyleSheet(radio_style)
 
@@ -10941,30 +10693,7 @@ class PhotoSortApp(QMainWindow):
         self.filename_toggle_grid = QCheckBox(LanguageManager.translate("파일명"))
         self.filename_toggle_grid.setChecked(self.show_grid_filenames)
         self.filename_toggle_grid.toggled.connect(self.on_filename_toggle_changed)
-        checkbox_style = f"""
-            QCheckBox {{
-                color: {ThemeManager.get_color('text')};
-                padding: {UIScaleManager.get("checkbox_padding")}px;
-            }}
-            QCheckBox::indicator {{
-                width: {UIScaleManager.get("checkbox_size")}px;
-                height: {UIScaleManager.get("checkbox_size")}px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {ThemeManager.get_color('accent')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('accent')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {ThemeManager.get_color('bg_primary')};
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('border')};
-                border-radius: {UIScaleManager.get("checkbox_border_radius")}px;
-            }}
-            QCheckBox::indicator:unchecked:hover {{
-                border: {UIScaleManager.get("checkbox_border")}px solid {ThemeManager.get_color('text_disabled')};
-            }}
-        """
-        self.filename_toggle_grid.setStyleSheet(checkbox_style)
+        self.filename_toggle_grid.setStyleSheet(ThemeManager.generate_checkbox_style())
         filename_toggle_container = QWidget()
         filename_toggle_layout = QHBoxLayout(filename_toggle_container)
         filename_toggle_layout.setContentsMargins(0, 10, 0, 0)
@@ -11099,29 +10828,7 @@ class PhotoSortApp(QMainWindow):
             self.zoom_100_radio.setEnabled(True)
             self.zoom_spin_btn.setEnabled(True)
             # 활성화 스타일 복원
-            radio_style = f"""
-                QRadioButton {{
-                    color: {ThemeManager.get_color('text')};
-                    padding: {UIScaleManager.get("radiobutton_padding")}px;
-                }}
-                QRadioButton::indicator {{
-                    width: {UIScaleManager.get("radiobutton_size")}px;
-                    height: {UIScaleManager.get("radiobutton_size")}px;
-                }}
-                QRadioButton::indicator:checked {{
-                    background-color: {ThemeManager.get_color('accent')};
-                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('accent')};
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-                QRadioButton::indicator:unchecked {{
-                    background-color: {ThemeManager.get_color('bg_primary')};
-                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('border')};
-                    border-radius: {UIScaleManager.get("radiobutton_border_radius")}px;
-                }}
-                QRadioButton::indicator:unchecked:hover {{
-                    border: {UIScaleManager.get("radiobutton_border")}px solid {ThemeManager.get_color('text_disabled')};
-                }}
-            """
+            radio_style = ThemeManager.generate_radio_button_style()
             self.zoom_100_radio.setStyleSheet(radio_style)
             self.zoom_spin_btn.setStyleSheet(radio_style)
             
@@ -12022,124 +11729,84 @@ class PhotoSortApp(QMainWindow):
                                     LanguageManager.translate("로드된 파일과 현재 작업 상태를 초기화하시겠습니까?"),
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            # Undo/Redo 히스토리 초기화 추가
-            self.move_history = []
-            self.history_pointer = -1
-            logging.info("프로그램 초기화: Undo/Redo 히스토리 초기화됨")
-
-            # 모든 백그라운드 작업 취소
-            logging.info("프로그램 초기화: 모든 백그라운드 작업 종료 중...")
+            # 핵심 초기화 로직을 헬퍼 메서드로 이동
+            self._reset_workspace()
             
-            # 이미지 로더 작업 취소
-            for future in self.image_loader.active_futures:
-                future.cancel()
-            self.image_loader.active_futures.clear()
-            
-            # 그리드 썸네일 생성 작업 취소
-            for future in self.active_thumbnail_futures:
-                future.cancel()
-            self.active_thumbnail_futures.clear()
-            
-            # 로딩 인디케이터 타이머 중지 (있다면)
-            if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
-                self.loading_indicator_timer.stop()
-            
-            # RAW 디코더 결과 처리 타이머 중지
-            if hasattr(self, 'decoder_timer') and self.decoder_timer.isActive():
-                self.decoder_timer.stop()
-            
-            # 현재 로딩 작업 취소
-            if hasattr(self, '_current_loading_future') and self._current_loading_future:
-                self._current_loading_future.cancel()
-                self._current_loading_future = None
-                
-            # 리소스 매니저 작업 취소
-            self.resource_manager.cancel_all_tasks()
-            
-            # 내부 변수 초기화 (가장 먼저 수행)
-            self.current_folder = ""
-            self.raw_folder = ""
-            self.image_files = [] # 이미지 목록 비우기
-            self.raw_files = {}
-            self.current_image_index = -1
-            self.is_raw_only_mode = False # <--- 명시적으로 RAW 모드 해제
-            self.move_raw_files = True
-            self.target_folders = [""] * self.folder_count  # 기존 folder_count 설정 유지
-            # self.folder_count = 3  # <<<< 제거: 사용자 설정 유지
-            self.zoom_mode = "Fit" # Zoom 모드 초기화
-            self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 값 초기화 (200%)
-            self.grid_mode = "Off" # Grid 모드 초기화
-            self.update_counter_layout() # 레이아웃 업데이트 호출
-            self.grid_page_start_index = 0
-            self.current_grid_index = 0
-            self.previous_grid_mode = None
-            self.original_pixmap = None # 원본 이미지 제거
-
-            # 이미지 캐시 초기화
-            self.fit_pixmap_cache.clear()
-            self.image_loader.clear_cache()
-
-            # 썸네일 패널 초기화
-            self.thumbnail_panel.model.clear_cache()
-            self.thumbnail_panel.model.set_image_files([])
-            self.thumbnail_panel.clear_selection()
-
-            # --- 그리드 썸네일 캐시 및 백그라운드 작업 초기화 ---
-            if hasattr(self, 'grid_thumbnail_cache'):
-                for key in self.grid_thumbnail_cache:
-                    self.grid_thumbnail_cache[key].clear()
-            # --- 뷰포트 포커스 정보 초기화 ---
-            self.viewport_focus_by_orientation.clear()
-            self.current_active_rel_center = QPointF(0.5, 0.5)
-            self.current_active_zoom_level = "Fit"
-            logging.info("프로그램 초기화: 뷰포트 포커스 정보 초기화됨.")
-
-            # --- UI 컨트롤 상태 설정 ---
-            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            for i in range(self.folder_count):
-                self.folder_path_labels[i].setText(LanguageManager.translate("폴더 경로"))
-
-            self.update_jpg_folder_ui_state() # JPG 폴더 UI 상태 업데이트
-            self.update_raw_folder_ui_state() # RAW 폴더 UI 상태 업데이트
-
-            # Zoom 라디오 버튼
+            # 추가적으로 UI 컨트롤 상태를 기본값으로 설정
+            self.zoom_mode = "Fit"
             self.fit_radio.setChecked(True)
-
-            # 동적 줌 SpinBox 초기화
+            self.zoom_spin_value = 2.0
             if hasattr(self, 'zoom_spin'):
-                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))  # 200% 설정
-
-            # Grid 라디오 버튼
+                self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
+            
+            self.grid_mode = "Off"
             self.grid_off_radio.setChecked(True)
 
-            # RAW 토글 (update_raw_folder_ui_state 에서 처리됨)
-
-            # 미니맵 토글 (상태는 유지하되, 숨김 처리)
-            # self.minimap_toggle.setChecked(True) # 이전 상태 유지 또는 초기화 선택
-
-            # --- UI 갱신 함수 호출 ---
-            self.update_grid_view() # 이미지 뷰 초기화 (Grid Off 가정)
             self.update_zoom_radio_buttons_state()
+            self.update_counter_layout()
             self.toggle_minimap(self.minimap_toggle.isChecked())
-            self.update_file_info_display(None)
-            self.update_counters() # 카운터 업데이트 (update_image_count_label 포함)
-            self.update_window_title_with_selection() # 창 제목 초기화 (이미지 없으므로 기본 제목)
-            self.update_match_raw_button_state()
-            # ========== 패널 위치 및 크기 재적용 ==========
-            QTimer.singleShot(0, self._apply_panel_position)
-            # ==============================================
+
             self.save_state() 
-
-            self.update_all_folder_labels_state()
-
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
-
             logging.info("프로그램 상태 초기화 완료 (카메라별 RAW 설정은 유지됨).")
-
         else:
             logging.info("프로그램 초기화 취소됨")
+
+    def _reset_workspace(self):
+        """로드된 파일과 현재 작업 상태를 초기화하는 핵심 로직."""
+        logging.info("작업 공간 초기화 시작...")
+
+        # 1. 백그라운드 작업 취소
+        self.resource_manager.cancel_all_tasks()
+        for future in self.image_loader.active_futures:
+            future.cancel()
+        self.image_loader.active_futures.clear()
+        for future in self.active_thumbnail_futures:
+            future.cancel()
+        self.active_thumbnail_futures.clear()
+
+        # 2. Undo/Redo 히스토리 초기화
+        self.move_history = []
+        self.history_pointer = -1
+
+        # 3. 상태 변수 초기화
+        self.current_folder = ""
+        self.raw_folder = ""
+        self.image_files = []
+        self.raw_files = {}
+        self.current_image_index = -1
+        self.is_raw_only_mode = False
+        
+        # 4. 캐시 및 원본 이미지 초기화
+        self.original_pixmap = None
+        self.image_loader.clear_cache()
+        self.fit_pixmap_cache.clear()
+        self.thumbnail_panel.model.set_image_files([])
+        if hasattr(self, 'grid_thumbnail_cache'):
+            for key in self.grid_thumbnail_cache:
+                self.grid_thumbnail_cache[key].clear()
+
+        # 5. 뷰 및 UI 상태 초기화
+        self.grid_page_start_index = 0
+        self.current_grid_index = 0
+        self.previous_grid_mode = None
+        self.viewport_focus_by_orientation.clear()
+        self.current_active_rel_center = QPointF(0.5, 0.5)
+        self.current_active_zoom_level = "Fit"
+        
+        # 6. UI 업데이트
+        self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        self.update_jpg_folder_ui_state()
+        self.update_raw_folder_ui_state()
+        self.update_match_raw_button_state()
+        self.update_all_folder_labels_state()
+        
+        # display_current_image()가 빈 상태를 처리하도록 호출
+        self.display_current_image()
+
+        logging.info("작업 공간 초기화 완료.")
 
     def setup_file_info_ui(self):
         """이미지 파일 정보 표시 UI 구성"""
@@ -14563,8 +14230,8 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'jpg_clear_button'):
             self.jpg_clear_button.setEnabled(is_valid)
         if hasattr(self, 'load_button'):
-            self.load_button.setEnabled(not is_valid)
-
+            self.load_button.setEnabled(not is_valid and not self.is_raw_only_mode)
+            
     def update_raw_folder_ui_state(self):
         is_valid = bool(self.raw_folder and Path(self.raw_folder).is_dir())
         self.update_info_folder_label_style(self.raw_folder_path_label, self.raw_folder) # <<< 수정
@@ -14574,217 +14241,35 @@ class PhotoSortApp(QMainWindow):
 
     def clear_jpg_folder(self):
         """JPG 폴더 지정 해제 및 관련 상태 초기화"""
-        # 백그라운드 작업 취소 추가
-        print("모든 백그라운드 작업 취소 중...")
+        self._reset_workspace()
         
-        # 이미지 로더 작업 취소
-        for future in self.image_loader.active_futures:
-            future.cancel()
-        self.image_loader.active_futures.clear()
-        
-        # 그리드 썸네일 생성 작업 취소
-        for future in self.active_thumbnail_futures:
-            future.cancel()
-        self.active_thumbnail_futures.clear()
-        
-        # 로딩 인디케이터 타이머 중지 (있다면)
-        if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
-            self.loading_indicator_timer.stop()
-        
-        # RAW 디코더 결과 처리 타이머 중지
-        if hasattr(self, 'decoder_timer') and self.decoder_timer.isActive():
-            self.decoder_timer.stop()
-        
-        # 현재 로딩 작업 취소
-        if hasattr(self, '_current_loading_future') and self._current_loading_future:
-            self._current_loading_future.cancel()
-            self._current_loading_future = None
+        # clear_jpg_folder는 모든 것을 초기화하므로 target_folders도 초기화
+        self.target_folders = [""] * self.folder_count
+        self.update_all_folder_labels_state()
 
-        # Undo/Redo 히스토리 초기화 추가
-        self.move_history = []
-        self.history_pointer = -1
-        logging.info("JPG 폴더 초기화: Undo/Redo 히스토리 초기화됨")
-
-        self.current_folder = ""
-        self.image_files = []
-        self.current_image_index = -1
-        self.is_raw_only_mode = False # <--- 모드 해제
-        self.original_pixmap = None
-        self.image_loader.clear_cache() # 이미지 로더 캐시 비우기
-        self.fit_pixmap_cache.clear()   # Fit 모드 캐시 비우기
-
-        # 썸네일 패널 초기화
-        self.thumbnail_panel.model.clear_cache()
-        self.thumbnail_panel.model.set_image_files([])
-        self.thumbnail_panel.clear_selection()
-
-        # --- 뷰포트 포커스 정보 초기화 ---
-        self.viewport_focus_by_orientation.clear()
-        self.current_active_rel_center = QPointF(0.5, 0.5) # 활성 포커스도 초기화
-        self.current_active_zoom_level = "Fit"
-        logging.info("JPG 폴더 초기화: 뷰포트 포커스 정보 초기화됨.")
-
-        # === 현재 Zoom 모드를 Fit으로 변경 ===
-        if self.zoom_mode != "Fit":
-            self.zoom_mode = "Fit"
-            self.fit_radio.setChecked(True)
-            # Zoom 라디오 버튼의 checked 상태만 변경하고 콜백은 직접 호출하지 않음
-            # 빈 상태에서는 이미지가 없으므로 강제로 Fit 모드만 설정
-
-        # Grid 관련 상태 초기화
-        self.grid_page_start_index = 0
-        self.current_grid_index = 0
-        if self.grid_mode != "Off":
-            self.grid_mode = "Off"
-            self.grid_off_radio.setChecked(True)
-            self.update_zoom_radio_buttons_state()
-
-        # 미니맵 숨기기 추가
-        if self.minimap_visible:
-            self.minimap_widget.hide()
-            self.minimap_visible = False
-
-        # RAW 폴더 지정도 함께 해제 (clear_raw_folder 내부에서 is_raw_only_mode가 false이므로 일반 해제 로직 실행됨)
-        self.clear_raw_folder()
-
-        # UI 업데이트
-        self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-        self.update_jpg_folder_ui_state() # 레이블 스타일 및 X 버튼 상태 업데이트
-        self.load_button.setEnabled(True) # <--- JPG 버튼 활성화
-        self.update_match_raw_button_state() # <--- RAW 버튼 상태 업데이트 ("RAW 불러오기"로)
-        # update_raw_folder_ui_state()는 clear_raw_folder 내부에서 호출됨
-
-        # 이미지 뷰 및 정보 업데이트
-        self.update_grid_view() # Grid Off 모드로 전환하며 뷰 클리어
-        self.update_file_info_display(None)
-        self.update_counters()
-        self.setWindowTitle("PhotoSort") # 창 제목 초기화
+        # UI 컨트롤 상태 복원
+        self.load_button.setEnabled(True)
+        self.update_match_raw_button_state()
 
         if self.session_management_popup and self.session_management_popup.isVisible():
             self.session_management_popup.update_all_button_states()
-
-        self.update_all_folder_labels_state()
-
-        self.save_state() # <<< 초기화 후 상태 저장
-
-        print("JPG 폴더 지정 해제됨.")
+        
+        self.save_state()
+        logging.info("JPG 폴더 지정 해제 및 작업 공간 초기화 완료.")
 
     def clear_raw_folder(self):
         """RAW 폴더 지정 해제 및 관련 상태 초기화 (RAW 전용 모드 처리 추가)"""
         if self.is_raw_only_mode:
             # --- RAW 전용 모드 해제 및 전체 초기화 ---
-            print("RAW 전용 모드 해제 및 초기화...")
-
-            # Undo/Redo 히스토리 초기화 추가
-            self.move_history = []
-            self.history_pointer = -1
-            logging.info("RAW 전용 모드 초기화: Undo/Redo 히스토리 초기화됨")
-
-            # 모든 백그라운드 작업 취소
-            print("모든 백그라운드 작업 취소 중...")
+            logging.info("RAW 전용 모드 해제 및 초기화...")
+            self._reset_workspace()
             
-            # 이미지 로더 작업 취소
-            for future in self.image_loader.active_futures:
-                future.cancel()
-            self.image_loader.active_futures.clear()
+            # RAW 전용 모드 해제 후 추가 UI 상태 조정
+            self.load_button.setEnabled(True)
+            self.update_match_raw_button_state()
             
-            # 그리드 썸네일 생성 작업 취소
-            for future in self.active_thumbnail_futures:
-                future.cancel()
-            self.active_thumbnail_futures.clear()
-            
-            # 로딩 인디케이터 타이머 중지
-            if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
-                self.loading_indicator_timer.stop()
-            
-            # RAW 디코더 결과 처리 타이머 중지
-            if hasattr(self, 'decoder_timer') and self.decoder_timer.isActive():
-                self.decoder_timer.stop()
-            
-            # 현재 로딩 작업 취소
-            if hasattr(self, '_current_loading_future') and self._current_loading_future:
-                self._current_loading_future.cancel()
-                self._current_loading_future = None
-                
-            # 리소스 매니저의 작업 모두 취소 
-            self.resource_manager.cancel_all_tasks()
-            
-            # RAW 디코딩 보류 중인 작업 취소 및 전략 초기화 (메서드 활용)
-            self.image_loader.cancel_all_raw_decoding()
-                
-            # RAW 디코더 풀 초기화 (강제 종료 및 새로 생성)
-            try:
-                # 기존 디코더 풀 종료 우선 시도
-                if hasattr(self.resource_manager, 'raw_decoder_pool'):
-                    self.resource_manager.raw_decoder_pool.shutdown()
-                    
-                    # 새 디코더 풀 생성 (내부 작업 큐 초기화)
-                    available_cores = cpu_count()
-                    raw_processes = min(2, max(1, available_cores // 4))
-                    self.resource_manager.raw_decoder_pool = RawDecoderPool(num_processes=raw_processes)
-                    print("RAW 디코더 풀 재초기화 완료")
-            except Exception as e:
-                logging.error(f"RAW 디코더 풀 재초기화 중 오류: {e}")
-
-            # 이미지 로더의 RAW 전략 및 캐시 강제 초기화
-            self.image_loader._raw_load_strategy = "undetermined"
-            self.image_loader.cache.clear()
-            print("이미지 로더 RAW 전략 및 캐시 초기화 완료")
-
-            self.raw_folder = ""
-            self.raw_files = {} # 사용 안하지만 초기화
-            self.image_files = [] # 메인 파일 리스트 비우기
-            self.current_image_index = -1
-            self.original_pixmap = None
-            self.fit_pixmap_cache.clear()
-
-            # --- 추가: 뷰포트 포커스 정보 초기화 ---
-            self.viewport_focus_by_orientation.clear()
-            self.current_active_rel_center = QPointF(0.5, 0.5)
-            self.current_active_zoom_level = "Fit"
-            logging.info("RAW 전용 모드 초기화: 뷰포트 포커스 정보 초기화됨.")
-
-            # === 현재 Zoom 모드를 Fit으로 변경 ===
-            if self.zoom_mode != "Fit":
-                self.zoom_mode = "Fit"
-                self.fit_radio.setChecked(True)
-                # Zoom 라디오 버튼의 checked 상태만 변경하고 콜백은 직접 호출하지 않음
-
-            # 미니맵 숨기기 추가
-            if self.minimap_visible:
-                self.minimap_widget.hide()
-                self.minimap_visible = False
-
-            # Grid 관련 상태 초기화
-            self.grid_page_start_index = 0
-            self.current_grid_index = 0
-            if self.grid_mode != "Off":
-                self.grid_mode = "Off"
-                self.grid_off_radio.setChecked(True)
-                self.update_zoom_radio_buttons_state() # Zoom 버튼 상태 복원
-
-            # UI 업데이트
-            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            self.update_raw_folder_ui_state() # 레이블 스타일, X 버튼, 토글 상태 업데이트 (여기서 토글 Off+활성화됨)
-
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
-
-            # 이미지 뷰 및 정보 업데이트
-            self.update_grid_view() # Grid Off 모드로 전환하며 뷰 클리어
-            self.update_file_info_display(None)
-            self.update_counters()
-            self.setWindowTitle("PhotoSort") # 창 제목 초기화
-
-            # RAW 전용 모드 플래그 해제
-            self.is_raw_only_mode = False
-
-            # JPG 불러오기 버튼 활성화
-            self.load_button.setEnabled(True)
-
-            # RAW 관련 버튼 텍스트 업데이트 ("RAW 불러오기"로)
-            self.update_match_raw_button_state()
-
         else:
             # --- 기존 로직: JPG 모드에서 RAW 연결만 해제 ---
             self.raw_folder = ""
@@ -14803,14 +14288,14 @@ class PhotoSortApp(QMainWindow):
                 # 파일 정보 UI를 기본값으로 설정
                 self.update_file_info_display(None)
 
-            self.save_state() # <<< 상태 변경 후 저장
-
             self.update_all_folder_labels_state()
 
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
 
-            print("RAW 폴더 지정 해제됨.")
+            self.save_state() # <<< 상태 변경 후 저장
+            logging.info("RAW 폴더 지정 해제 완료.")
+
 
     def on_language_radio_changed(self, button):
         """언어 라디오 버튼 변경 시 호출되는 함수"""
