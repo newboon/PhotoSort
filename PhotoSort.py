@@ -3751,29 +3751,27 @@ class PhotoSortApp(QMainWindow):
     
     # 단축키 정의 (두 함수에서 공통으로 사용)
     SHORTCUT_DEFINITIONS = [
-        (0, "▪ WASD: 사진 넘기기"),
-        (0, "▪ Shift + WASD:"),
-        (1, "  - Grid On: 그리드 페이지 넘기기 (좌/우)"),
-        (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-        (0, "▪ 방향키:"),
-        (1, "  - 사진 넘기기"),
-        (1, "  - Zoom 100% 이상: 뷰포트 이동"),
-        (0, "▪ 1~9: 지정한 폴더로 사진 이동"),
-        (0, "▪ 스페이스바:"),
-        (1, "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)"),
-        (1, "  - Grid On: 선택한 이미지 확대 보기"),
-        (0, "▪ ESC:"),
-        (1, "  - Zoom 100% 이상: 이미지 축소(Fit)"),
-        (1, "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀"),
-        (0, "▪ R: 뷰포트(확대 부분) 중앙으로 이동"),
-        (0, "▪ G: 그리드 모드 켜기/끄기"),
-        (0, "▪ F1, F2, F3: 줌 옵션 변경 (Fit, 100%, Spin)"),
-        (0, "▪ F5: 폴더 새로고침"),
-        (0, "▪ Ctrl + Z: 파일 이동 취소"),
-        (0, "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행"),
-        (0, "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택"),
-        (0, "▪ Enter: 파일 목록 표시"),
-        (0, "▪ Delete: 작업 상태 초기화"),
+        ("group", "탐색"),
+        ("key", "WASD / 방향키", "사진 넘기기"),
+        ("key", "Shift + WASD/방향키", "뷰포트 이동 (확대 시)"),
+        ("key", "Shift + A/D", "이전/다음 페이지 (그리드 모드)"),
+        ("key", "Enter", "사진 목록 보기"),
+        ("key", "F5", "폴더 새로고침"),
+        
+        ("group", "보기 설정"),
+        ("key", "G", "그리드 모드 켜기/끄기"),
+        ("key", "Space", "줌 전환 (Fit/100%) 또는 그리드에서 확대"),
+        ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / Spin)"),
+        ("key", "Z / X", "줌 아웃 / 줌 인 (Spin 모드)"),
+        ("key", "R", "뷰포트 중앙 정렬 (확대 시)"),
+        ("key", "ESC", "줌 아웃 또는 그리드 복귀"),
+
+        ("group", "파일 작업"),
+        ("key", "1 ~ 9", "지정한 폴더로 사진 이동"),
+        ("key", "Ctrl + Z", "파일 이동 취소 (Undo)"),
+        ("key", "Ctrl + Y / Ctrl + Shift + Z", "파일 이동 다시 실행 (Redo)"),
+        ("key", "Ctrl + A", "페이지 전체 선택 (그리드 모드)"),
+        ("key", "Delete", "작업 상태 초기화"),
     ]
 
     def __init__(self):
@@ -6573,75 +6571,77 @@ class PhotoSortApp(QMainWindow):
         logging.info("PhotoSortApp: 첫 실행 설정 완료")
             
     def _build_shortcut_html_text(self):
-        """현재 언어 설정에 맞춰 단축키 안내 HTML 텍스트 생성 (개별 p 태그와 margin 사용)"""
-        html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
-
-        # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
-        # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
-        default_margin_bottom = 6 # px
-
-        for i in range(len(self.SHORTCUT_DEFINITIONS)):
-            level, key = self.SHORTCUT_DEFINITIONS[i]
-            text = LanguageManager.translate(key)
-            
-            style_parts = []
-            
-            # 들여쓰기
-            if level == 1:
-                style_parts.append("margin-left: 20px;")
-
-            # 모든 항목에 동일한 margin-bottom 적용 (단, 마지막 항목은 제외 가능)
-            # 또는 모든 항목에 적용하고, 전체 div의 line-height로 조절
-            style_parts.append(f"margin-bottom: {default_margin_bottom}px;")
-
-            # <p> 태그의 기본 상단 마진을 제거하여 margin-bottom만으로 간격 제어 시도
-            style_parts.append("margin-top: 0px;")
-
-            # 간격 추가
-            if level == 0 and key.startswith("▪"):
-                style_parts.append("margin-top: 25px;")
-
-            style_attr = f"style='{' '.join(style_parts)}'" if style_parts else ""
-            html_parts.append(f"<p {style_attr}>{text}</p>")
+        """단축키 안내 HTML 테이블 텍스트 생성"""
+        # 테이블 스타일 정의 (팝업창과 동일한 스타일 사용)
+        html = """
+        <style>
+            table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+            th { text-align: left; padding: 12px 8px; color: #FFFFFF; border-bottom: 1px solid #666666; }
+            td { padding: 8px; vertical-align: top; }
+            td.key { font-weight: bold; color: #E0E0E0; width: 35%; }
+            td.desc { color: #B0B0B0; }
+            .group-title { 
+                padding-top: 25px; 
+                font-size: 11pt; 
+                font-weight: bold; 
+                color: #FFFFFF; 
+            }
+        </style>
+        <table>
+        """
         
-        html_parts.append("</div>")
-        return "".join(html_parts)
+        for item in self.SHORTCUT_DEFINITIONS:
+            if len(item) == 2 and item[0] == "group":
+                # 그룹 제목 행
+                item_type, col1 = item
+                group_title = LanguageManager.translate(col1)
+                html += f"<tr><td colspan='2' class='group-title'>{group_title}</td></tr>"
+            elif len(item) == 3 and item[0] == "key":
+                # 단축키 항목 행
+                item_type, col1, col2 = item
+                key_text = LanguageManager.translate(col1)
+                desc_text = LanguageManager.translate(col2)
+                html += f"<tr><td class='key'>{key_text}</td><td class='desc'>{desc_text}</td></tr>"
+                
+        html += "</table>"
+        return html
     
 
     def _build_shortcut_popup_content_html(self):
-        """단축키 안내 팝업창에 표시될 내용을 HTML로 생성합니다."""
-        html_parts = ["<div style='font-size: 10pt; margin: 0; padding: 0;'>"]
-
-        # 모든 <p> 태그에 적용할 공통 스타일 (주로 margin-bottom으로 간격 조절)
-        # 항목 간 기본 하단 마진 (이 값을 조절하여 전체적인 줄 간격 변경)
-        default_margin_bottom = 6 # px
-
-        for i in range(len(self.SHORTCUT_DEFINITIONS)):
-            level, key = self.SHORTCUT_DEFINITIONS[i]
-            text = LanguageManager.translate(key)
-            
-            style_parts = []
-            
-            # 들여쓰기
-            if level == 1:
-                style_parts.append("margin-left: 20px;")
-
-            # 모든 항목에 동일한 margin-bottom 적용 (단, 마지막 항목은 제외 가능)
-            # 또는 모든 항목에 적용하고, 전체 div의 line-height로 조절
-            style_parts.append(f"margin-bottom: {default_margin_bottom}px;")
-
-            # <p> 태그의 기본 상단 마진을 제거하여 margin-bottom만으로 간격 제어 시도
-            style_parts.append("margin-top: 0px;")
-
-            # 간격 추가
-            if level == 0 and key.startswith("▪"):
-                style_parts.append("margin-top: 33px;")
-
-            style_attr = f"style='{' '.join(style_parts)}'" if style_parts else ""
-            html_parts.append(f"<p {style_attr}>{text}</p>")
+        """단축키 안내 팝업창에 표시될 내용을 HTML 테이블로 생성합니다."""
+        # 테이블 스타일 정의
+        html = """
+        <style>
+            table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+            th { text-align: left; padding: 12px 8px; color: #FFFFFF; border-bottom: 1px solid #666666; }
+            td { padding: 8px; vertical-align: top; }
+            td.key { font-weight: bold; color: #E0E0E0; width: 35%; }
+            td.desc { color: #B0B0B0; }
+            .group-title { 
+                padding-top: 25px; 
+                font-size: 11pt; 
+                font-weight: bold; 
+                color: #FFFFFF; 
+            }
+        </style>
+        <table>
+        """
         
-        html_parts.append("</div>")
-        return "".join(html_parts)
+        for item in self.SHORTCUT_DEFINITIONS:
+            if len(item) == 2 and item[0] == "group":
+                # 그룹 제목 행
+                item_type, col1 = item
+                group_title = LanguageManager.translate(col1)
+                html += f"<tr><td colspan='2' class='group-title'>{group_title}</td></tr>"
+            elif len(item) == 3 and item[0] == "key":
+                # 단축키 항목 행
+                item_type, col1, col2 = item
+                key_text = LanguageManager.translate(col1)
+                desc_text = LanguageManager.translate(col2)
+                html += f"<tr><td class='key'>{key_text}</td><td class='desc'>{desc_text}</td></tr>"
+                
+        html += "</table>"
+        return html
 
 
     def _update_shortcut_label_text(self, label_widget):
@@ -14214,11 +14214,11 @@ class PhotoSortApp(QMainWindow):
                 return True
             if self.grid_mode == "Off":
                 if not (modifiers & Qt.ShiftModifier):
-                    if key == Qt.Key_A: self.show_previous_image(); return True
-                    elif key == Qt.Key_D: self.show_next_image(); return True
+                    if key == Qt.Key_A or key == Qt.Key_W: self.show_previous_image(); return True
+                    elif key == Qt.Key_D or key == Qt.Key_S: self.show_next_image(); return True
                 if self.zoom_mode == "Fit" and not (modifiers & Qt.ShiftModifier):
-                    if key == Qt.Key_Left: self.show_previous_image(); return True
-                    elif key == Qt.Key_Right: self.show_next_image(); return True
+                    if key == Qt.Key_Left or key == Qt.Key_Up: self.show_previous_image(); return True
+                    elif key == Qt.Key_Right or key == Qt.Key_Down: self.show_next_image(); return True
             elif self.grid_mode != "Off":
                 rows, cols = self._get_grid_dimensions()
                 if modifiers & Qt.ShiftModifier:
@@ -14657,32 +14657,6 @@ def main():
         "좌측": "Left",
         "우측": "Right",
         "닫기": "Close",
-        "▪ 1~9: 지정한 폴더로 사진 이동": "▪ 1-9: Move photo to assigned folder",
-        # --- 단축키 안내 (새로운 상세 버전) ---
-        "단축키": "Keyboard Shortcuts", # 팝업창 제목
-        "▪ WASD: 사진 넘기기": "▪ WASD: Navigate Photos", # Grid Off 시, Grid On 시 셀 이동은 별도 항목이나 통합 설명
-        "▪ 방향키:": "▪ Arrow Keys:",
-        "  - 사진 넘기기": "  - Navigate Photos (Fit mode)",
-        "  - Zoom 100% 이상: 뷰포트 이동": "  - Pan Viewport (Zoom 100% or higher)",
-        # 또는 방향키 통합 설명
-        "▪ Shift + WASD:": "▪ Shift + WASD:",
-        "  - Grid On: 그리드 페이지 넘기기 (좌/우)": "  - Navigate Grid Page (Left/Right when Grid On)",
-        "  - Zoom 100% 이상: 뷰포트 이동": "  - Pan Viewport (Zoom 100% or higher)",
-        # 또는 Shift + WASD 통합 설명
-        "▪ 스페이스바:": "▪ Spacebar:",
-        "  - Grid Off: 줌 모드 전환 (Fit ↔ 100%)": "  - Grid Off: Toggle Zoom Mode (Fit ↔ 100%)",
-        "  - Grid On: 선택한 이미지 확대 보기": "  - Grid On: Zoom into Selected Image (to Grid Off)",
-        "▪ F1, F2, F3: 그리드 옵션 변경": "▪ F1, F2, F3: Change Grid Mode", # 기존 유지
-        "▪ ESC:": "▪ ESC:",
-        "  - Zoom 100% 이상: 이미지 축소(Fit)": "  - Zoom 100% or higher: Zoom out to Fit",
-        "  - Grid 모드에서 이미지 확대한 경우 이전 그리드로 복귀": "  - When zoomed from Grid: Return to previous Grid view",
-        "  - 파일 목록: 닫기": "  - File List Dialog: Close",
-        "▪ R: 뷰포트(확대 부분) 중앙으로 이동": "▪ R: Center Viewport (Zoomed Area)",
-        "▪ Ctrl + Z: 파일 이동 취소": "▪ Ctrl + Z: Undo File Move", # 기존 유지
-        "▪ Ctrl + Y 또는 Ctrl + Shift + Z: 파일 이동 다시 실행": "▪ Ctrl + Y or Ctrl + Shift + Z: Redo File Move", # 기존 유지
-        "▪ Ctrl + A: 그리드 모드에서 모든 이미지 선택": "▪ Ctrl + A: Select All Images in Grid Mode",
-        "▪ Delete: 작업 상태 초기화": "▪ Delete: Reset Working State", # "프로그램 초기화"에서 변경
-        "▪ Enter: 파일 목록 표시": "▪ Enter: Show File List",
         "단축키 확인": "View Shortcuts",
         "개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is free software that you can use freely for personal purposes.",
         "상업적 이용은 허용되지 않습니다.": "Commercial use is not permitted.",
@@ -14753,7 +14727,6 @@ def main():
         "없음": "None",
         "이동 - 폴더 {0}": "Move to Folder {0}",
         "이동 - 폴더 {0} [{1}]": "Move to Folder {0} [{1}]",
-        "▪ F5: 폴더 새로고침": "▪ F5: Refresh Folder",
         "UI 설정": "UI Settings",
         "작업 설정": "Workflow Settings",
         "도구 및 고급 설정": "Tools & Advanced",
@@ -14769,6 +14742,43 @@ def main():
         "파일 준비 중": "Preparing Files",
         "쾌적한 작업을 위해 RAW 파일을 준비하고 있습니다.": "Preparing RAW files for a smooth workflow.",
         "잠시만 기다려주세요.": "Please wait a moment.",
+        # 단축키 번역 키 시작
+        "탐색": "Navigation",
+        "WASD / 방향키": "WASD / Arrow Keys",
+        "사진 넘기기": "Navigate photos",
+        "Shift + WASD/방향키": "Shift + WASD/Arrow Keys",
+        "뷰포트 이동 (확대 시)": "Pan viewport (when zoomed)",
+        "Shift + A/D": "Shift + A/D",
+        "이전/다음 페이지 (그리드 모드)": "Previous/Next page (in Grid mode)",
+        "Enter": "Enter",
+        "사진 목록 보기": "Show photo list",
+        "F5": "F5",
+        "폴더 새로고침": "Refresh folder",
+        "보기 설정": "View Settings",
+        "G": "G",
+        "그리드 모드 켜기/끄기": "Toggle Grid mode",
+        "Space": "Space",
+        "줌 전환 (Fit/100%) 또는 그리드에서 확대": "Toggle Zoom (Fit/100%) or Zoom in from Grid",
+        "F1 / F2 / F3": "F1 / F2 / F3",
+        "줌 모드 변경 (Fit / 100% / Spin)": "Change Zoom mode (Fit / 100% / Spin)",
+        "Z / X": "Z / X",
+        "줌 아웃 / 줌 인 (Spin 모드)": "Zoom Out / Zoom In (in Spin mode)",
+        "R": "R",
+        "뷰포트 중앙 정렬 (확대 시)": "Center viewport (when zoomed)",
+        "ESC": "ESC",
+        "줌 아웃 또는 그리드 복귀": "Zoom out or return to Grid",
+        "파일 작업": "File Actions",
+        "1 ~ 9": "1 ~ 9",
+        "지정한 폴더로 사진 이동": "Move photo to assigned folder",
+        "Ctrl + Z": "Ctrl + Z",
+        "파일 이동 취소 (Undo)": "Undo file move",
+        "Ctrl + Y / Ctrl + Shift + Z": "Ctrl + Y / Ctrl + Shift + Z",
+        "파일 이동 다시 실행 (Redo)": "Redo file move",
+        "Ctrl + A": "Ctrl + A",
+        "페이지 전체 선택 (그리드 모드)": "Select all on page (in Grid mode)",
+        "Delete": "Delete",
+        "작업 상태 초기화": "Reset working state",
+        # 단축키 번역 키 끝
     }
     
     LanguageManager.initialize_translations(translations)
