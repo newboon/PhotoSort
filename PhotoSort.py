@@ -5483,19 +5483,7 @@ class PhotoSortApp(QMainWindow):
             dialog.setWindowTitle(LanguageManager.translate("폴더 불러오기"))
             
             # 다크 테마 적용
-            if sys.platform == "win32":
-                try:
-                    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                    dwmapi = ctypes.WinDLL("dwmapi")
-                    dwmapi.DwmSetWindowAttribute.argtypes = [
-                        ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                    ]
-                    hwnd = int(dialog.winId())
-                    value = ctypes.c_int(1)
-                    dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
-                                                ctypes.byref(value), ctypes.sizeof(value))
-                except Exception:
-                    pass
+            apply_dark_title_bar(dialog)
             
             palette = QPalette()
             palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
@@ -6465,21 +6453,10 @@ class PhotoSortApp(QMainWindow):
         self.settings_popup = QDialog(self)
         self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
         self.settings_popup.setProperty("is_first_run_popup", True)
-        self.settings_popup.setMinimumSize(550, 450) # 가로, 세로 크기 조정
+        self.settings_popup.setMinimumSize(500,350) # 가로, 세로 크기 조정
         
         # 제목 표시줄 다크 테마 적용 (Windows용)
-        if sys.platform == "win32":
-            try:
-                DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-                dwmapi = ctypes.WinDLL("dwmapi")
-                dwmapi.DwmSetWindowAttribute.argtypes = [
-                    ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_int), ctypes.c_uint
-                ]
-                hwnd = int(self.settings_popup.winId())
-                value = ctypes.c_int(1)
-                dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
-            except Exception as e:
-                logging.error(f"설정 팝업창 제목 표시줄 다크 테마 적용 실패: {e}")
+        apply_dark_title_bar(self.settings_popup)
         
         # 다크 테마 배경 설정
         palette = QPalette()
@@ -7021,9 +6998,13 @@ class PhotoSortApp(QMainWindow):
             font.setBold(True)
             font.setPointSize(UIScaleManager.get("font_size") + 1)
             title_label.setFont(font)
-            title_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; margin-bottom: 5px;")
+            title_label.setStyleSheet(f"""
+                color: {ThemeManager.get_color('text')}; 
+                margin-bottom: 5px;
+                padding-left: 0px;
+            """)
             title_label.setObjectName(f"group_title_{title_key.replace(' ', '_')}")
-
+            
             group_layout.addWidget(title_label)
         
         add_widgets_func(group_layout)
@@ -7869,7 +7850,7 @@ class PhotoSortApp(QMainWindow):
                 color: {ThemeManager.get_color('text')};
                 border: none;
                 padding: {UIScaleManager.get("combobox_padding")}px;
-                border-radius: 3px;
+                border-radius: 1px;
             }}
             QComboBox:hover {{
                 background-color: #555555;
@@ -7881,6 +7862,27 @@ class PhotoSortApp(QMainWindow):
                 selection-color: {ThemeManager.get_color('text')};
             }}
         """
+    
+    # def generate_combobox_style(self):
+    #     """현재 테마에 맞는 콤보박스 스타일 생성"""
+    #     return f"""
+    #         QComboBox {{
+    #             background-color: {ThemeManager.get_color('bg_primary')};
+    #             color: {ThemeManager.get_color('text')};
+    #             border: 1px solid {ThemeManager.get_color('border')};
+    #             border-radius: 1px;
+    #             padding: {UIScaleManager.get("combobox_padding")}px;
+    #         }}
+    #         QComboBox:hover {{
+    #             background-color: #555555;
+    #         }}
+    #         QComboBox QAbstractItemView {{
+    #             background-color: {ThemeManager.get_color('bg_secondary')};
+    #             color: {ThemeManager.get_color('text')};
+    #             selection-background-color: #505050;
+    #             selection-color: {ThemeManager.get_color('text')};
+    #         }}
+    #     """
 
     def setup_dark_theme(self):
         """다크 테마 설정"""
@@ -9607,6 +9609,8 @@ class PhotoSortApp(QMainWindow):
 
             action_button = QPushButton("✕")
             action_button.setStyleSheet(action_button_style)
+
+            action_button.clicked.connect(lambda checked=False, idx=i: self.on_folder_action_button_clicked(idx))
             
             # 높이 동기화
             fm_label = QFontMetrics(folder_path_label.font())
@@ -9653,26 +9657,32 @@ class PhotoSortApp(QMainWindow):
         """지정된 인덱스의 액션 버튼('X'/'V')을 상태에 맞게 업데이트합니다."""
         if index < 0 or index >= len(self.folder_action_buttons):
             return
-            
         button = self.folder_action_buttons[index]
         
-        # 기존 연결 모두 해제
-        try:
-            button.clicked.disconnect()
-        except (TypeError, RuntimeError):
-            pass # 연결이 없으면 오류 발생하므로 무시
-
         if state == EditableFolderPathLabel.STATE_DISABLED:
             button.setText("✕")
             button.setEnabled(False)
         elif state == EditableFolderPathLabel.STATE_EDITABLE:
-            button.setText("✓") # 체크 표시 (V)
+            button.setText("✓")
             button.setEnabled(True)
-            button.clicked.connect(lambda checked=False, idx=index: self.confirm_subfolder_creation(idx))
         elif state == EditableFolderPathLabel.STATE_SET:
             button.setText("✕")
             button.setEnabled(True)
-            button.clicked.connect(lambda checked=False, idx=index: self.clear_category_folder(idx))
+
+    def on_folder_action_button_clicked(self, index):
+        """분류 폴더의 액션 버튼(X/V) 클릭을 처리하는 통합 핸들러"""
+        if index < 0 or index >= len(self.folder_action_buttons):
+            return
+        
+        button = self.folder_action_buttons[index]
+        button_text = button.text()
+
+        if button_text == "✓":
+            # 체크 표시일 경우: 하위 폴더 생성 로직 호출
+            self.confirm_subfolder_creation(index)
+        elif button_text == "✕":
+            # X 표시일 경우: 폴더 지정 취소 로직 호출
+            self.clear_category_folder(index)            
 
     def confirm_subfolder_creation(self, index):
         """입력된 이름으로 하위 폴더를 생성하고 UI를 업데이트합니다."""
@@ -10670,7 +10680,25 @@ class PhotoSortApp(QMainWindow):
 
         self.grid_size_combo = QComboBox()
         self.grid_size_combo.addItems(["2 x 2", "3 x 3", "4 x 4"])
-        self.grid_size_combo.setStyleSheet(self.generate_combobox_style())
+        self.grid_size_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                border-radius: 1px;
+                padding: {UIScaleManager.get("combobox_padding")}px;
+            }}
+            QComboBox:hover {{
+                background-color: #555555;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                selection-background-color: #505050;
+                selection-color: {ThemeManager.get_color('text')};
+            }}
+        """)
+
 
         # 버튼 그룹으로 Off/On 상태 관리
         self.grid_mode_group = QButtonGroup(self)
@@ -12921,16 +12949,13 @@ class PhotoSortApp(QMainWindow):
 
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
-            # --- 첫 실행 시 기본값 설정 ---
+            # --- 첫 실행 시 기본값 설정 (내부 상태 변수) ---
             self.camera_raw_settings = {} 
             LanguageManager.set_language("en") 
             ThemeManager.set_theme("default")  
             DateFormatManager.set_date_format("yyyy-mm-dd")
-            # RAW 전략은 ImageLoader 생성 후 설정
             if hasattr(self, 'image_loader'):
                 self.image_loader.set_raw_load_strategy("preview")
-            
-            # 기타 상태 변수 기본값
             self.current_folder = ""
             self.raw_folder = ""
             self.image_files = []
@@ -12950,8 +12975,44 @@ class PhotoSortApp(QMainWindow):
             self.last_processed_camera_model = None
             self.viewport_move_speed = 5
             self.show_grid_filenames = False
-            self.control_panel_on_right = False # 기본값 왼쪽
+            self.control_panel_on_right = False
+            self.supported_image_extensions = {'.jpg', '.jpeg'}
+            self.mouse_wheel_action = "photo_navigation"
             # --- 첫 실행 시 기본값 설정 끝 ---
+
+            # --- UI 컨트롤에 기본값 설정 ---
+            # 이 시점에는 컨트롤이 모두 생성되었으므로 hasattr 검사는 생략 가능하지만, 안전을 위해 유지합니다.
+            
+            # 1-1. 언어 설정 라디오 버튼 (초기 설정 창)
+            if hasattr(self, 'english_radio'):
+                self.english_radio.setChecked(True)
+            
+            # 1-2. 컨트롤 패널 위치 라디오 버튼 (초기 설정 창)
+            if hasattr(self, 'panel_pos_left_radio'):
+                self.panel_pos_left_radio.setChecked(True)
+
+            # 2-1. 불러올 이미지 형식 체크박스 (설정 및 정보 창)
+            if hasattr(self, 'ext_checkboxes'):
+                for name, checkbox in self.ext_checkboxes.items():
+                    checkbox.setChecked(name == "JPG")
+
+            # 2-2. 분류 폴더 개수 콤보박스 (설정 및 정보 창)
+            if hasattr(self, 'folder_count_combo'):
+                index = self.folder_count_combo.findData(self.folder_count)
+                if index != -1:
+                    self.folder_count_combo.setCurrentIndex(index)
+
+            # 2-3. 뷰포트 이동 속도 콤보박스 (설정 및 정보 창)
+            if hasattr(self, 'viewport_speed_combo'):
+                index = self.viewport_speed_combo.findData(self.viewport_move_speed)
+                if index != -1:
+                    self.viewport_speed_combo.setCurrentIndex(index)
+
+            # 2-4. 마우스 휠 동작 라디오 버튼 (설정 및 정보 창)
+            if hasattr(self, 'mouse_wheel_photo_radio'):
+                self.mouse_wheel_photo_radio.setChecked(True)
+            
+            # --- UI 컨트롤 설정 끝 ---
 
             self.update_all_ui_after_load_failure_or_first_run() # UI를 기본 상태로
 
