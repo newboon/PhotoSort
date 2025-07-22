@@ -908,7 +908,7 @@ class InfoFolderPathLabel(QLabel):
         fixed_height_padding = UIScaleManager.get("folder_label_padding")
         
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)")
+        self.setToolTip(LanguageManager.translate("더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)"))
         font = QFont("Arial", UIScaleManager.get("font_size"))
         self.setFont(font)
         fm = QFontMetrics(font)
@@ -13121,7 +13121,12 @@ class PhotoSortApp(QMainWindow):
             if hasattr(self, 'zoom_spin'):
                 self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
                 logging.info(f"PhotoSortApp.load_state: 동적 줌 SpinBox 값 복원: {int(self.zoom_spin_value * 100)}%")
-            
+
+            if hasattr(self, 'folder_count_combo'):
+                index = self.folder_count_combo.findData(self.folder_count)
+                if index >= 0:
+                    self.folder_count_combo.setCurrentIndex(index)
+
             self.minimap_toggle.setChecked(loaded_data.get("minimap_visible", True))
 
             # 3. 폴더 경로 및 파일 목록 관련 '상태 변수' 우선 설정
@@ -14779,6 +14784,21 @@ def main():
         "Delete": "Delete",
         "작업 상태 초기화": "Reset working state",
         # 단축키 번역 키 끝
+        # EditableFolderPathLabel 및 InfoFolderPathLabel 관련 번역 키
+        "새 폴더명을 입력하거나 폴더를 드래그하여 지정하세요.": "Enter a new folder name or drag a folder here.",
+        "폴더를 드래그하여 지정하세요.": "Drag a folder here to assign.",
+        "더블클릭하면 해당 폴더가 열립니다.": "Double-click to open the folder.",
+        "더블클릭하면 해당 폴더가 열립니다 (전체 경로 표시)": "Double-click to open the folder (shows full path).",
+        # EditableFolderPathLabel 및 InfoFolderPathLabel 관련 번역 키 끝
+        # 누락된 번역키 추가
+        "잘못된 폴더명입니다.": "Invalid folder name.",
+        "유효하지 않은 폴더입니다.": "Invalid folder.",
+        "알림": "Notice",
+        "Zoom Fit 모드에서만 드래그 앤 드롭이 가능합니다.": "Drag and drop is only available in Zoom Fit mode.",
+        "이동할 이미지가 없습니다.": "No image to move.",
+        "선택된 그리드 이미지가 없습니다.": "No grid image selected.",
+        "호환성 문제": "Compatibility Issue",
+        "RAW 디코딩 실패. 미리보기를 대신 사용합니다.": "RAW decoding failed. Using preview instead.",
     }
     
     LanguageManager.initialize_translations(translations)
