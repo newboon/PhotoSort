@@ -166,6 +166,8 @@ class UIScaleManager:
         "thumbnail_padding": 6,                # 썸네일 내부 패딩
         "thumbnail_border_width": 2,           # 선택 테두리 두께
         "thumbnail_panel_min_width": 180,      # 썸네일 패널 최소 너비
+        # 
+        "compare_filename_padding": 5,
     }
 
     # 컴팩트 모드 UI 크기 설정
@@ -224,6 +226,8 @@ class UIScaleManager:
         "thumbnail_padding": 5,                # 썸네일 내부 패딩
         "thumbnail_border_width": 2,           # 선택 테두리 두께
         "thumbnail_panel_min_width": 150,      # 썸네일 패널 최소 너비
+        # 
+        "compare_filename_padding": 5,
     }
 
     _current_settings = NORMAL_SETTINGS # 초기값은 Normal로 설정
@@ -2619,6 +2623,12 @@ class ImageLoader(QObject):
         # 전략 결정을 위한 락 추가
         self._strategy_lock = threading.Lock()
 
+    def cancel_loading(self):
+        """진행 중인 모든 이미지 로딩 작업을 취소합니다."""
+        for future in self.active_futures:
+            future.cancel()
+        self.active_futures.clear()
+        logging.info("ImageLoader: 활성 로딩 작업이 취소되었습니다.")
 
     def get_system_memory_gb(self):
         """시스템 메모리 크기 확인 (GB)"""
@@ -3173,6 +3183,57 @@ class ThumbnailDelegate(QStyledItemDelegate):
         height = UIScaleManager.get("thumbnail_item_height")
         return QSize(0, height)
 
+class DraggableThumbnailView(QListView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.drag_start_position = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_start_position = event.pos()
+        # 기본 mousePressEvent를 호출하지 않아 즉시 선택되는 것을 방지
+        # super().mousePressEvent(event) 
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if not self.drag_start_position:
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        # 드래그 시작
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        
+        index = self.indexAt(self.drag_start_position)
+        if not index.isValid():
+            return
+        
+        # 드래그 데이터에 이미지 인덱스 저장
+        mime_data.setText(f"thumbnail_drag:{index.row()}")
+        drag.setMimeData(mime_data)
+
+        # 드래그 시 보여줄 썸네일 이미지 설정
+        pixmap = index.data(Qt.DecorationRole)
+        if pixmap and not pixmap.isNull():
+            scaled_pixmap = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            drag.setPixmap(scaled_pixmap)
+            drag.setHotSpot(QPoint(32, 32))
+
+        drag.exec_(Qt.CopyAction)
+        self.drag_start_position = None # 드래그 후 초기화
+
+    def mouseReleaseEvent(self, event):
+        # 드래그가 시작되지 않았다면, 일반 클릭으로 간주하여 선택 처리
+        if self.drag_start_position is not None:
+            # 마우스 누른 위치와 뗀 위치가 거의 같다면 클릭으로 처리
+            if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                # 기본 QListView의 클릭 동작을 여기서 수행
+                super().mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, event.pos(), event.globalPos(), event.button(), event.buttons(), event.modifiers()))
+                super().mouseReleaseEvent(event)
+        self.drag_start_position = None
+
 class ThumbnailPanel(QWidget):
     """썸네일 패널 위젯 - 현재 이미지 주변의 썸네일들을 표시"""
     
@@ -3203,9 +3264,10 @@ class ThumbnailPanel(QWidget):
         self.layout.setSpacing(UIScaleManager.get("control_layout_spacing"))
         
         # 썸네일 리스트 뷰
-        self.list_view = QListView()
+        self.list_view = DraggableThumbnailView()
         self.list_view.setModel(self.model)
         self.list_view.setItemDelegate(self.delegate)
+        self.list_view.setDragEnabled(True)
         
         # 리스트 뷰 설정
         self.list_view.setSelectionMode(QListView.ExtendedSelection)  # 다중 선택 허용
@@ -3760,6 +3822,7 @@ class PhotoSortApp(QMainWindow):
         
         ("group", "보기 설정"),
         ("key", "G", "그리드 모드 켜기/끄기"),
+        ("key", "C", "A | B 비교 모드 켜기/끄기"),
         ("key", "Space", "줌 전환 (Fit/100%) 또는 그리드에서 확대"),
         ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / Spin)"),
         ("key", "Z / X", "줌 아웃 / 줌 인 (Spin 모드)"),
@@ -3961,6 +4024,12 @@ class PhotoSortApp(QMainWindow):
         # --- 카메라별 RAW 처리 설정을 위한 딕셔너리 ---
         # 형식: {"카메라모델명": {"method": "preview" or "decode", "dont_ask": True or False}}
         self.camera_raw_settings = {} 
+
+        # === 비교 모드 관련 변수 ===
+        self.compare_mode_active = False  # 비교 모드 활성화 여부
+        self.image_B_path = None          # B 패널에 표시될 이미지 경로
+        self.original_pixmap_B = None     # B 패널의 원본 QPixmap
+
         
         # ==================== 여기서부터 UI 관련 코드 ====================
 
@@ -4011,82 +4080,140 @@ class PhotoSortApp(QMainWindow):
         # 4. QScrollArea(self.control_panel)에 콘텐츠 위젯을 설정
         self.control_panel.setWidget(scroll_content_widget)
 
-        # 우측 이미지 영역 생성 (검은색 배경으로 설정)
+        # --- [수정] 이미지 뷰 영역: 분할 가능한 구조로 변경 ---
+        # 1. 전체 이미지 뷰를 담을 메인 패널 (기존 image_panel 역할)
         self.image_panel = QFrame()
         self.image_panel.setFrameShape(QFrame.NoFrame)
         self.image_panel.setAutoFillBackground(True)
-        
-        # 이미지 패널에 검은색 배경 설정
         image_palette = self.image_panel.palette()
         image_palette.setColor(QPalette.Window, QColor(0, 0, 0))
         self.image_panel.setPalette(image_palette)
-
-        # === 캔버스 영역 드래그 앤 드랍 활성화 ===
-        # 이미지 패널에 드래그 앤 드랍 활성화
+        # 캔버스 전체 영역에 대한 드래그 앤 드롭 활성화
         self.image_panel.setAcceptDrops(True)
-        
-        # 드래그 앤 드랍 이벤트 핸들러 연결
         self.image_panel.dragEnterEvent = self.canvas_dragEnterEvent
-        self.image_panel.dragMoveEvent = self.canvas_dragMoveEvent
-        self.image_panel.dragLeaveEvent = self.canvas_dragLeaveEvent
         self.image_panel.dropEvent = self.canvas_dropEvent
         
-        logging.info("캔버스 영역 드래그 앤 드랍 기능 활성화됨")
-        # === 캔버스 드래그 앤 드랍 설정 끝 ===
-        
-        # 이미지 레이아웃 설정 - 초기에는 단일 이미지 레이아웃
-        self.image_layout = QVBoxLayout(self.image_panel) # 기본 이미지 표시용 레이아웃
-        self.image_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # 패닝을 위한 컨테이너 위젯
+        # 2. 메인 패널 내부에 레이아웃과 스플리터 배치
+        self.view_splitter_layout = QHBoxLayout(self.image_panel)
+        self.view_splitter_layout.setContentsMargins(0, 0, 0, 0)
+        self.view_splitter_layout.setSpacing(0)
+        self.view_splitter = QSplitter(Qt.Horizontal)
+        self.view_splitter.setStyleSheet("QSplitter::handle { background-color: #222222; } QSplitter::handle:hover { background-color: #444444; }")
+        self.view_splitter.setHandleWidth(4) # 분할자 핸들 너비
+        self.view_splitter_layout.addWidget(self.view_splitter)
+
+        # 3. 패널 A (기존 메인 뷰) 위젯 설정
         self.image_container = QWidget()
         self.image_container.setStyleSheet("background-color: black;")
-        
-        # 이미지 레이블 생성 (단일 이미지 표시용)
         self.image_label = QLabel(self.image_container)
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setStyleSheet("background-color: transparent;")
-        
-        # 스크롤 영역 설정 - ZoomScrollArea 사용
-        self.scroll_area = ZoomScrollArea(self) # ZoomScrollArea 인스턴스 생성 (self 전달)
+        self.scroll_area = ZoomScrollArea(self)
         self.scroll_area.setWidget(self.image_container)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
         self.scroll_area.setStyleSheet("background-color: black; border: none;")
-        
-        # 스크롤바 숨기기
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
-        # 마우스 이벤트 처리를 위한 설정 (단일 이미지 모드용)
+        # 패널 A 마우스 이벤트 연결 (기존과 동일)
         self.image_container.setMouseTracking(True)
         self.image_container.mousePressEvent = self.image_mouse_press_event
         self.image_container.mouseMoveEvent = self.image_mouse_move_event
         self.image_container.mouseReleaseEvent = self.image_mouse_release_event
-        
-        # 더블클릭 이벤트 연결
         self.image_container.mouseDoubleClickEvent = self.image_mouse_double_click_event
+
+        # 4. 패널 B (비교 뷰) 위젯 설정
+        self.image_container_B = QWidget()
+        self.image_container_B.setStyleSheet("background-color: black;")
+        self.image_label_B = QLabel(self.image_container_B)
+        self.image_label_B.setAlignment(Qt.AlignCenter)
+        self.image_label_B.setStyleSheet("background-color: transparent; color: #888888;")
+        self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+        self.scroll_area_B = ZoomScrollArea(self)
+        self.scroll_area_B.setWidget(self.image_container_B)
+        self.scroll_area_B.setWidgetResizable(True)
+        self.scroll_area_B.setAlignment(Qt.AlignCenter)
+        self.scroll_area_B.setStyleSheet("background-color: black; border: none;")
+        self.scroll_area_B.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area_B.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # 패널 B 드래그 앤 드롭, 마우스 이벤트, 우클릭 메뉴 연결
+        self.scroll_area_B.setAcceptDrops(True)
+        self.scroll_area_B.dragEnterEvent = self.canvas_B_dragEnterEvent
+        self.scroll_area_B.dropEvent = self.canvas_B_dropEvent
         
-        # 미니맵 위젯 생성
-        self.minimap_widget = QWidget(self.image_panel)
+        self.image_container_B.setMouseTracking(True)
+        self.image_container_B.mousePressEvent = self.image_B_mouse_press_event
+        self.image_container_B.mouseMoveEvent = self.image_B_mouse_move_event
+        self.image_container_B.mouseReleaseEvent = self.image_B_mouse_release_event
+
+        # 5. 스플리터에 패널 A, B 추가
+        self.view_splitter.addWidget(self.scroll_area)   # 패널 A
+        self.view_splitter.addWidget(self.scroll_area_B) # 패널 B
+        self.scroll_area_B.hide() # 비교 모드가 아니면 숨김
+
+        # B 패널 내에 레이아웃 설정
+        self.image_container_B_layout = QVBoxLayout(self.image_container_B)
+        self.image_container_B_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_container_B_layout.addWidget(self.image_label_B)
+
+        # B 패널 닫기 버튼 추가
+        self.close_compare_button = QPushButton("✕", self.scroll_area_B)
+        self.close_compare_button.setFixedSize(40, 40)
+        self.close_compare_button.setCursor(Qt.PointingHandCursor)
+        self.close_compare_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(40, 40, 40, 180);
+                color: #AAAAAA;
+                border: 1px solid #555555;
+                border-radius: 20px;
+                font-size: 20px;
+            }
+            QPushButton:hover {
+                background-color: rgba(60, 60, 60, 220);
+                color: #FFFFFF;
+            }
+            QPushButton:pressed {
+                background-color: rgba(20, 20, 20, 220);
+            }
+        """)
+        self.close_compare_button.clicked.connect(self.deactivate_compare_mode)
+        self.close_compare_button.hide() # 평소에는 숨김
+
+        # 6. 미니맵 위젯 생성 (부모를 self.image_panel로 유지)
+        self.minimap_widget = QWidget(self.scroll_area)
         self.minimap_widget.setStyleSheet("background-color: rgba(20, 20, 20, 200); border: 1px solid #666666;")
         self.minimap_widget.setFixedSize(self.minimap_width, self.minimap_height)
-        self.minimap_widget.hide()  # 초기에는 숨김
-        
-        # 미니맵 레이블 생성
+        self.minimap_widget.hide()
         self.minimap_label = QLabel(self.minimap_widget)
         self.minimap_label.setAlignment(Qt.AlignCenter)
         self.minimap_layout = QVBoxLayout(self.minimap_widget)
         self.minimap_layout.setContentsMargins(0, 0, 0, 0)
         self.minimap_layout.addWidget(self.minimap_label)
-        
-        # 미니맵 마우스 이벤트 설정
         self.minimap_widget.setMouseTracking(True)
         self.minimap_widget.mousePressEvent = self.minimap_mouse_press_event
         self.minimap_widget.mouseMoveEvent = self.minimap_mouse_move_event
         self.minimap_widget.mouseReleaseEvent = self.minimap_mouse_release_event
+
+        # Compare 모드 파일명 라벨
+        self.filename_label_A = QLabel(self.scroll_area)
+        self.filename_label_B = QLabel(self.scroll_area_B)
         
-        self.image_layout.addWidget(self.scroll_area)
+        filename_label_style = """
+            QLabel {
+                background-color: rgba(0, 0, 0, 0.6);
+                color: white;
+                padding: 4px 4px;
+                border-radius: 3px;
+                font-size: 10pt;
+            }
+        """
+        self.filename_label_A.setStyleSheet(filename_label_style)
+        self.filename_label_B.setStyleSheet(filename_label_style)
+        
+        self.filename_label_A.hide()
+        self.filename_label_B.hide()
         
         # 세로 가운데 정렬을 위한 상단 Stretch
         self.control_layout.addStretch(1)
@@ -4386,6 +4513,257 @@ class PhotoSortApp(QMainWindow):
         self._create_settings_controls()
 
         self.update_all_folder_labels_state()
+
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._sync_viewports)
+        self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_viewports)
+
+    def deactivate_compare_mode(self):
+        """비교 모드 X 버튼 클릭 시 동작 처리"""
+        if not self.compare_mode_active:
+            return
+
+        # B 캔버스에 이미지가 로드되어 있으면, 이미지만 언로드
+        if self.image_B_path:
+            logging.info("비교 이미지 언로드")
+            self.image_B_path = None
+            self.original_pixmap_B = None
+            self.image_label_B.clear()
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+        else:
+            # B 캔버스가 비어있으면, 비교 모드 종료 (Grid Off로 전환)
+            logging.info("비교 모드 종료")
+            self.grid_off_radio.setChecked(True)
+            self._on_grid_mode_toggled(self.grid_off_radio)
+
+    def image_B_mouse_press_event(self, event):
+        """B 패널 마우스 클릭 이벤트 처리 (패닝 시작 및 우클릭 메뉴)"""
+        if event.button() == Qt.RightButton and self.image_B_path:
+            self.show_context_menu_for_B(event.pos())
+            return
+            
+        # 100% 또는 Spin 모드에서만 패닝 활성화
+        if self.zoom_mode in ["100%", "Spin"]:
+            if event.button() == Qt.LeftButton:
+                self.panning = True
+                self.pan_start_pos = event.position().toPoint()
+                self.image_start_pos = self.image_label.pos() # A 캔버스 위치 기준
+                self.setCursor(Qt.ClosedHandCursor)
+
+    def image_B_mouse_move_event(self, event):
+        """B 패널 마우스 이동 이벤트 처리 (A와 동일한 패닝 로직)"""
+        if not self.panning:
+            return
+        
+        # A 캔버스의 패닝 로직을 그대로 사용합니다.
+        # A 캔버스의 image_label 위치를 변경하고, _sync_viewports를 호출합니다.
+        self.image_mouse_move_event(event)
+
+    def image_B_mouse_release_event(self, event):
+        """B 패널 마우스 릴리스 이벤트 처리 (A와 동일한 패닝 종료 로직)"""
+        if event.button() == Qt.LeftButton and self.panning:
+            self.panning = False
+            self.setCursor(Qt.ArrowCursor)
+            # A 캔버스와 동일하게 뷰포트 포커스 저장
+            if self.grid_mode == "Off" and self.zoom_mode in ["100%", "Spin"] and \
+               self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
+                current_rel_center = self._get_current_view_relative_center()
+                self.current_active_rel_center = current_rel_center
+                self.current_active_zoom_level = self.zoom_mode
+                self._save_orientation_viewport_focus(self.current_image_orientation, current_rel_center, self.zoom_mode)
+            
+            if self.minimap_visible and self.minimap_widget.isVisible():
+                self.update_minimap()
+
+    def move_image_B_to_folder(self, folder_index, specific_index=None):
+        """B 패널의 이미지를 이동합니다. specific_index가 주어지면 해당 인덱스의 파일을 이동합니다."""
+        image_to_move_path = None
+        image_to_move_index = -1
+
+        # 1. 이동할 파일 경로와 인덱스 결정
+        if specific_index is not None and 0 <= specific_index < len(self.image_files):
+             image_to_move_path = self.image_files[specific_index]
+             image_to_move_index = specific_index
+        elif self.image_B_path: # 우클릭 메뉴 등 인덱스 없이 호출된 경우
+             image_to_move_path = self.image_B_path
+             try:
+                 image_to_move_index = self.image_files.index(image_to_move_path)
+             except ValueError:
+                 logging.error(f"B 캔버스 이미지({image_to_move_path.name})가 메인 리스트에 없습니다.")
+                 image_to_move_index = -1
+        
+        if not image_to_move_path:
+            logging.warning("B 패널에서 이동할 이미지를 찾을 수 없습니다.")
+            return
+        
+        target_folder = self.target_folders[folder_index]
+        if not target_folder or not os.path.isdir(target_folder):
+            self.show_themed_message_box(QMessageBox.Warning, "경고", "유효하지 않은 폴더입니다.")
+            return
+
+        # 2. 파일 이동 실행 (Undo/Redo를 위한 정보 수집 포함)
+        moved_jpg_path = None
+        moved_raw_path = None
+        raw_path_before_move = None
+        
+        try:
+            moved_jpg_path = self.move_file(image_to_move_path, target_folder)
+            if moved_jpg_path is None:
+                self.show_themed_message_box(QMessageBox.Critical, "에러", f"파일 이동 중 오류 발생: {image_to_move_path.name}")
+                return
+
+            raw_moved_successfully = True
+            if self.move_raw_files:
+                base_name = image_to_move_path.stem
+                if base_name in self.raw_files:
+                    raw_path_before_move = self.raw_files[base_name]
+                    moved_raw_path = self.move_file(raw_path_before_move, target_folder)
+                    if moved_raw_path:
+                        del self.raw_files[base_name]
+                    else:
+                        raw_moved_successfully = False
+                        self.show_themed_message_box(QMessageBox.Warning, "경고", f"RAW 파일 이동 실패: {raw_path_before_move.name}")
+
+            # 3. Undo/Redo 히스토리 추가
+            if moved_jpg_path and image_to_move_index != -1:
+                history_entry = {
+                    "jpg_source": str(image_to_move_path),
+                    "jpg_target": str(moved_jpg_path),
+                    "raw_source": str(raw_path_before_move) if raw_path_before_move else None,
+                    "raw_target": str(moved_raw_path) if moved_raw_path and raw_moved_successfully else None,
+                    "index_before_move": image_to_move_index, # 이동된 B 이미지의 인덱스
+                    "a_index_before_move": self.current_image_index, # <<< 추가: 당시 A 이미지의 인덱스
+                    "mode": "CompareB"
+                }
+                self.add_move_history(history_entry)
+
+            # 4. B 패널 UI 초기화
+            self.image_B_path = None
+            self.original_pixmap_B = None
+            self.image_label_B.clear()
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+            
+            # 5. 메인 파일 리스트에서 제거 및 A 패널 업데이트
+            if image_to_move_index != -1:
+                self.image_files.pop(image_to_move_index)
+                
+                # 만약 이동한 파일이 A 패널에도 보이고 있었다면 A 패널도 업데이트
+                if image_to_move_index == self.current_image_index:
+                    if not self.image_files:
+                        self.current_image_index = -1
+                    elif self.current_image_index >= len(self.image_files):
+                        self.current_image_index = len(self.image_files) - 1
+                    
+                    self.display_current_image()
+                # A 패널의 인덱스가 이동한 파일보다 뒤에 있었다면 인덱스 조정
+                elif image_to_move_index < self.current_image_index:
+                    self.current_image_index -= 1
+            
+            # 6. 썸네일 패널 및 카운터 업데이트
+            self.thumbnail_panel.set_image_files(self.image_files)
+            self.update_thumbnail_current_index()
+            self.update_counters()
+
+        except Exception as e:
+            logging.error(f"B 패널 이미지 이동 중 예외 발생: {e}")
+            self.show_themed_message_box(QMessageBox.Critical, "에러", f"파일 이동 중 오류 발생: {str(e)}")
+
+    def show_context_menu_for_B(self, pos):
+        if not self.image_B_path:
+            return
+
+        context_menu = QMenu(self)
+        context_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {ThemeManager.get_color('bg_secondary')};
+                color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 2px;
+            }}
+            QMenu::item {{
+                padding: 8px 16px;
+                background-color: transparent;
+            }}
+            QMenu::item:selected {{
+                background-color: {ThemeManager.get_color('accent')};
+                color: {ThemeManager.get_color('text')};
+            }}
+        """)
+        
+        # <<< 로직을 create_context_menu와 동일하게 수정 >>>
+        for i in range(self.folder_count):
+            folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
+            
+            if folder_path and os.path.isdir(folder_path):
+                folder_name = Path(folder_path).name
+                menu_text = LanguageManager.translate("이동 - 폴더 {0} [{1}]").format(i + 1, folder_name)
+            else:
+                menu_text = LanguageManager.translate("이동 - 폴더 {0}").format(i + 1)
+                
+            action = QAction(menu_text, self)
+            action.triggered.connect(lambda checked, idx=i: self.move_image_B_to_folder(idx))
+            
+            # 폴더가 지정되지 않았거나 유효하지 않으면 비활성화
+            if not folder_path or not os.path.isdir(folder_path):
+                action.setEnabled(False)
+                
+            context_menu.addAction(action)
+
+        context_menu.exec_(self.image_container_B.mapToGlobal(pos))
+
+    def _sync_viewports(self):
+            """A와 B 캔버스의 스크롤 위치 및 이미지 위치를 동기화합니다."""
+            if not self.compare_mode_active or not self.original_pixmap_B:
+                return
+
+            # 1. 스크롤바 위치 동기화 (스크롤바가 있는 경우)
+            v_scroll_A = self.scroll_area.verticalScrollBar()
+            h_scroll_A = self.scroll_area.horizontalScrollBar()
+            v_scroll_B = self.scroll_area_B.verticalScrollBar()
+            h_scroll_B = self.scroll_area_B.horizontalScrollBar()
+            
+            # A의 스크롤바 값을 B에 그대로 설정
+            if v_scroll_A.value() != v_scroll_B.value():
+                v_scroll_B.setValue(v_scroll_A.value())
+            if h_scroll_A.value() != h_scroll_B.value():
+                h_scroll_B.setValue(h_scroll_A.value())
+                
+            # 2. 이미지 라벨 위치 동기화 (패닝 시)
+            pos_A = self.image_label.pos()
+            pos_B = self.image_label_B.pos()
+            
+            if pos_A != pos_B:
+                self.image_label_B.move(pos_A)
+
+
+    def canvas_B_dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text().startswith("thumbnail_drag:"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def canvas_B_dropEvent(self, event):
+        mime_text = event.mimeData().text()
+        if mime_text.startswith("thumbnail_drag:"):
+            try:
+                index = int(mime_text.split(":")[1])
+                if 0 <= index < len(self.image_files):
+                    self.image_B_path = self.image_files[index]
+                    self.original_pixmap_B = self.image_loader.load_image_with_orientation(str(self.image_B_path))
+                    
+                    if self.original_pixmap_B and not self.original_pixmap_B.isNull():
+                        self.image_label_B.setText("") # 안내 문구 제거
+                        self._apply_zoom_to_canvas('B') # B 캔버스에 줌/뷰포트 적용
+                        self.update_compare_filenames()
+                    else:
+                        self.image_B_path = None
+                        self.original_pixmap_B = None
+                        self.image_label_B.setText("이미지 로드 실패")
+                event.acceptProposedAction()
+            except (ValueError, IndexError) as e:
+                logging.error(f"B 패널 드롭 오류: {e}")
+                event.ignore()
+        else:
+            event.ignore()
 
     def _show_first_raw_decode_progress(self):
         """첫 RAW 파일 디코딩 시 진행률 대화상자를 표시합니다."""
@@ -6233,6 +6611,7 @@ class PhotoSortApp(QMainWindow):
 
         if current_pos.x() != final_x or current_pos.y() != final_y:
             self.image_label.move(int(final_x), int(final_y))
+            self._sync_viewports()
             if self.minimap_visible and self.minimap_widget.isVisible():
                 self.update_minimap()
 
@@ -8071,12 +8450,19 @@ class PhotoSortApp(QMainWindow):
                 self.splitter.addWidget(self.image_panel)
     
     def resizeEvent(self, event):
-        """창 크기 변경 이벤트 처리"""
-        super().resizeEvent(event)
-        self.adjust_layout()
-        
-        # 미니맵 위치도 업데이트
-        self.update_minimap_position()
+            """창 크기 변경 이벤트 처리"""
+            super().resizeEvent(event)
+            self.adjust_layout()
+            self.update_minimap_position()
+            
+            # 비교 모드 닫기 버튼 위치 업데이트
+            if self.compare_mode_active and self.close_compare_button.isVisible():
+                padding = 10
+                btn_size = self.close_compare_button.width()
+                # B 캔버스(scroll_area_B)의 우측 상단에 위치
+                new_x = self.scroll_area_B.width() - btn_size - padding
+                new_y = padding
+                self.close_compare_button.move(new_x, new_y)
     
     def load_jpg_folder(self):
         """JPG 등 이미지 파일이 있는 폴더 선택 및 로드"""
@@ -8279,230 +8665,235 @@ class PhotoSortApp(QMainWindow):
         """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (캐시 활용)"""
         return self.image_loader.load_image_with_orientation(file_path)
 
-
-
-    def apply_zoom_to_image(self):
-        if self.grid_mode != "Off": return # Grid 모드에서는 이 함수 사용 안 함
-        if not self.original_pixmap:
-            logging.debug("apply_zoom_to_image: original_pixmap 없음. 아무것도 하지 않음.")
-            # 이미지가 없으면 Fit 모드처럼 빈 화면을 중앙에 표시하거나,
-            # 아예 아무 작업도 하지 않도록 여기서 명확히 return.
-            # display_current_image에서 original_pixmap이 없으면 이미 빈 화면 처리함.
+    def _apply_zoom_to_canvas(self, canvas_id):
+        """지정된 캔버스(A 또는 B)에 현재 줌 모드와 뷰포트를 적용합니다."""
+        # 1. canvas_id에 따라 사용할 위젯과 데이터 소스를 결정합니다.
+        if canvas_id == 'A':
+            scroll_area = self.scroll_area
+            image_label = self.image_label
+            image_container = self.image_container
+            original_pixmap = self.original_pixmap
+        elif canvas_id == 'B':
+            scroll_area = self.scroll_area_B
+            image_label = self.image_label_B
+            image_container = self.image_container_B
+            original_pixmap = self.original_pixmap_B
+        else:
             return
 
-        view_width = self.scroll_area.width(); view_height = self.scroll_area.height()
-        img_width_orig = self.original_pixmap.width(); img_height_orig = self.original_pixmap.height()
-        
-        # 현재 이미지의 방향 ("landscape" 또는 "portrait") - self.current_image_orientation은 이미 설정되어 있어야 함
-        image_orientation_type = self.current_image_orientation 
-        if not image_orientation_type: # 비정상 상황
-            logging.warning("apply_zoom_to_image: current_image_orientation이 설정되지 않음!")
-            image_orientation_type = "landscape" # 기본값
-
-        # 1. Fit 모드 처리
-        if self.zoom_mode == "Fit":
-            # Fit으로 변경될 때, 이전 100/200 상태의 "활성" 포커스를 해당 "방향 타입"의 고유 포커스로 저장
-            if hasattr(self, 'current_active_zoom_level') and self.current_active_zoom_level in ["100%", "Spin"]:
-                self._save_orientation_viewport_focus(
-                    image_orientation_type, # 현재 이미지의 방향에
-                    self.current_active_rel_center, # 현재 활성 중심을
-                    self.current_active_zoom_level  # 현재 활성 줌 레벨로 저장
-                )
+        # 2. 원본 이미지가 없으면 캔버스를 비우고 종료합니다.
+        if not original_pixmap or original_pixmap.isNull():
+            image_label.clear()
+            image_label.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.") if canvas_id == 'B' else "")
+            return
             
-            # ... (Fit 모드 표시 로직) ...
-            scaled_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-            self.image_label.setPixmap(scaled_pixmap);
-            self.image_label.setGeometry(
+        # 3. 기존 apply_zoom_to_image의 로직을 그대로 가져와서,
+        #    self.xxx 대신 지역 변수(scroll_area, image_label 등)를 사용하도록 수정합니다.
+        view_width = scroll_area.width()
+        view_height = scroll_area.height()
+        img_width_orig = original_pixmap.width()
+        img_height_orig = original_pixmap.height()
+        
+        # Fit 모드 처리
+        if self.zoom_mode == "Fit":
+            # Fit 모드에서는 각 캔버스가 자신의 크기에 맞게 이미지를 조정합니다.
+            scaled_pixmap = self.high_quality_resize_to_fit(original_pixmap, scroll_area)
+            image_label.setPixmap(scaled_pixmap)
+            image_label.setGeometry(
                 (view_width - scaled_pixmap.width()) // 2, (view_height - scaled_pixmap.height()) // 2,
                 scaled_pixmap.width(), scaled_pixmap.height()
             )
-            self.image_container.setMinimumSize(1, 1)
+            image_container.setMinimumSize(1, 1)
+            return # Fit 모드는 여기서 종료
 
-            self.current_active_zoom_level = "Fit"
-            self.current_active_rel_center = QPointF(0.5, 0.5)
-            self.zoom_change_trigger = None
-            if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
-            return
-
-        # 2. Zoom 100% 또는 Spin 처리
+        # Zoom 100% 또는 Spin 모드 처리
         if self.zoom_mode == "100%":
             new_zoom_factor = 1.0
         elif self.zoom_mode == "Spin":
             new_zoom_factor = self.zoom_spin_value
-        else: # 예외 처리
+        else:
             return
             
         new_zoomed_width = img_width_orig * new_zoom_factor
         new_zoomed_height = img_height_orig * new_zoom_factor
-        
-        final_target_rel_center = QPointF(0.5, 0.5) # 기본값
-        trigger = self.zoom_change_trigger 
 
-        if trigger == "double_click":
-            # ... (더블클릭 시 final_target_rel_center 계산 로직 - 이전과 동일) ...
-            scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
-            fit_img_rect = QRect((view_width - scaled_fit_pixmap.width()) // 2, (view_height - scaled_fit_pixmap.height()) // 2, scaled_fit_pixmap.width(), scaled_fit_pixmap.height())
-            if fit_img_rect.width() > 0 and fit_img_rect.height() > 0:
-                rel_x = (self.double_click_pos.x() - fit_img_rect.x()) / fit_img_rect.width()
-                rel_y = (self.double_click_pos.y() - fit_img_rect.y()) / fit_img_rect.height()
-                final_target_rel_center = QPointF(max(0.0, min(1.0, rel_x)), max(0.0, min(1.0, rel_y)))
+        # B 캔버스는 항상 A 캔버스의 뷰포트를 따라가므로, 뷰포트 계산은 A 캔버스에서만 수행합니다.
+        if canvas_id == 'A':
+            final_target_rel_center = QPointF(0.5, 0.5)
+            trigger = self.zoom_change_trigger
+            image_orientation_type = self.current_image_orientation
+            # ... (기존 apply_zoom_to_image의 뷰포트 계산 로직 전체) ...
+            if trigger == "double_click":
+                scaled_fit_pixmap = self.high_quality_resize_to_fit(original_pixmap, scroll_area)
+                fit_img_rect = QRect((view_width - scaled_fit_pixmap.width()) // 2, (view_height - scaled_fit_pixmap.height()) // 2, scaled_fit_pixmap.width(), scaled_fit_pixmap.height())
+                if fit_img_rect.width() > 0 and fit_img_rect.height() > 0:
+                    rel_x = (self.double_click_pos.x() - fit_img_rect.x()) / fit_img_rect.width()
+                    rel_y = (self.double_click_pos.y() - fit_img_rect.y()) / fit_img_rect.height()
+                    final_target_rel_center = QPointF(max(0.0, min(1.0, rel_x)), max(0.0, min(1.0, rel_y)))
+                self.current_active_rel_center = final_target_rel_center
+                self.current_active_zoom_level = "100%"
+                self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, "100%")
+            elif trigger in ["space_key_to_zoom", "radio_button", "photo_change_carry_over_focus", "photo_change_central_focus"]:
+                 final_target_rel_center = self.current_active_rel_center
+                 self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+            else:
+                final_target_rel_center, new_active_zoom = self._get_orientation_viewport_focus(image_orientation_type, self.zoom_mode)
+                self.current_active_rel_center = final_target_rel_center
+                self.current_active_zoom_level = new_active_zoom
+                self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, self.current_active_zoom_level)
+
+            target_abs_x = final_target_rel_center.x() * new_zoomed_width
+            target_abs_y = final_target_rel_center.y() * new_zoomed_height
+            new_x = view_width / 2 - target_abs_x
+            new_y = view_height / 2 - target_abs_y
             
-            # 더블클릭으로 설정된 이 중심을 현재 "활성" 포커스로, 그리고 "방향 타입"의 고유 포커스로 업데이트
-            self.current_active_rel_center = final_target_rel_center
-            self.current_active_zoom_level = "100%" # 더블클릭은 항상 100%
-            self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, "100%")
+            if new_zoomed_width <= view_width: new_x = (view_width - new_zoomed_width) // 2
+            else: new_x = min(0, max(view_width - new_zoomed_width, new_x))
+            if new_zoomed_height <= view_height: new_y = (view_height - new_zoomed_height) // 2
+            else: new_y = min(0, max(view_height - new_zoomed_height, new_y))
+
+            # 계산된 위치를 image_label에 적용
+            if self.zoom_mode == "100%":
+                image_label.setPixmap(original_pixmap)
+            else: # Spin 모드
+                scaled_pixmap = original_pixmap.scaled(
+                    int(new_zoomed_width), int(new_zoomed_height), 
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                image_label.setPixmap(scaled_pixmap)
+            image_label.setGeometry(int(new_x), int(new_y), int(new_zoomed_width), int(new_zoomed_height))
+            image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
+            self.zoom_change_trigger = None
         
-        elif trigger == "space_key_to_zoom" or trigger == "radio_button":
-            # Fit -> 100%/200% 또는 100% <-> 200%
-            # self.current_active_rel_center 와 self.current_active_zoom_level은 호출 전에 이미
-            # _get_orientation_viewport_focus 등을 통해 "방향 타입"에 저장된 값 또는 기본값으로 설정되어 있어야 함.
-            final_target_rel_center = self.current_active_rel_center
-            # 이 새 활성 포커스를 "방향 타입"의 고유 포커스로 저장 (주로 zoom_level 업데이트 목적)
-            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+        # B 캔버스는 A 캔버스와 동일한 줌/패닝을 적용받습니다.
+        elif canvas_id == 'B':
+            # A 캔버스의 현재 뷰포트 정보를 가져옵니다.
+            pos_A = self.image_label.pos()
+            
+            # B 캔버스에 동일한 줌을 적용합니다.
+            if self.zoom_mode == "100%":
+                image_label.setPixmap(original_pixmap)
+            else: # Spin 모드
+                scaled_pixmap = original_pixmap.scaled(
+                    int(new_zoomed_width), int(new_zoomed_height), 
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+                image_label.setPixmap(scaled_pixmap)
+            
+            # A 캔버스와 동일한 위치 및 크기로 설정합니다.
+            image_label.setGeometry(pos_A.x(), pos_A.y(), int(new_zoomed_width), int(new_zoomed_height))
+            image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
 
-        elif trigger == "photo_change_carry_over_focus":
-            # 사진 변경 (방향 동일), 이전 "활성" 포커스 이어받기
-            # _on_image_loaded_for_display에서 self.current_active_...가 이미 이전 사진의 것으로 설정됨.
-            final_target_rel_center = self.current_active_rel_center
-            # 이 이어받은 포커스를 새 사진의 "방향 타입" 고유 포커스로 저장 (덮어쓰기)
-            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+    def apply_zoom_to_image(self):
+        """A 캔버스에 줌을 적용하고, 비교 모드이면 B 캔버스도 동기화하는 래퍼 함수."""
+        if self.grid_mode != "Off": return
         
-        elif trigger == "photo_change_central_focus":
-            # 사진 변경 (방향 다름 등), 중앙 포커스
-            # _on_image_loaded_for_display에서 self.current_active_...가 (0.5,0.5) 및 이전 줌으로 설정됨.
-            final_target_rel_center = self.current_active_rel_center # 이미 (0.5, 0.5)
-            # 이 중앙 포커스를 새 사진의 "방향 타입" 고유 포커스로 저장
-            self._save_orientation_viewport_focus(image_orientation_type, final_target_rel_center, self.current_active_zoom_level)
+        # 1. A 캔버스에 줌/뷰포트 적용
+        self._apply_zoom_to_canvas('A')
         
-        else: # 명시적 트리거 없는 경우 (예: 앱 첫 실행 후 첫 이미지 확대)
-              # 현재 이미지 방향 타입에 저장된 포커스 사용, 없으면 중앙
-            final_target_rel_center, new_active_zoom = self._get_orientation_viewport_focus(image_orientation_type, self.zoom_mode)
-            self.current_active_rel_center = final_target_rel_center
-            self.current_active_zoom_level = new_active_zoom # 요청된 줌 레벨로 활성 줌 업데이트
-            # 이 포커스를 현재 "방향 타입"의 고유 포커스로 저장 (없었다면 새로 저장, 있었다면 zoom_level 업데이트)
-            self._save_orientation_viewport_focus(image_orientation_type, self.current_active_rel_center, self.current_active_zoom_level)
+        # 2. 비교 모드가 활성화되어 있으면 B 캔버스도 업데이트
+        if self.compare_mode_active:
+            self._apply_zoom_to_canvas('B')
+            # 스크롤바 위치도 동기화
+            self._sync_viewports()
+        
+        # 3. 미니맵 업데이트 (A 캔버스 기준)
+        if self.minimap_toggle.isChecked():
+            self.toggle_minimap(True)
 
-        # --- final_target_rel_center를 기준으로 새 뷰포트 위치 계산 및 적용 ---
-        # ... (이하 위치 계산 및 이미지 설정 로직 - 이전 답변과 동일하게 유지) ...
-        target_abs_x = final_target_rel_center.x() * new_zoomed_width; target_abs_y = final_target_rel_center.y() * new_zoomed_height
-        new_x = view_width / 2 - target_abs_x; new_y = view_height / 2 - target_abs_y
-        if new_zoomed_width <= view_width: new_x = (view_width - new_zoomed_width) // 2
-        else: new_x = min(0, max(view_width - new_zoomed_width, new_x))
-        if new_zoomed_height <= view_height: new_y = (view_height - new_zoomed_height) // 2
-        else: new_y = min(0, max(view_height - new_zoomed_height, new_y))
-
-        if self.zoom_mode == "100%":
-            self.image_label.setPixmap(self.original_pixmap)
-        else: # Spin 모드
-            scaled_pixmap = self.original_pixmap.scaled(
-                int(new_zoomed_width), int(new_zoomed_height), 
-                Qt.KeepAspectRatio, Qt.SmoothTransformation
-            )
-            self.image_label.setPixmap(scaled_pixmap)
-        self.image_label.setGeometry(int(new_x), int(new_y), int(new_zoomed_width), int(new_zoomed_height))
-        self.image_container.setMinimumSize(int(new_zoomed_width), int(new_zoomed_height))
-
-        self.zoom_change_trigger = None 
-        if self.minimap_toggle.isChecked(): self.toggle_minimap(True)
-
-
-    def high_quality_resize_to_fit(self, pixmap):
-        """고품질 이미지 리사이징 (Fit 모드용) - 메모리 최적화"""
-        if not pixmap:
-            return pixmap
+    def high_quality_resize_to_fit(self, pixmap, target_widget):
+            """고품질 이미지 리사이징 (Fit 모드용) - 메모리 최적화"""
+            if not pixmap or not target_widget:
+                return pixmap
                 
-        # 이미지 패널 크기 가져오기
-        panel_width = self.image_panel.width()
-        panel_height = self.image_panel.height()
-        
-        if panel_width <= 0 or panel_height <= 0:
-            return pixmap
-        
-        # 크기가 같다면 캐시 확인
-        current_size = (panel_width, panel_height)
-        if self.last_fit_size == current_size and current_size in self.fit_pixmap_cache:
-            return self.fit_pixmap_cache[current_size]
-        
-        # 이미지 크기
-        img_width = pixmap.width()
-        img_height = pixmap.height()
-        
-        # 이미지가 패널보다 크면 Qt의 네이티브 하드웨어 가속 렌더링을 사용한 리사이징
-        if img_width > panel_width or img_height > panel_height:
-            # 비율 계산
-            ratio_w = panel_width / img_width
-            ratio_h = panel_height / img_height
-            ratio = min(ratio_w, ratio_h)
+            # 이미지 패널 크기 가져오기
+            panel_width = target_widget.width()
+            panel_height = target_widget.height()
+
+            if panel_width <= 0 or panel_height <= 0:
+                return pixmap
+                
+            # 크기가 같다면 캐시 확인 (캐시 키는 이제 튜플 (너비, 높이) 사용)
+            current_size = (panel_width, panel_height)
+            # Fit 캐시는 A 패널 전용으로 유지하는 것이 간단합니다. B는 A의 결과를 따르기 때문입니다.
+            if target_widget is self.scroll_area and self.last_fit_size == current_size and current_size in self.fit_pixmap_cache:
+                return self.fit_pixmap_cache[current_size]
+                
+            # 이미지 크기
+            img_width = pixmap.width()
+            img_height = pixmap.height()
             
-            # 새 크기 계산
-            new_width = int(img_width * ratio)
-            new_height = int(img_height * ratio)
-            
-            # 메모리 사용량 확인 (가능한 경우)
-            large_image_threshold = 20000000  # 약 20MB (원본 크기가 큰 이미지)
-            estimated_size = new_width * new_height * 4  # 4 바이트/픽셀 (RGBA)
-            
-            if img_width * img_height > large_image_threshold:
-                # 대형 이미지는 메모리 최적화를 위해 단계적 축소
-                try:
-                    # 단계적으로 줄이는 방법 (품질 유지하면서 메모리 사용량 감소)
-                    if ratio < 0.3:  # 크게 축소해야 하는 경우
-                        # 중간 크기로 먼저 축소
-                        temp_ratio = ratio * 2 if ratio * 2 < 0.8 else 0.8
-                        temp_width = int(img_width * temp_ratio)
-                        temp_height = int(img_height * temp_ratio)
-                        
-                        # 중간 크기로 먼저 변환
-                        temp_pixmap = pixmap.scaled(
-                            temp_width, 
-                            temp_height,
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation
-                        )
-                        
-                        # 최종 크기로 변환
-                        result_pixmap = temp_pixmap.scaled(
-                            new_width,
-                            new_height,
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation
-                        )
-                        
-                        # 중간 결과 명시적 해제
-                        temp_pixmap = None
-                    else:
-                        # 한 번에 최종 크기로 변환
+            # 이미지가 패널보다 크면 Qt의 네이티브 하드웨어 가속 렌더링을 사용한 리사이징
+            if img_width > panel_width or img_height > panel_height:
+                # 비율 계산
+                ratio_w = panel_width / img_width
+                ratio_h = panel_height / img_height
+                ratio = min(ratio_w, ratio_h)
+                # 새 크기 계산
+                new_width = int(img_width * ratio)
+                new_height = int(img_height * ratio)
+                
+                # 메모리 사용량 확인 (가능한 경우)
+                large_image_threshold = 20000000  # 약 20MB (원본 크기가 큰 이미지)
+                estimated_size = new_width * new_height * 4  # 4 바이트/픽셀 (RGBA)
+                
+                if img_width * img_height > large_image_threshold:
+                    # 대형 이미지는 메모리 최적화를 위해 단계적 축소
+                    try:
+                        # 단계적으로 줄이는 방법 (품질 유지하면서 메모리 사용량 감소)
+                        if ratio < 0.3:  # 크게 축소해야 하는 경우
+                            # 중간 크기로 먼저 축소
+                            temp_ratio = ratio * 2 if ratio * 2 < 0.8 else 0.8
+                            temp_width = int(img_width * temp_ratio)
+                            temp_height = int(img_height * temp_ratio)
+                            # 중간 크기로 먼저 변환
+                            temp_pixmap = pixmap.scaled(
+                                temp_width, 
+                                temp_height,
+                                Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation
+                            )
+                            # 최종 크기로 변환
+                            result_pixmap = temp_pixmap.scaled(
+                                new_width,
+                                new_height,
+                                Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation
+                            )
+                            # 중간 결과 명시적 해제
+                            temp_pixmap = None
+                        else:
+                            # 한 번에 최종 크기로 변환
+                            result_pixmap = pixmap.scaled(
+                                new_width,
+                                new_height,
+                                Qt.KeepAspectRatio, 
+                                Qt.SmoothTransformation
+                            )
+                    except:
+                        # 오류 발생 시 기본 방식으로 축소
                         result_pixmap = pixmap.scaled(
                             new_width,
                             new_height,
                             Qt.KeepAspectRatio, 
-                            Qt.SmoothTransformation
+                            Qt.FastTransformation  # 메모리 부족 시 빠른 변환 사용
                         )
-                except:
-                    # 오류 발생 시 기본 방식으로 축소
+                else:
+                    # 일반 크기 이미지는 고품질 변환 사용
                     result_pixmap = pixmap.scaled(
-                        new_width,
-                        new_height,
+                        new_width, 
+                        new_height, 
                         Qt.KeepAspectRatio, 
-                        Qt.FastTransformation  # 메모리 부족 시 빠른 변환 사용
+                        Qt.SmoothTransformation
                     )
-            else:
-                # 일반 크기 이미지는 고품질 변환 사용
-                result_pixmap = pixmap.scaled(
-                    new_width, 
-                    new_height, 
-                    Qt.KeepAspectRatio, 
-                    Qt.SmoothTransformation
-                )
+                # 캐시 업데이트 (A 패널에 대해서만)
+                if target_widget is self.scroll_area:
+                    self.fit_pixmap_cache[current_size] = result_pixmap
+                    self.last_fit_size = current_size
+                return result_pixmap
                 
-            # 캐시 업데이트
-            self.fit_pixmap_cache[current_size] = result_pixmap
-            self.last_fit_size = current_size
-            
-            return result_pixmap
-        
-        # 이미지가 패널보다 작으면 원본 사용
-        return pixmap
+            # 이미지가 패널보다 작으면 원본 사용
+            return pixmap
     
     def image_mouse_press_event(self, event):
         """이미지 영역 마우스 클릭 이벤트 처리"""
@@ -8570,107 +8961,72 @@ class PhotoSortApp(QMainWindow):
                 LanguageManager.translate("폴더 선택 중 오류가 발생했습니다.")
             )
     
-    def start_image_drag(self, dragged_grid_index=None):
-        """이미지 드래그 시작 (Grid 모드에서는 드래그된 셀의 인덱스 전달)"""
+    def start_image_drag(self, dragged_grid_index=None, canvas=None):
+        """이미지 드래그 시작 (A, B 캔버스 및 그리드 지원)"""
         try:
-            # 현재 이미지 정보 확인
             if not self.image_files:
                 logging.warning("드래그 시작 실패: 유효한 이미지가 없음")
                 return
-            
-            # 드래그할 이미지 인덱스 결정
-            if self.grid_mode == "Off":
-                # Grid Off 모드: 현재 이미지 인덱스 사용
-                if (self.current_image_index < 0 or 
-                    self.current_image_index >= len(self.image_files)):
-                    logging.warning("드래그 시작 실패: 유효한 이미지가 없음")
-                    return
-                drag_image_index = self.current_image_index
-                current_image_path = self.image_files[self.current_image_index]
-            else:
-                # Grid 모드: 드래그된 셀의 이미지 인덱스 사용
+
+            drag_image_path = None
+            mime_text_payload = ""
+            drag_pixmap_source = None
+
+            if self.grid_mode != "Off":
+                # Grid 모드에서 드래그 시작
+                drag_image_index = -1
                 if dragged_grid_index is not None:
-                    # 드래그된 특정 셀의 인덱스 사용
                     drag_image_index = self.grid_page_start_index + dragged_grid_index
-                else:
-                    # 현재 선택된 그리드 셀 사용 (fallback)
+                else: # Fallback
                     drag_image_index = self.grid_page_start_index + self.current_grid_index
                 
-                if drag_image_index < 0 or drag_image_index >= len(self.image_files):
+                if not (0 <= drag_image_index < len(self.image_files)):
                     logging.warning("드래그 시작 실패: 유효하지 않은 그리드 인덱스")
                     return
-                    
-                current_image_path = self.image_files[drag_image_index]
-            
-            # QDrag 객체 생성
+                
+                drag_image_path = self.image_files[drag_image_index]
+                drag_pixmap_source = self.image_loader.cache.get(str(drag_image_path))
+
+                # 다중 선택 여부 확인
+                if (hasattr(self, 'selected_grid_indices') and self.selected_grid_indices and 
+                    len(self.selected_grid_indices) > 1 and 
+                    (dragged_grid_index in self.selected_grid_indices)):
+                    # 다중 선택된 이미지를 드래그하는 경우
+                    selected_global_indices = sorted([self.grid_page_start_index + i for i in self.selected_grid_indices])
+                    indices_str = ",".join(map(str, selected_global_indices))
+                    mime_text_payload = f"image_drag:grid:{indices_str}"
+                    logging.info(f"다중 이미지 드래그 시작: {len(selected_global_indices)}개 이미지")
+                else:
+                    # 단일 이미지 드래그
+                    mime_text_payload = f"image_drag:grid:{drag_image_index}"
+
+            else: # canvas == 'A' 또는 기본값 (Grid Off 모드)
+                if not (0 <= self.current_image_index < len(self.image_files)):
+                    return
+                drag_image_path = self.image_files[self.current_image_index]
+                drag_pixmap_source = self.original_pixmap
+                mime_text_payload = f"image_drag:off:{self.current_image_index}"
+
+            if not drag_image_path or not mime_text_payload:
+                logging.warning("드래그할 이미지를 결정할 수 없습니다.")
+                return
+
+            # 2. QDrag 객체 생성 및 데이터 설정
             drag = QDrag(self)
             mime_data = QMimeData()
-            
-            # 드래그 데이터 설정
-            if self.grid_mode == "Off":
-                # Grid Off 모드: 현재 이미지 인덱스 전달
-                mime_data.setText(f"image_drag:off:{drag_image_index}")
-            else:
-                # Grid 모드: 선택된 이미지들의 전역 인덱스 전달
-                if (hasattr(self, 'selected_grid_indices') and 
-                    self.selected_grid_indices and 
-                    len(self.selected_grid_indices) > 1):
-                    
-                    # 다중 선택된 경우: 선택된 모든 이미지의 전역 인덱스를 전달
-                    selected_global_indices = []
-                    for grid_idx in sorted(self.selected_grid_indices):
-                        global_idx = self.grid_page_start_index + grid_idx
-                        if 0 <= global_idx < len(self.image_files):
-                            selected_global_indices.append(global_idx)
-                    
-                    if selected_global_indices:
-                        indices_str = ",".join(map(str, selected_global_indices))
-                        mime_data.setText(f"image_drag:grid:{indices_str}")
-                        logging.info(f"다중 이미지 드래그 시작: {len(selected_global_indices)}개 이미지")
-                    else:
-                        # 선택된 이미지가 유효하지 않으면 단일 이미지로 처리
-                        mime_data.setText(f"image_drag:grid:{drag_image_index}")
-                else:
-                    # 단일 선택이거나 선택이 없는 경우: 드래그된 이미지만 전달
-                    mime_data.setText(f"image_drag:grid:{drag_image_index}")
-            
+            mime_data.setText(mime_text_payload)
             drag.setMimeData(mime_data)
             
-            # 드래그 커서 설정 (드래그된 이미지의 썸네일 사용)
-            thumbnail_pixmap = None
-            
-            # 드래그된 이미지의 썸네일 생성 시도
-            if self.grid_mode == "Off":
-                # Grid Off 모드: original_pixmap 사용
-                if self.original_pixmap and not self.original_pixmap.isNull():
-                    thumbnail_pixmap = self.original_pixmap
-            else:
-                # Grid 모드: 해당 이미지의 캐시된 픽스맵 사용
-                drag_image_path = str(current_image_path)
-                cached_pixmap = self.image_loader.cache.get(drag_image_path)
-                if cached_pixmap and not cached_pixmap.isNull():
-                    thumbnail_pixmap = cached_pixmap
-                else:
-                    # 캐시에 없으면 원본 픽스맵 사용 (fallback)
-                    if self.original_pixmap and not self.original_pixmap.isNull():
-                        thumbnail_pixmap = self.original_pixmap
-            
-            # 썸네일 설정
-            if thumbnail_pixmap and not thumbnail_pixmap.isNull():
-                # 썸네일 생성 (64x64 크기)
-                thumbnail = thumbnail_pixmap.scaled(
-                    64, 64, 
-                    Qt.KeepAspectRatio, 
-                    Qt.SmoothTransformation
-                )
+            # 3. 드래그 커서 이미지 설정
+            if drag_pixmap_source and not drag_pixmap_source.isNull():
+                thumbnail = drag_pixmap_source.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 drag.setPixmap(thumbnail)
-                drag.setHotSpot(QPoint(32, 32))  # 드래그 핫스팟을 썸네일 중앙으로
+                drag.setHotSpot(QPoint(32, 32))
+
+            logging.info(f"이미지 드래그 시작: {drag_image_path.name} (from: {mime_text_payload})")
             
-            logging.info(f"이미지 드래그 시작: {current_image_path.name} (모드: {self.grid_mode}, 인덱스: {drag_image_index})")
-            
-            # 드래그 실행
-            drop_action = drag.exec_(Qt.MoveAction)
-            logging.debug(f"드래그 완료: {drop_action}")
+            # 4. 드래그 실행
+            drag.exec_(Qt.MoveAction)
             
         except Exception as e:
             logging.error(f"이미지 드래그 시작 오류: {e}")
@@ -8745,7 +9101,8 @@ class PhotoSortApp(QMainWindow):
             
             # 이미지 위치 업데이트 - 실제 이동만 여기서 진행
             self.image_label.move(int(new_x), int(new_y))
-            
+            self._sync_viewports()
+
             # 미니맵 뷰박스 업데이트 - 패닝 중에는 미니맵 업데이트 빈도 낮추기
             if current_time - getattr(self, 'last_minimap_update_time', 0) > 50:  # 20fps로 제한
                 self.last_minimap_update_time = current_time
@@ -9413,7 +9770,15 @@ class PhotoSortApp(QMainWindow):
             # 캔버스 드래그인 경우 (2단계에서 추가된 기능)
             if drag_data == "image_drag":
                 return self.handle_canvas_to_folder_drop(folder_index)
-            
+            elif drag_data.startswith("image_drag:compareB:"):
+                # B 캔버스에서 드롭된 경우
+                try:
+                    image_index_to_move = int(drag_data.split(":")[-1])
+                    self.move_image_B_to_folder(folder_index, specific_index=image_index_to_move)
+                except (ValueError, IndexError):
+                    logging.error(f"잘못된 B 캔버스 드래그 데이터: {drag_data}")
+                return
+
             # 기존 그리드 드래그 처리 ("image_drag:mode:indices" 형태)
             parts = drag_data.split(":")
             if len(parts) < 3 or parts[0] != "image_drag":
@@ -10331,22 +10696,15 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"미니맵 크기 계산 오류: {e}")
     
     def update_minimap_position(self):
-        """미니맵 위치 업데이트"""
+        """미니맵 위치 업데이트 (A 캔버스 기준)"""
         if not self.minimap_visible:
             return
-        
-        # 패딩 설정
         padding = 10
-        
-        # 이미지 패널의 크기 가져오기
-        panel_width = self.image_panel.width()
-        panel_height = self.image_panel.height()
-        
-        # 미니맵 위치 계산 (우측 하단)
+        # 기준을 self.image_panel에서 self.scroll_area로 변경
+        panel_width = self.scroll_area.width()
+        panel_height = self.scroll_area.height()
         minimap_x = panel_width - self.minimap_width - padding
         minimap_y = panel_height - self.minimap_height - padding
-        
-        # 미니맵 위치 설정
         self.minimap_widget.move(minimap_x, minimap_y)
     
     def update_minimap(self):
@@ -10729,6 +11087,10 @@ class PhotoSortApp(QMainWindow):
         grid_on_container.addWidget(self.grid_on_radio)
         grid_on_container.addWidget(self.grid_size_combo)
         grid_layout_h.addLayout(grid_on_container)
+        self.compare_radio = QRadioButton("A | B")
+        self.compare_radio.setStyleSheet(radio_style)
+        self.grid_mode_group.addButton(self.compare_radio, 2) # ID 2: 비교 모드 
+        grid_layout_h.addWidget(self.compare_radio) # <<< 레이아웃에 추가
         grid_layout_h.addStretch()
 
         self.control_layout.addWidget(grid_container)
@@ -10747,76 +11109,153 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addWidget(filename_toggle_container)
 
     def _on_grid_mode_toggled(self, button):
-        """Grid On/Off 라디오 버튼 클릭 시 호출"""
-        is_on = (self.grid_mode_group.id(button) == 1)
-        self.grid_size_combo.setEnabled(is_on)
-
-        new_mode = "Off"
-        if is_on:
-            # Grid를 켤 때, 콤보박스의 현재 값 또는 마지막 활성 모드를 사용
-            combo_text = self.grid_size_combo.currentText().replace(" ", "") # "2x2"
-            new_mode = combo_text if combo_text else self.last_active_grid_mode
+        """Grid On/Off/Compare 라디오 버튼 클릭 시 호출"""
+        button_id = self.grid_mode_group.id(button)
         
-        if self.grid_mode != new_mode:
-            self.grid_mode = new_mode
+        new_compare_active = (button_id == 2)
+        is_grid_on = (button_id == 1)
+        
+        # 1. 새로운 grid_mode 결정
+        new_grid_mode = "Off" # 기본값
+        if is_grid_on:
+            combo_text = self.grid_size_combo.currentText().replace(" ", "")
+            new_grid_mode = combo_text if combo_text else self.last_active_grid_mode
+
+        # 2. 상태 변경이 있는지 확인 후 업데이트
+        if self.compare_mode_active != new_compare_active or self.grid_mode != new_grid_mode:
+            self.compare_mode_active = new_compare_active
+            self.grid_mode = new_grid_mode
+
+            # UI 컨트롤 상태 동기화
+            self.grid_size_combo.setEnabled(is_grid_on)
+
+            # 뷰 업데이트
             self._update_view_for_grid_change()
 
     def _on_grid_size_changed(self, text):
         """Grid 크기 콤보박스 변경 시 호출"""
-        new_mode = text.replace(" ", "") # "2x2"
-        self.last_active_grid_mode = new_mode # 마지막으로 선택한 그리드 모드 저장
+        new_mode = text.replace(" ", "")
+        self.last_active_grid_mode = new_mode
         
+        # <<< 수정: 콤보박스 변경은 항상 Grid On 상태를 의미하도록 함 >>>
+        if not self.grid_on_radio.isChecked():
+            self.grid_on_radio.setChecked(True)
+            # setChecked(True)가 _on_grid_mode_toggled를 호출하므로,
+            # 여기서 grid_mode를 직접 바꾸는 대신 토글 함수에 맡깁니다.
+            # _on_grid_mode_toggled 함수가 올바른 new_mode를 설정할 것입니다.
+            return # _on_grid_mode_toggled가 나머지 처리를 할 것이므로 여기서 종료
+
+        # 이미 Grid On 상태에서 콤보박스만 변경된 경우
         if self.grid_mode != new_mode:
             self.grid_mode = new_mode
-            # 콤보박스가 변경되었다는 것은 Grid가 On 상태임을 의미하므로 라디오 버튼 체크
-            if not self.grid_on_radio.isChecked():
-                self.grid_on_radio.setChecked(True)
             self._update_view_for_grid_change()
 
     def _update_view_for_grid_change(self):
-        """Grid 모드 변경에 따른 공통 UI 업데이트 로직"""
-        logging.debug(f"Grid mode changed to: {self.grid_mode}")
+        """Grid/Compare 모드 변경에 따른 공통 UI 업데이트 로직 (최종 수정)"""
+        logging.debug(f"View change triggered. Target Grid mode: {self.grid_mode}, Compare mode: {self.compare_mode_active}")
         
-        self.update_thumbnail_panel_visibility()
-        
-        if self.grid_mode == "Off":
-            if self.image_files:
-                # Grid On -> Off 전환 시 현재 선택된 셀을 기준으로 이미지 인덱스 설정
-                if self.primary_selected_index != -1:
-                    global_idx = self.primary_selected_index
-                else:
-                    global_idx = self.grid_page_start_index + self.current_grid_index
-                
-                self.current_image_index = global_idx if 0 <= global_idx < len(self.image_files) else 0
+        # 뷰 크기 및 버튼 위치를 업데이트하는 내부 함수
+        def update_ui_after_resize():
+            if self.compare_mode_active:
+                splitter_width = self.view_splitter.width()
+                self.view_splitter.setSizes([splitter_width // 2, splitter_width // 2])
+                padding = 10
+                btn_size = self.close_compare_button.width()
+                new_x = self.scroll_area_B.width() - btn_size - padding
+                new_y = padding
+                self.close_compare_button.move(new_x, new_y)
+                self.close_compare_button.raise_()
             else:
-                self.current_image_index = -1
-            self.force_refresh = True
-        else: # Grid On
+                self.view_splitter.setSizes([self.view_splitter.width(), 0])
+            self.apply_zoom_to_image()
+
+        # 모드에 따른 상태 설정
+        if self.compare_mode_active:
+            self.scroll_area_B.show()
+            self.close_compare_button.show()
+            if not self.image_B_path:
+                self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+            self.grid_mode = "Off"
+        else:
+            self.scroll_area_B.hide()
+            self.close_compare_button.hide()
+            self.image_B_path = None
+            self.original_pixmap_B = None
+            self.image_label_B.clear()
+
+        QTimer.singleShot(10, update_ui_after_resize)
+        self.update_thumbnail_panel_visibility()
+
+        # <<< 핵심 수정: 모드에 따라 인덱스 관리 로직 분리 >>>
+        if self.grid_mode != "Off": # Grid On으로 전환/유지
             if self.zoom_mode != "Fit":
                 self.zoom_mode = "Fit"
                 self.fit_radio.setChecked(True)
-            
-            if self.primary_selected_index != -1:
-                self.current_image_index = self.primary_selected_index
-            # primary_selected_index가 없는 경우에 대한 대비책 (예: 초기 로드)
-            elif self.current_image_index == -1 and self.image_files:
-                 self.current_image_index = self.grid_page_start_index + self.current_grid_index
-
-            # Grid Off -> On 또는 Grid -> Grid 전환 시, current_image_index를 기준으로 페이지 위치 계산
+            # current_image_index를 기준으로 그리드 페이지 계산
             if self.current_image_index != -1:
                 rows, cols = self._get_grid_dimensions()
-                num_cells = rows * cols
-                self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
-                self.current_grid_index = self.current_image_index % num_cells
-            
+                if rows > 0:
+                    num_cells = rows * cols
+                    self.grid_page_start_index = (self.current_image_index // num_cells) * num_cells
+                    self.current_grid_index = self.current_image_index % num_cells
             self.selected_grid_indices.clear()
             self.selected_grid_indices.add(self.current_grid_index)
             self.primary_selected_index = self.grid_page_start_index + self.current_grid_index
             self.last_single_click_index = self.current_grid_index
-
+        else: # Grid Off 또는 Compare 모드로 전환/유지
+            # 현재 self.current_image_index 값을 그대로 유지하는 것이 원칙.
+            # Grid -> Off 전환 시에만 인덱스를 그리드로부터 가져옴.
+            if not self.compare_mode_active: # Compare 모드가 아닐 때만
+                if self.image_files:
+                    # primary_selected_index는 그리드에서만 유효하므로, 여기서 사용
+                    if self.primary_selected_index != -1:
+                        global_idx = self.primary_selected_index
+                        self.current_image_index = global_idx if 0 <= global_idx < len(self.image_files) else 0
+                        self.primary_selected_index = -1 # Grid Off 모드에서는 초기화
+                else:
+                    self.current_image_index = -1
+            self.force_refresh = True
+        
         self.update_grid_view()
         self.update_zoom_radio_buttons_state()
         self.update_counter_layout()
+        self.update_compare_filenames()
+
+    def update_compare_filenames(self):
+        """Compare 모드에서 A, B 캔버스의 파일명 라벨을 업데이트합니다."""
+        # 1. Compare 모드가 아니거나, 파일명 표시 옵션이 꺼져있으면 라벨을 숨기고 종료합니다.
+        if not self.compare_mode_active or not self.show_grid_filenames:
+            self.filename_label_A.hide()
+            self.filename_label_B.hide()
+            return
+
+        padding = UIScaleManager.get("compare_filename_padding", 10)
+
+        # 2. A 캔버스 파일명 라벨 업데이트
+        # A 캔버스에 유효한 이미지가 표시되고 있는지 확인합니다.
+        if self.original_pixmap and 0 <= self.current_image_index < len(self.image_files):
+            # 파일명을 라벨에 설정하고, 내용에 맞게 크기를 조절합니다.
+            self.filename_label_A.setText(self.image_files[self.current_image_index].name)
+            self.filename_label_A.adjustSize()
+            # 좌측 상단에 위치시킵니다.
+            self.filename_label_A.move(padding, padding)
+            # 라벨을 보이게 하고, 다른 위젯 위에 오도록 합니다.
+            self.filename_label_A.show()
+            self.filename_label_A.raise_()
+        else:
+            # 이미지가 없으면 숨깁니다.
+            self.filename_label_A.hide()
+
+        # 3. B 캔버스 파일명 라벨 업데이트
+        # B 캔버스에 이미지가 로드되었는지 확인합니다.
+        if self.image_B_path:
+            self.filename_label_B.setText(self.image_B_path.name)
+            self.filename_label_B.adjustSize()
+            self.filename_label_B.move(padding, padding)
+            self.filename_label_B.show()
+            self.filename_label_B.raise_()
+        else:
+            self.filename_label_B.hide()
 
     def _get_grid_dimensions(self):
         """현재 grid_mode에 맞는 (행, 열)을 반환합니다."""
@@ -11010,126 +11449,94 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"grid_cell_mouse_release_event 오류: {e}")
 
     def update_grid_view(self):
-        """Grid 모드에 따라 이미지 뷰 업데이트 (정리 후 생성 예약 방식)"""
-        # --- 1. 이전 위젯 정리 ---
-        current_widget = self.scroll_area.widget()
-        if current_widget:
-            old_widget = self.scroll_area.takeWidget()
-            # [수정] self.image_container는 영구적인 위젯이므로 절대 삭제하지 않습니다.
-            if old_widget and old_widget is not self.image_container:
-                old_widget.deleteLater()
-            
-        # self.grid_labels는 이제 GridCellWidget 인스턴스를 저장
-        for widget in self.grid_labels:
-            if widget: widget.deleteLater()
-        self.grid_labels.clear()
-        self.grid_layout = None # QGridLayout 참조 해제
+        """Grid 모드에 따라 이미지 뷰를 동기적으로 재구성합니다. (최종 안정화 버전)"""
+        # 1. 모든 관련 비동기 작업을 중단시킵니다.
+        self.image_loader.cancel_loading()
+        if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
+            self.loading_indicator_timer.stop()
 
-        # --- 2. 모드에 따른 처리 ---
+        # 2. scroll_area에서 현재 위젯을 분리합니다.
+        current_view_widget = self.scroll_area.takeWidget()
+
+        # 3. Grid Off 또는 Compare 모드일 경우
         if self.grid_mode == "Off":
-            # Grid Off 모드로 전환 시, image_container를 즉시 설정하고 이미지 표시
+            # 이전에 그리드 뷰가 있었다면 삭제합니다.
+            if current_view_widget and current_view_widget is not self.image_container:
+                current_view_widget.deleteLater()
+            
+            # 영구적인 image_container를 scroll_area에 다시 설정합니다.
             self.scroll_area.setWidget(self.image_container)
-            if getattr(self, 'force_refresh', False):
-                pass
-            else:
-                self.force_refresh = True
+            self.force_refresh = True
             self.display_current_image()
             return
+
+        # 4. Grid On 모드일 경우 (새 그리드 생성)
+        # 이전에 단일 뷰(image_container)가 있었다면, 부모 관계만 끊어 재사용할 수 있도록 보존합니다.
+        if current_view_widget and current_view_widget is self.image_container:
+            current_view_widget.setParent(None)
         
-        # --- 3. Grid On 모드일 경우, 새로운 그리드 생성을 예약 ---
-        QTimer.singleShot(0, self._build_and_display_grid)
+        self.grid_labels.clear()
+        self.grid_layout = None
 
-    def _build_and_display_grid(self):
-        """새로운 그리드 UI를 생성하고 표시합니다. 이벤트 루프의 다음 사이클에서 호출됩니다."""
-        if self.grid_mode == "Off": # 혹시라도 타이머 실행 시점에 모드가 바뀌었으면 중단
-            return
-
+        # 새로운 그리드 UI 구조를 생성합니다.
         rows, cols = self._get_grid_dimensions()
-        if rows == 0:
-            return
+        if rows == 0: return
 
-        num_cells = rows * cols
-        
-        # --- update_grid_view의 후반부 로직을 그대로 가져옵니다 ---
         self.grid_layout = QGridLayout()
         self.grid_layout.setSpacing(0)
         self.grid_layout.setContentsMargins(0, 0, 0, 0)
-        
-        grid_container_widget = QWidget()
+        grid_container_widget = QWidget() # 그리드 뷰는 항상 새로 생성
         grid_container_widget.setLayout(self.grid_layout)
         grid_container_widget.setStyleSheet("background-color: black;")
-        
-        self.scroll_area.setWidget(grid_container_widget)
+        self.scroll_area.setWidget(grid_container_widget) # 새로 만든 그리드를 scroll_area에 설정
         self.scroll_area.setWidgetResizable(True)
-        
+
+        num_cells = rows * cols
+        # ... (이하 그리드 셀을 생성하고 채우는 로직은 이전과 동일) ...
         start_idx = self.grid_page_start_index
         end_idx = min(start_idx + num_cells, len(self.image_files))
         images_to_display = self.image_files[start_idx:end_idx]
-        
+
         if self.current_grid_index >= len(images_to_display) and len(images_to_display) > 0:
              self.current_grid_index = len(images_to_display) - 1
         elif len(images_to_display) == 0:
              self.current_grid_index = 0
-             
+
         for i in range(num_cells):
             row, col = divmod(i, cols)
-            
             cell_widget = GridCellWidget(parent=grid_container_widget)
-            
-            # functools.partial을 사용하여 이벤트 핸들러 설정
             from functools import partial
             cell_widget.mousePressEvent = partial(self.grid_cell_mouse_press_event, widget=cell_widget, index=i)
             cell_widget.mouseMoveEvent = partial(self.grid_cell_mouse_move_event, widget=cell_widget, index=i)
             cell_widget.mouseReleaseEvent = partial(self.grid_cell_mouse_release_event, widget=cell_widget, index=i)
             cell_widget.mouseDoubleClickEvent = partial(self.on_grid_cell_double_clicked, clicked_widget=cell_widget, clicked_index=i)
-
-            current_image_path = None
-            filename_text = ""
+            
             if i < len(images_to_display):
                 current_image_path_obj = images_to_display[i]
                 current_image_path = str(current_image_path_obj)
                 cell_widget.setProperty("image_path", current_image_path)
-                cell_widget.setProperty("loaded", False)
-                if self.show_grid_filenames:
-                    filename = current_image_path_obj.name
-                    if len(filename) > 20:
-                        filename = filename[:10] + "..." + filename[-7:]
-                    filename_text = filename
-                cell_widget.setText(filename_text)
-                cell_widget.setShowFilename(self.show_grid_filenames)
-                cached_original = self.image_loader.cache.get(current_image_path)
-                if cached_original and not cached_original.isNull():
-                    cell_widget.setProperty("original_pixmap_ref", cached_original)
-                    cell_widget.setPixmap(cached_original)
-                    cell_widget.setProperty("loaded", True)
-                else:
-                    cell_widget.setPixmap(self.placeholder_pixmap)
-            else:
-                cell_widget.setPixmap(QPixmap())
-                cell_widget.setText("")
-                cell_widget.setShowFilename(False)
+                cell_widget.setPixmap(self.placeholder_pixmap)
+            
             self.grid_layout.addWidget(cell_widget, row, col)
             self.grid_labels.append(cell_widget)
-        
+
+        # 5. 새로운 UI가 완전히 준비된 후, 새로운 비동기 작업을 시작합니다.
         self.update_grid_selection_border()
         self.update_window_title_with_selection()
         
         self.image_loader.preload_page(self.image_files, self.grid_page_start_index, num_cells, strategy_override="preview")
         
         QTimer.singleShot(0, self.resize_grid_images)
-        
+
         selected_image_list_index_gw = self.grid_page_start_index + self.current_grid_index
         if 0 <= selected_image_list_index_gw < len(self.image_files):
             self.update_file_info_display(str(self.image_files[selected_image_list_index_gw]))
         else:
             self.update_file_info_display(None)
-            
-        self.update_counters()
         
+        self.update_counters()
         if self.grid_mode != "Off" and self.image_files:
             self.state_save_timer.start()
-            logging.debug(f"update_grid_view: Index save timer (re)started for grid (page_start={self.grid_page_start_index}, cell={self.current_grid_index})")
-
 
     def on_filename_toggle_changed(self, checked):
         """그리드 파일명 표시 토글 상태 변경 시 호출"""
@@ -11162,7 +11569,8 @@ class PhotoSortApp(QMainWindow):
                 #    명시적으로 호출하여 확실하게 합니다.
                 #    (GridCellWidget의 setShowFilename, setText 메서드에서 이미 update()를 호출한다면 중복될 수 있으니 확인 필요)
                 cell_widget.update() # paintEvent를 다시 호출하게 함
-
+        elif self.compare_mode_active:
+            self.update_compare_filenames()
 
         # Grid Off 모드에서는 이 설정이 현재 뷰에 직접적인 영향을 주지 않으므로
         # 별도의 즉각적인 뷰 업데이트는 필요하지 않습니다.
@@ -11704,11 +12112,11 @@ class PhotoSortApp(QMainWindow):
         if self.grid_mode == "Off" and self.original_pixmap:
             current_image_path_str = str(self.image_files[self.current_image_index]) if 0 <= self.current_image_index < len(self.image_files) else None
             current_orientation = self.current_image_orientation
-
             if self.zoom_mode == "Fit":
                 self.double_click_pos = event.position().toPoint()
-                
-                scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap)
+                # <<< 수정 시작: target_widget 인자 추가 >>>
+                scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap, self.scroll_area)
+                # <<< 수정 끝 >>>
                 view_width = self.scroll_area.width()
                 view_height = self.scroll_area.height()
                 fit_img_width = scaled_fit_pixmap.width()
@@ -11719,63 +12127,44 @@ class PhotoSortApp(QMainWindow):
                 )
                 click_x_vp = self.double_click_pos.x()
                 click_y_vp = self.double_click_pos.y()
-
                 if fit_img_rect_in_view.contains(int(click_x_vp), int(click_y_vp)):
-                    # [수정] 마지막 활성 줌 모드로 전환
                     target_zoom_mode = self.last_active_zoom_mode
                     logging.debug(f"더블클릭: Fit -> {target_zoom_mode} 요청")
-                    
-                    # 현재 방향 정보 확인
                     current_orientation = self.current_image_orientation
                     if current_orientation:
-                        # 저장된 뷰포트 포커스 복구
                         saved_rel_center, _ = self._get_orientation_viewport_focus(current_orientation, target_zoom_mode)
                         self.current_active_rel_center = saved_rel_center
-                        self.current_active_zoom_level = target_zoom_mode
-                        logging.debug(f"더블클릭 뷰포트 포커스 복구: {current_orientation} -> {saved_rel_center}")
                     else:
                         self.current_active_rel_center = QPointF(0.5, 0.5)
-                        self.current_active_zoom_level = target_zoom_mode
-                    
+                    self.current_active_zoom_level = target_zoom_mode
                     self.zoom_change_trigger = "double_click"
                     self.zoom_mode = target_zoom_mode
-                    
                     if target_zoom_mode == "100%":
                         self.zoom_100_radio.setChecked(True)
                     elif target_zoom_mode == "Spin":
                         self.zoom_spin_btn.setChecked(True)
-
                     self.apply_zoom_to_image() 
                     self.toggle_minimap(self.minimap_toggle.isChecked())
                 else:
                     logging.debug("더블클릭 위치가 이미지 바깥입니다 (Fit 모드).")
-
             elif self.zoom_mode in ["100%", "Spin"]:
                 logging.debug(f"더블클릭: {self.zoom_mode} -> Fit 요청")
-                
-                # 현재 뷰포트 위치 저장
                 current_orientation = self.current_image_orientation
                 if current_orientation:
                     current_rel_center = self._get_current_view_relative_center()
                     logging.debug(f"더블클릭 뷰포트 위치 저장: {current_orientation} -> {current_rel_center}")
-                    
                     self.current_active_rel_center = current_rel_center
                     self.current_active_zoom_level = self.zoom_mode
-                    
                     self._save_orientation_viewport_focus(
                         current_orientation,
                         current_rel_center,
                         self.zoom_mode
                     )
-                
-                # [수정] Fit으로 가기 전에 현재 줌 모드를 저장
                 self.last_active_zoom_mode = self.zoom_mode
                 logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
-                
                 self.zoom_mode = "Fit"
                 self.current_active_rel_center = QPointF(0.5, 0.5)
                 self.current_active_zoom_level = "Fit"
-                
                 self.fit_radio.setChecked(True)
                 self.apply_zoom_to_image()
 
@@ -11789,6 +12178,10 @@ class PhotoSortApp(QMainWindow):
         if reply == QMessageBox.Yes:
             # 핵심 초기화 로직을 헬퍼 메서드로 이동
             self._reset_workspace()
+
+            self.grid_mode = "Off" # grid_mode를 명시적으로 Off로 설정
+            self.grid_off_radio.setChecked(True)
+            self._update_view_for_grid_change() # 뷰를 강제로 업데이트
             
             # 추가적으로 UI 컨트롤 상태를 기본값으로 설정
             self.zoom_mode = "Fit"
@@ -11832,6 +12225,7 @@ class PhotoSortApp(QMainWindow):
         self.raw_files = {}
         self.current_image_index = -1
         self.is_raw_only_mode = False
+        self.compare_mode_active = False
         # 4. 캐시 및 원본 이미지 초기화
         self.original_pixmap = None
         self.image_loader.clear_cache()
@@ -12291,6 +12685,7 @@ class PhotoSortApp(QMainWindow):
                     
                     # 사용한 임시 변수 초기화
                     if hasattr(self, 'previous_image_path_for_focus_carry_over'): self.previous_image_path_for_focus_carry_over = None
+                    self.update_compare_filenames()
                     return # 캐시 사용했으므로 비동기 로딩 불필요
             
             # --- 캐시에 없거나 유효하지 않으면 비동기 로딩 요청 ---
@@ -12314,6 +12709,7 @@ class PhotoSortApp(QMainWindow):
             self.update_counters()
             self.state_save_timer.stop() # 오류 시 타이머 중지
 
+        self.update_compare_filenames()
         # 썸네일 패널 업데이트 (함수 끝 부분에 추가)
         self.update_thumbnail_current_index()
 
@@ -12524,6 +12920,7 @@ class PhotoSortApp(QMainWindow):
             self.state_save_timer.start()
             logging.debug(f"_on_image_loaded_for_display: Index save timer (re)started for index {self.current_image_index}")
         # --- 타이머 시작 끝 ---
+        self.update_compare_filenames()
 
 
     def _on_raw_decoded_for_display(self, result: dict, requested_index: int, is_main_display_image: bool = False):
@@ -12586,6 +12983,7 @@ class PhotoSortApp(QMainWindow):
                 self.state_save_timer.start()
             
             self._close_first_raw_decode_progress() # UI 업데이트 후 진행률 대화상자 닫기
+            self.update_compare_filenames()
             logging.info(f"  _on_raw_decoded_for_display: 메인 이미지 UI 업데이트 완료.")
         else:
             logging.info(f"  _on_raw_decoded_for_display: 프리로드된 이미지 캐싱 완료, UI 업데이트는 건너뜀. 파일='{Path(file_path).name}'")
@@ -12929,6 +13327,8 @@ class PhotoSortApp(QMainWindow):
             "folder_count": self.folder_count,
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
+            "compare_mode_active": self.compare_mode_active,
+            "image_B_path": str(self.image_B_path) if self.image_B_path else "",
         }
 
         save_path = self.get_script_dir() / self.STATE_FILE
@@ -13220,72 +13620,78 @@ class PhotoSortApp(QMainWindow):
             if images_loaded_successfully and self.image_files:
                 self.thumbnail_panel.set_image_files(self.image_files)
                 total_images = len(self.image_files)
+
+                # <<< 최종 수정된 뷰 복원 로직 시작 >>>
                 
-                # [수정 시작] 저장된 그리드 모드를 먼저 읽어옵니다.
+                # 1. 저장된 상태 값들을 먼저 변수로 불러옵니다.
+                saved_compare_mode = loaded_data.get("compare_mode_active", False)
                 saved_grid_mode = loaded_data.get("grid_mode", "Off")
-                
-                # 특정 조건(RAW only + decode)에서 그리드 모드를 강제로 Off로 설정합니다.
+                image_B_path_str = loaded_data.get("image_B_path", "")
+
+                # 2. 최종으로 적용할 모드를 결정합니다. (예외 조건 우선 처리)
+                final_compare_mode = saved_compare_mode
+                final_grid_mode = saved_grid_mode
+
                 if self.is_raw_only_mode and self.last_loaded_raw_method_from_state == "decode":
-                    logging.info("RAW 전용 + Decode 모드 재실행 감지. Grid 모드를 강제로 'Off'로 설정합니다.")
-                    self.grid_mode = "Off"
-                else:
-                    self.grid_mode = saved_grid_mode
+                    logging.info("RAW+Decode 모드 재실행 감지. Grid/Compare 모드를 강제로 'Off'로 설정합니다.")
+                    final_compare_mode = False
+                    final_grid_mode = "Off"
                 
-                # self.grid_mode 값을 기준으로 UI를 설정합니다.
-                if self.grid_mode == "Off":
+                # B 캔버스 이미지가 없으면 Compare 모드를 강제로 비활성화합니다.
+                if image_B_path_str and Path(image_B_path_str).exists():
+                    self.image_B_path = Path(image_B_path_str)
+                else:
+                    self.image_B_path = None
+                    final_compare_mode = False # B 이미지가 없으면 Compare 모드는 무조건 해제
+
+                # 3. 최종 결정된 모드를 앱 상태 변수에 할당합니다.
+                self.compare_mode_active = final_compare_mode
+                self.grid_mode = final_grid_mode
+                
+                # 4. 최종 모드에 따라 UI 컨트롤(라디오 버튼, 콤보박스)의 상태를 명확하게 설정합니다.
+                if self.compare_mode_active:
+                    self.compare_radio.setChecked(True)
+                elif self.grid_mode == "Off":
                     self.grid_off_radio.setChecked(True)
-                    self.grid_size_combo.setEnabled(False)
-                else: # "2x2", "3x3", "4x4" 등
+                else: # Grid On
                     self.grid_on_radio.setChecked(True)
-                    self.grid_size_combo.setEnabled(True)
                     combo_text = self.grid_mode.replace("x", " x ")
                     index = self.grid_size_combo.findText(combo_text)
-                    if index != -1:
-                        self.grid_size_combo.setCurrentIndex(index)
-                    else:
-                        self.grid_size_combo.setCurrentIndex(0)
-                        # [수정] 콤보박스에 없는 값이면 grid_mode도 동기화
-                        self.grid_mode = self.grid_size_combo.currentText().replace(" ", "")
-
+                    if index != -1: self.grid_size_combo.setCurrentIndex(index)
+                
+                self.grid_size_combo.setEnabled(self.grid_mode != "Off" and not self.compare_mode_active)
                 self.update_zoom_radio_buttons_state()
 
+                # 5. 마지막으로 보고 있던 이미지 인덱스를 복원합니다.
                 loaded_actual_current_image_index = loaded_data.get("current_image_index", -1)
-                logging.info(f"PhotoSortApp.load_state: 복원 시도할 전역 이미지 인덱스: {loaded_actual_current_image_index}")
+                
+                if not (0 <= loaded_actual_current_image_index < total_images):
+                    loaded_actual_current_image_index = 0 if total_images > 0 else -1
+                
+                # 6. 최종 결정된 모드에 따라 뷰를 업데이트하고 이미지를 표시합니다.
+                if self.grid_mode != "Off": # Grid On
+                    rows, cols = self._get_grid_dimensions()
+                    num_cells = rows * cols
+                    self.grid_page_start_index = (loaded_actual_current_image_index // num_cells) * num_cells
+                    self.current_grid_index = loaded_actual_current_image_index % num_cells
+                    self.update_grid_view()
+                else: # Grid Off 또는 Compare
+                    self.current_image_index = loaded_actual_current_image_index
+                    self._update_view_for_grid_change() # 뷰 구조 먼저 설정
+                    self.display_current_image() # 그 다음 이미지 표시
 
+                # 7. B 캔버스 이미지 복원 (필요한 경우)
+                if self.compare_mode_active and self.image_B_path:
+                    def restore_b_canvas():
+                        self.original_pixmap_B = self.image_loader.load_image_with_orientation(str(self.image_B_path))
+                        self._apply_zoom_to_canvas('B')
+                        self._sync_viewports()
+                        self.update_compare_filenames()
+                    QTimer.singleShot(100, restore_b_canvas)
+                
+                # 8. 썸네일 패널 스크롤
                 if 0 <= loaded_actual_current_image_index < total_images:
-                    if self.grid_mode != "Off":
-                        rows, cols = self._get_grid_dimensions()
-                        num_cells = rows * cols
-                        self.grid_page_start_index = (loaded_actual_current_image_index // num_cells) * num_cells
-                        self.current_grid_index = loaded_actual_current_image_index % num_cells
-                        logging.info(f"PhotoSortApp.load_state: Grid 모드 복원 - page_start={self.grid_page_start_index}, grid_idx={self.current_grid_index}")
-                        self.update_grid_view()
-                    else: # Grid Off
-                        self.current_image_index = loaded_actual_current_image_index
-                        logging.info(f"PhotoSortApp.load_state: Grid Off 모드 복원 - current_idx={self.current_image_index}")
-                        self.display_current_image()
-                elif total_images > 0:
-                    logging.warning("PhotoSortApp.load_state: 저장된 이미지 인덱스가 유효하지 않아 첫 이미지로 설정합니다.")
-                    if self.grid_mode != "Off":
-                        self.grid_page_start_index = 0
-                        self.current_grid_index = 0
-                        self.update_grid_view()
-                    else:
-                        self.current_image_index = 0
-                        self.display_current_image()
-                else:
-                    self.current_image_index = -1
-                    self.grid_page_start_index = 0
-                    self.current_grid_index = 0
-                    if self.grid_mode != "Off": self.update_grid_view()
-                    else: self.display_current_image()
-
-                if 0 <= loaded_actual_current_image_index < total_images:
-                    # 1. 모델의 현재 인덱스를 먼저 설정합니다. (스크롤 없이)
                     self.thumbnail_panel.model.set_current_index(loaded_actual_current_image_index)
-
-                    # 2. QTimer를 사용하여 스크롤 명령을 지연시켜 호출합니다.
-                    #    지연 시간을 100ms 정도로 주어 UI 렌더링 완료를 보장합니다.
                     QTimer.singleShot(100, lambda idx=loaded_actual_current_image_index: self.thumbnail_panel.scroll_to_index(idx))
                     
                     logging.info(f"앱 재실행: 썸네일 패널 스크롤 예약 (index: {loaded_actual_current_image_index}).")
@@ -13559,57 +13965,70 @@ class PhotoSortApp(QMainWindow):
             else:
                 logging.warning(f"Undo: Skipped duplicate RAW file mapping for {jpg_source_path.stem}")
 
+        if move_info.get("mode") == "CompareB":
+            jpg_source_path = Path(move_info["jpg_source"])
+            self.image_B_path = jpg_source_path
+            # B 캔버스용 pixmap도 다시 로드
+            self.original_pixmap_B = self.image_loader.load_image_with_orientation(str(self.image_B_path))
+            self.update_compare_filenames()
+            logging.debug(f"Undo: Restored image to Canvas B: {self.image_B_path.name}")
+
     def undo_single_move(self, move_info):
         """ 단일 이동 작업을 취소 (기존 로직) """
         self.undo_single_move_internal(move_info)
         
-        # UI 업데이트
         mode_before_move = move_info.get("mode", "Off")
         index_before_move = move_info["index_before_move"]
         
-        # 강제 새로고침 플래그 설정
         self.force_refresh = True
         
-        if mode_before_move == "Off":
+        if mode_before_move == "CompareB":
+            a_index = move_info.get("a_index_before_move", 0)
+            if a_index >= len(self.image_files):
+                a_index = len(self.image_files) - 1
+            self.current_image_index = a_index
+
+            self.compare_mode_active = True
+            self.grid_mode = "Off" 
+            self.compare_radio.setChecked(True)
+            self._update_view_for_grid_change()
+            
+            # <<< 수정 시작: B 캔버스 복원 로직을 타이머로 지연 >>>
+            def restore_compare_view():
+                self.display_current_image()
+                self._apply_zoom_to_canvas('B')
+                self._sync_viewports() # 타이머 콜백 내에서 동기화
+
+            QTimer.singleShot(20, restore_compare_view) # 20ms 지연으로 안정성 확보
+            # <<< 수정 끝 >>>
+
+        elif mode_before_move == "Off":
             self.current_image_index = index_before_move
-            if self.grid_mode != "Off":
+            if self.grid_mode != "Off" or self.compare_mode_active:
+                self.compare_mode_active = False
                 self.grid_mode = "Off"
                 self.grid_off_radio.setChecked(True)
-                self.update_zoom_radio_buttons_state()
-                self.update_counter_layout()
-            
-            if self.zoom_mode == "Fit":
-                self.last_fit_size = (0, 0)
-                self.fit_pixmap_cache.clear()
-                
+                self._update_view_for_grid_change()
             self.display_current_image()
-        else:
-            # Grid 모드
-            self.grid_mode = mode_before_move # grid_mode를 먼저 설정해야 올바른 값을 가져옴
+        else: # Grid 모드
+            self.compare_mode_active = False
+            self.grid_mode = mode_before_move
+            
             rows, cols = self._get_grid_dimensions()
+            if rows == 0:
+                logging.error("Undo: Grid 모드 복원 중 잘못된 grid_mode 값 감지")
+                self.grid_mode = "2x2"
+                rows, cols = self._get_grid_dimensions()
+
             num_cells = rows * cols
+            
             self.grid_page_start_index = (index_before_move // num_cells) * num_cells
             self.current_grid_index = index_before_move % num_cells
-            
-            if self.grid_mode != mode_before_move:
-                self.grid_mode = mode_before_move
-                if self.grid_mode == "Off":
-                    self.grid_off_radio.setChecked(True)
-                    self.grid_size_combo.setEnabled(False)
-                else:
-                    self.grid_on_radio.setChecked(True)
-                    self.grid_size_combo.setEnabled(True)
-                    combo_text = self.grid_mode.replace("x", " x ")
-                    index = self.grid_size_combo.findText(combo_text)
-                    if index != -1:
-                        self.grid_size_combo.setCurrentIndex(index)
-
-                self.update_zoom_radio_buttons_state()
-                self.update_counter_layout()
-            
-            self.update_grid_view()
+            self._update_view_for_grid_change()
         
         self.update_counters()
+        self.thumbnail_panel.set_image_files(self.image_files)
+        self.update_thumbnail_current_index()
 
     def update_ui_after_undo_batch(self, batch_entries):
         """ 배치 Undo 후 UI 업데이트 """
@@ -14099,6 +14518,19 @@ class PhotoSortApp(QMainWindow):
                     self._on_grid_mode_toggled(self.grid_off_radio)
                 return True
 
+            elif key == Qt.Key_C:
+                # Compare 모드는 Grid Off 상태에서만 토글 가능
+                if self.grid_mode == "Off":
+                    if self.compare_mode_active:
+                        # Compare -> Grid Off
+                        self.grid_off_radio.setChecked(True)
+                        self._on_grid_mode_toggled(self.grid_off_radio)
+                    else:
+                        # Grid Off -> Compare
+                        self.compare_radio.setChecked(True)
+                        self._on_grid_mode_toggled(self.compare_radio)
+                return True
+
             if key == Qt.Key_F1: # Zoom Fit
                 self.fit_radio.setChecked(True)
                 self.on_zoom_changed(self.fit_radio)
@@ -14356,6 +14788,10 @@ class PhotoSortApp(QMainWindow):
         
         # clear_jpg_folder는 모든 것을 초기화하므로 target_folders도 초기화
         self.target_folders = [""] * self.folder_count
+
+        self.grid_off_radio.setChecked(True) # 라디오 버튼 상태 동기화
+        self._update_view_for_grid_change()
+
         self.update_all_folder_labels_state()
 
         # UI 컨트롤 상태 복원
@@ -14374,6 +14810,9 @@ class PhotoSortApp(QMainWindow):
             # --- RAW 전용 모드 해제 및 전체 초기화 ---
             logging.info("RAW 전용 모드 해제 및 초기화...")
             self._reset_workspace()
+
+            self.grid_off_radio.setChecked(True)
+            self._update_view_for_grid_change()
             
             # RAW 전용 모드 해제 후 추가 UI 상태 조정
             self.load_button.setEnabled(True)
@@ -14432,6 +14871,8 @@ class PhotoSortApp(QMainWindow):
         self.update_match_raw_button_state()
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
+        if hasattr(self, 'image_label_B') and not self.image_B_path:
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
         if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
         
@@ -14762,6 +15203,8 @@ def main():
         "보기 설정": "View Settings",
         "G": "G",
         "그리드 모드 켜기/끄기": "Toggle Grid mode",
+        "C": "C",
+        "A | B 비교 모드 켜기/끄기": "Toggle A | B Compare mode",
         "Space": "Space",
         "줌 전환 (Fit/100%) 또는 그리드에서 확대": "Toggle Zoom (Fit/100%) or Zoom in from Grid",
         "F1 / F2 / F3": "F1 / F2 / F3",
@@ -14799,6 +15242,7 @@ def main():
         "선택된 그리드 이미지가 없습니다.": "No grid image selected.",
         "호환성 문제": "Compatibility Issue",
         "RAW 디코딩 실패. 미리보기를 대신 사용합니다.": "RAW decoding failed. Using preview instead.",
+        "비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.": "Drag an image from the thumbnail panel here to compare.",
     }
     
     LanguageManager.initialize_translations(translations)
