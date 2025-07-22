@@ -5853,44 +5853,37 @@ class PhotoSortApp(QMainWindow):
             return None
 
     def _show_folder_choice_dialog(self, has_matching=False):
-        """폴더 선택지 팝업 대화상자"""
+        """폴더 선택지 팝업 대화상자 (반환 ID 통일)"""
         try:
             dialog = QDialog(self)
             dialog.setWindowTitle(LanguageManager.translate("폴더 불러오기"))
-            
             # 다크 테마 적용
             apply_dark_title_bar(dialog)
-            
             palette = QPalette()
             palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
             dialog.setPalette(palette)
             dialog.setAutoFillBackground(True)
-            
             layout = QVBoxLayout(dialog)
             layout.setSpacing(10)
             layout.setContentsMargins(20, 20, 20, 20)
             
-            # 메시지 레이블 생성 (줄바꿈 포함된 키 사용)
+            # 메시지 레이블 생성
             message_text = LanguageManager.translate("폴더 내에 일반 이미지 파일과 RAW 파일이 같이 있습니다.\n무엇을 불러오시겠습니까?")
             message_label = QLabel(message_text)
             message_label.setWordWrap(True)
             message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
             layout.addWidget(message_label)
 
-            # 폰트 정보를 가져와서 텍스트의 픽셀 너비를 계산합니다.
             fm = message_label.fontMetrics()
-            # 텍스트가 여러 줄일 경우 가장 긴 줄을 기준으로 너비를 계산합니다.
             lines = message_text.split('\n')
             max_width = 0
             for line in lines:
                 line_width = fm.horizontalAdvance(line)
                 if line_width > max_width:
                     max_width = line_width
-            
-            # 계산된 너비에 좌우 여백을 더해 최소 너비로 설정합니다.
-            dialog.setMinimumWidth(max_width + 60) # 60px 정도의 여유 공간 추가
-            
-            # 라디오 버튼 그룹
+            dialog.setMinimumWidth(max_width + 60)
+
+            # 라디오 버튼 그룹 및 스타일
             radio_group = QButtonGroup(dialog)
             radio_style = f"""
                 QRadioButton {{
@@ -5916,48 +5909,40 @@ class PhotoSortApp(QMainWindow):
                 }}
             """
             
+            layout.addSpacing(20)
+
             if has_matching:
-                # 3선택지: 매칭, 일반 이미지, RAW
+                # 3선택지: 매칭(0), 일반 이미지(1), RAW(2)
                 option1 = QRadioButton(LanguageManager.translate("파일명이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기"))
                 option2 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
                 option3 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
-                
                 option1.setStyleSheet(radio_style)
                 option2.setStyleSheet(radio_style)
                 option3.setStyleSheet(radio_style)
-                
-                radio_group.addButton(option1, 0)  # 매칭
-                radio_group.addButton(option2, 1)  # 일반 이미지
-                radio_group.addButton(option3, 2)  # RAW
-                
-                option1.setChecked(True)  # 기본 선택: 매칭
-                
-                layout.addSpacing(20)
+                radio_group.addButton(option1, 0) # ID 0: 매칭
+                radio_group.addButton(option2, 1) # ID 1: 일반
+                radio_group.addButton(option3, 2) # ID 2: RAW
+                option1.setChecked(True)
                 layout.addWidget(option1)
                 layout.addSpacing(10)
                 layout.addWidget(option2)
                 layout.addSpacing(10)
                 layout.addWidget(option3)
-                layout.addSpacing(20)
             else:
-                # 2선택지: 일반 이미지, RAW
+                # 2선택지: 일반 이미지(1), RAW(2) -> ID를 3선택지와 맞춤
                 option1 = QRadioButton(LanguageManager.translate("일반 이미지 파일만 불러오기"))
                 option2 = QRadioButton(LanguageManager.translate("RAW 파일만 불러오기"))
-                
                 option1.setStyleSheet(radio_style)
                 option2.setStyleSheet(radio_style)
-                
-                radio_group.addButton(option1, 0)  # 일반 이미지
-                radio_group.addButton(option2, 1)  # RAW
-                
-                option1.setChecked(True)  # 기본 선택: 일반 이미지
-                
-                layout.addSpacing(20)
+                radio_group.addButton(option1, 1) # ID 1: 일반
+                radio_group.addButton(option2, 2) # ID 2: RAW
+                option1.setChecked(True)
                 layout.addWidget(option1)
                 layout.addSpacing(10)
                 layout.addWidget(option2)
-                layout.addSpacing(20)
-            
+
+            layout.addSpacing(20)
+
             # 확인 버튼
             confirm_button = QPushButton(LanguageManager.translate("확인"))
             confirm_button.setStyleSheet(f"""
@@ -5985,96 +5970,90 @@ class PhotoSortApp(QMainWindow):
             button_layout.addStretch(1)
             button_layout.addWidget(confirm_button)
             button_layout.addStretch(1)
-            
             layout.addWidget(button_container)
-            
+
             if dialog.exec() == QDialog.Accepted:
                 return radio_group.checkedId()
             else:
                 return None
-                
         except Exception as e:
             logging.error(f"_show_folder_choice_dialog 오류: {e}")
             return None
 
     def _handle_canvas_folder_drop(self, folder_path):
-        """캔버스 영역 폴더 드랍 메인 처리 로직"""
+        """캔버스 영역 폴더 드랍 메인 처리 로직 (사용자 확인 기능 추가)"""
         try:
-            # 폴더 내용 분석
             analysis = self._analyze_folder_contents(folder_path)
             if not analysis:
                 return False
 
-            # [수정] 드롭 처리를 시작하기 전에 현재 그리드 모드였는지 기록합니다.
             was_in_grid_mode = self.grid_mode != "Off"
+            current_has_images = bool(self.image_files)
 
-            # 현재 상태 확인 (기존 로직 유지)
-            current_has_images = bool(self.image_files and not self.is_raw_only_mode)
-            
-            # [수정] 성공 여부를 받을 변수 추가
+            # 1. 작업이 이미 진행 중인 경우, 사용자에게 확인을 받습니다.
+            if current_has_images:
+                reply = self.show_themed_message_box(
+                    QMessageBox.Question,
+                    LanguageManager.translate("새 폴더 불러오기"),
+                    LanguageManager.translate("현재 진행 중인 작업을 종료하고 새로운 폴더를 불러오시겠습니까?"),
+                    QMessageBox.Yes | QMessageBox.Cancel,
+                    QMessageBox.Cancel
+                )
+                if reply == QMessageBox.Cancel:
+                    logging.info("사용자가 새 폴더 불러오기를 취소했습니다.")
+                    return False # 사용자가 취소했으므로 아무 작업도 하지 않음
+                
+                # 사용자가 "예"를 선택한 경우, 작업 공간을 초기화합니다.
+                logging.info("사용자가 새 폴더 불러오기를 승인했습니다. 기존 작업을 초기화합니다.")
+                self._reset_workspace()
+                # UI를 초기 상태로 업데이트 (라디오 버튼 등)
+                self.grid_off_radio.setChecked(True)
+                self.update_all_folder_labels_state()
+                self.update_match_raw_button_state()
+
+                # 작업 공간 초기화 후, 드롭 이벤트를 처음부터 다시 처리하도록 재귀 호출합니다.
+                # 이때는 current_has_images가 False이므로 확인창이 다시 뜨지 않습니다.
+                return self._handle_canvas_folder_drop(folder_path)
+
+            # 2. 작업이 없는 상태에서 폴더를 드롭한 경우 (기존 로직)
             success = False
-
-            if not self.image_files:
-                # === 아무런 파일도 로드되어 있지 않은 경우 ===
-                if analysis['has_raw'] and not analysis['has_images']:
-                    success = self._handle_raw_folder_drop(folder_path)
-                elif analysis['has_images'] and not analysis['has_raw']:
+            if analysis['has_raw'] and not analysis['has_images']:
+                success = self._handle_raw_folder_drop(folder_path)
+            elif analysis['has_images'] and not analysis['has_raw']:
+                success = self._handle_image_folder_drop(folder_path)
+            elif analysis['has_raw'] and analysis['has_images']:
+                choice_dialog_result = self._show_folder_choice_dialog(has_matching=analysis['has_matching'])
+                if choice_dialog_result is None: return False
+                
+                options = {0: "match", 1: "image_only", 2: "raw_only"}
+                if not analysis['has_matching']:
+                    options = {0: "image_only", 1: "raw_only"}
+                
+                choice = options.get(choice_dialog_result)
+                
+                if choice == "match":
+                    if self._handle_image_folder_drop(folder_path):
+                        success = self._handle_raw_folder_drop(folder_path)
+                elif choice == "image_only":
                     success = self._handle_image_folder_drop(folder_path)
-                elif analysis['has_raw'] and analysis['has_images']:
-                    if not analysis['has_matching']:
-                        choice = self._show_folder_choice_dialog(has_matching=False)
-                        if choice is None: return False
-                        elif choice == 0: success = self._handle_image_folder_drop(folder_path)
-                        elif choice == 1: success = self._handle_raw_folder_drop(folder_path)
-                    else:
-                        choice = self._show_folder_choice_dialog(has_matching=True)
-                        if choice is None: return False
-                        elif choice == 0:
-                            if self._handle_image_folder_drop(folder_path):
-                                success = self._handle_raw_folder_drop(folder_path)
-                        elif choice == 1: success = self._handle_image_folder_drop(folder_path)
-                        elif choice == 2: success = self._handle_raw_folder_drop(folder_path)
-                else:
-                    self.show_themed_message_box(
-                        QMessageBox.Warning, 
-                        LanguageManager.translate("경고"), 
-                        LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다.")
-                    )
-                    return False
-            elif current_has_images:
-                # === 일반 이미지가 이미 로드된 경우 ===
-                if analysis['has_raw']:
-                    success = self.match_raw_files(folder_path)
-                else:
-                    self.show_themed_message_box(
-                        QMessageBox.Information,
-                        LanguageManager.translate("정보"),
-                        LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
-                    )
-                    return False
+                elif choice == "raw_only":
+                    success = self._handle_raw_folder_drop(folder_path)
             else:
-                # === 그 외의 경우 (RAW 전용 모드 등) ===
                 self.show_themed_message_box(
-                    QMessageBox.Information,
-                    LanguageManager.translate("정보"),
-                    LanguageManager.translate("현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)")
+                    QMessageBox.Warning, 
+                    LanguageManager.translate("경고"), 
+                    LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다.")
                 )
                 return False
 
-            # [수정] 성공적으로 폴더가 로드되었고, 이전에 그리드 모드였다면 UI를 강제로 전환합니다.
+            # 3. 로드 성공 후 UI 조정 (기존 로직)
             if success and was_in_grid_mode:
                 logging.info("그리드 모드에서 폴더 드롭: Grid Off로 전환하고 뷰를 업데이트합니다.")
-                # 1. 그리드 모드를 'Off'로 설정
                 self.grid_mode = "Off"
-                # 2. UI 컨트롤 상태 업데이트
                 self.grid_off_radio.setChecked(True)
                 self.update_zoom_radio_buttons_state()
                 self.update_thumbnail_panel_visibility()
-                # 3. 뷰 업데이트
-                # update_grid_view()는 self.grid_mode가 'Off'이므로 그리드를 정리하고
-                # display_current_image()를 호출하여 첫 번째 이미지를 표시합니다.
                 self.update_grid_view()
-                # 4. 카운터 레이아웃 업데이트
                 self.update_counter_layout()
             
             return success
@@ -15165,7 +15144,6 @@ def main():
         "파일명이 같은 이미지 파일과 RAW 파일을 매칭하여 불러오기": "Match and load image files and RAW files with the same file names",
         "일반 이미지 파일만 불러오기": "Load only regular image files",
         "RAW 파일만 불러오기": "Load only RAW files",
-        "현재 진행중인 작업 종료 후 새 폴더를 불러오세요(참고: 폴더 경로 옆 X 버튼 또는 Delete키)": "Please finish current work and then load a new folder (Tip: X button next to folder path or Delete key)",
         "선택한 폴더에 지원하는 파일이 없습니다.": "No supported files found in the selected folder.",
         "분류 폴더 개수": "Number of Sorting Folders",
         "마우스 휠 동작": "Mouse Wheel Action",
@@ -15243,6 +15221,10 @@ def main():
         "호환성 문제": "Compatibility Issue",
         "RAW 디코딩 실패. 미리보기를 대신 사용합니다.": "RAW decoding failed. Using preview instead.",
         "비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.": "Drag an image from the thumbnail panel here to compare.",
+        "새 폴더 불러오기": "Load New Folder",
+        "현재 진행 중인 작업을 종료하고 새로운 폴더를 불러오시겠습니까?": "Do you want to end the current session and load a new folder?",
+        "예": "Yes",
+        "취소": "Cancel",
     }
     
     LanguageManager.initialize_translations(translations)
