@@ -3942,13 +3942,14 @@ class PhotoSortApp(QMainWindow):
         ("key", "F5", "폴더 새로고침"),
         
         ("group", "보기 설정"),
+        ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / 가변)"),
+        ("key", "Space", "줌 전환 (Fit/100%) 또는 그리드에서 확대"),
+        ("key", "ESC", "줌 아웃 또는 그리드 복귀"),
+        ("key", "Z(Zoom-out)", "줌 아웃 (가변 모드)"),
+        ("key", "X(eXpand)", "줌 인 (가변 모드)"),
+        ("key", "R(Reset)", "뷰포트 중앙 정렬"),
         ("key", "G(Grid)", "그리드 모드 켜기/끄기"),
         ("key", "C(Compare)", "A | B 비교 모드 켜기/끄기"),
-        ("key", "Space", "줌 전환 (Fit/100%) 또는 그리드에서 확대"),
-        ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / 가변)"),
-        ("key", "Z(Zoom-out) / X(eXpand)", "줌 아웃 / 줌 인 (가변 모드)"),
-        ("key", "R(Reset)", "뷰포트 중앙 정렬"),
-        ("key", "ESC", "줌 아웃 또는 그리드 복귀"),
 
         ("group", "파일 작업"),
         ("key", "1 ~ 9", "지정한 폴더로 사진 이동"),
@@ -7170,24 +7171,37 @@ class PhotoSortApp(QMainWindow):
             table { width: 100%; border-collapse: collapse; font-size: 10pt; }
             th { text-align: left; padding: 12px 8px; color: #FFFFFF; border-bottom: 1px solid #666666; }
             td { padding: 8px; vertical-align: top; }
-            td.key { font-weight: bold; color: #E0E0E0; width: 35%; }
+            td.key { font-weight: bold; color: #E0E0E0; width: 35%; padding-right: 25px; }
             td.desc { color: #B0B0B0; }
             .group-title { 
-                padding-top: 25px; 
-                font-size: 11pt; 
+                padding-top: 45px; 
+                font-size: 12pt; 
                 font-weight: bold; 
-                color: #FFFFFF; 
+                color: #FFFFFF;
+                padding-bottom: 10px;
+            }
+            .group-title-first {
+                padding-top: 15px;
+                font-size: 12pt; 
+                font-weight: bold; 
+                color: #FFFFFF;
+                padding-bottom: 10px;
             }
         </style>
         <table>
         """
+        first_group = True # 첫 번째 그룹인지 확인하기 위한 플래그
         for item in self.SHORTCUT_DEFINITIONS:
             if len(item) == 2 and item[0] == "group":
                 # 그룹 제목 행
                 item_type, col1 = item
                 group_title = LanguageManager.translate(col1)
-                # td 태그에 직접 style을 추가하여 가운데 정렬
-                html += f"<tr><td colspan='2' class='group-title' style='text-align: center;'>{group_title}</td></tr>"
+                
+                if first_group:
+                    html += f"<tr><td colspan='2' class='group-title-first' style='text-align: center;'>[ {group_title} ]</td></tr>"
+                    first_group = False
+                else:
+                    html += f"<tr><td colspan='2' class='group-title' style='text-align: center;'>[ {group_title} ]</td></tr>"
             elif len(item) == 3 and item[0] == "key":
                 # 단축키 항목 행
                 item_type, col1, col2 = item
@@ -7196,6 +7210,7 @@ class PhotoSortApp(QMainWindow):
                 html += f"<tr><td class='key'>{key_text}</td><td class='desc'>{desc_text}</td></tr>"
         html += "</table>"
         return html
+
 
     def _update_shortcut_label_text(self, label_widget):
         """주어진 라벨 위젯의 텍스트를 현재 언어의 단축키 안내로 업데이트"""
@@ -8269,7 +8284,7 @@ class PhotoSortApp(QMainWindow):
         text_browser.setHtml(html_content)
         
         # 텍스트 브라우저의 최소/권장 크기 설정 (내용에 따라 조절)
-        text_browser.setMinimumHeight(900)
+        text_browser.setMinimumHeight(1000)
         text_browser.setMinimumWidth(700)
 
         layout.addWidget(text_browser)
@@ -8808,7 +8823,6 @@ class PhotoSortApp(QMainWindow):
     def start_background_loading(self, jpg_folder_path, raw_folder_path, mode, raw_file_list=None):
         """백그라운드 로딩을 시작하고 로딩창을 표시합니다."""
         self._reset_workspace()
-
         self.loading_progress_dialog = QProgressDialog(
             LanguageManager.translate("폴더를 읽는 중입니다..."),
             "", 0, 0, self
@@ -8826,12 +8840,19 @@ class PhotoSortApp(QMainWindow):
                 text-align: center;
             }}
         """)
-        self.loading_progress_dialog.show()
+        
+        # [추가] 대화상자를 메인 윈도우 중앙에 위치시키는 로직
+        parent_geometry = self.geometry()
+        self.loading_progress_dialog.adjustSize()
+        dialog_size = self.loading_progress_dialog.size()
+        new_x = parent_geometry.x() + (parent_geometry.width() - dialog_size.width()) // 2
+        new_y = parent_geometry.y() + (parent_geometry.height() - dialog_size.height()) // 2
+        self.loading_progress_dialog.move(new_x, new_y)
 
+        self.loading_progress_dialog.show()
         # 이 방식은 복잡한 Python 타입을 더 안정적으로 처리합니다.
         jpg_path_str = jpg_folder_path if jpg_folder_path is not None else ""
         raw_path_str = raw_folder_path if raw_folder_path is not None else ""
-        
         self.folder_loader_worker.startProcessing.emit(
             jpg_path_str,
             raw_path_str,
@@ -15003,18 +15024,18 @@ class PhotoSortApp(QMainWindow):
             self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
         if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
-        
         if not self.current_folder:
             self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         if not self.raw_folder:
             self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         self.update_all_folder_labels_state()
-        
         self.update_window_title_with_selection()
         
+        if hasattr(self, 'settings_popup') and self.settings_popup:
+            self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
+
         # --- 설정 창 관련 모든 컨트롤의 텍스트 업데이트 ---
         self.update_all_settings_controls_text()
-
         # --- 현재 파일 정보 다시 표시 (날짜 형식 등이 바뀌었을 수 있으므로) ---
         self.update_file_info_display(self.get_current_image_path())
 
@@ -15339,7 +15360,8 @@ def main():
         "F1 / F2 / F3": "F1 / F2 / F3",
         "줌 모드 변경 (Fit / 100% / 가변)": "Change Zoom mode (Fit / 100% / Variable)",
         "Z / X": "Z / X",
-        "줌 아웃 / 줌 인 (가변 모드)": "Zoom Out / Zoom In (in Variable mode)",
+        "줌 아웃 (가변 모드)": "Zoom Out (in Variable mode)",
+        "줌 인 (가변 모드)": "Zoom In (in Variable mode)",
         "R": "R",
         "뷰포트 중앙 정렬": "Center viewport",
         "ESC": "ESC",
