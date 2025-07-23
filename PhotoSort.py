@@ -609,6 +609,114 @@ class ThemeManager:
         """사용 가능한 모든 테마 이름 목록 반환"""
         return list(cls.THEMES.keys())
 
+class HardwareProfileManager:
+    """시스템 하드웨어 및 예상 사용 시나리오를 기반으로 성능 프로필을 결정하고 관련 파라미터를 제공하는 클래스."""
+    
+    _profile = "balanced"
+    _system_memory_gb = 8
+    _cpu_cores = 4
+
+    PROFILES = {
+        "conservative": {
+            "name": "저사양 (8GB RAM)",
+            "max_imaging_threads": 2, "max_raw_processes": 1, "cache_size_images": 30,
+            "preload_range_adjacent": (5, 2), "preload_range_priority": 2, "preload_grid_bg_limit_factor": 0.3,
+            "memory_thresholds": {"danger": 88, "warning": 82, "caution": 75},
+            "cache_clear_ratios": {"danger": 0.5, "warning": 0.3, "caution": 0.15},
+            "idle_preload_enabled": False,
+        },
+        "balanced": {
+            "name": "표준 (16GB RAM)",
+            "max_imaging_threads": 3, "max_raw_processes": lambda cores: min(2, max(1, cores // 4)), "cache_size_images": 60,
+            "preload_range_adjacent": (8, 3), "preload_range_priority": 3, "preload_grid_bg_limit_factor": 0.5,
+            "memory_thresholds": {"danger": 92, "warning": 88, "caution": 80},
+            "cache_clear_ratios": {"danger": 0.5, "warning": 0.3, "caution": 0.15},
+            "idle_preload_enabled": True, "idle_interval_ms": 2200,
+        },
+        "enhanced": {
+            "name": "상급 (24GB RAM)",
+            "max_imaging_threads": 4, "max_raw_processes": lambda cores: min(2, max(1, cores // 4)), "cache_size_images": 80,
+            "preload_range_adjacent": (10, 4), "preload_range_priority": 4, "preload_grid_bg_limit_factor": 0.6,
+            "memory_thresholds": {"danger": 94, "warning": 90, "caution": 85},
+            "cache_clear_ratios": {"danger": 0.5, "warning": 0.3, "caution": 0.15},
+            "idle_preload_enabled": True, "idle_interval_ms": 1800,
+        },
+        "aggressive": {
+            "name": "고성능 (32GB RAM)",
+            "max_imaging_threads": 4, "max_raw_processes": lambda cores: min(3, max(2, cores // 3)), "cache_size_images": 120,
+            "preload_range_adjacent": (12, 5), "preload_range_priority": 5, "preload_grid_bg_limit_factor": 0.75,
+            "memory_thresholds": {"danger": 95, "warning": 92, "caution": 88},
+            "cache_clear_ratios": {"danger": 0.4, "warning": 0.25, "caution": 0.1},
+            "idle_preload_enabled": True, "idle_interval_ms": 1500,
+        },
+        "extreme": {
+            "name": "초고성능 (64GB RAM)",
+            "max_imaging_threads": 4, "max_raw_processes": lambda cores: min(4, max(2, cores // 3)), "cache_size_images": 150,
+            "preload_range_adjacent": (18, 6), "preload_range_priority": 6, "preload_grid_bg_limit_factor": 0.8,
+            "memory_thresholds": {"danger": 96, "warning": 94, "caution": 90},
+            "cache_clear_ratios": {"danger": 0.4, "warning": 0.2, "caution": 0.1},
+            "idle_preload_enabled": True, "idle_interval_ms": 1200,
+        },
+        "dominator": {
+            "name": "워크스테이션 (96GB+ RAM)",
+            "max_imaging_threads": 5, "max_raw_processes": lambda cores: min(8, max(4, cores // 3)), "cache_size_images": 200,
+            "preload_range_adjacent": (20, 8), "preload_range_priority": 7, "preload_grid_bg_limit_factor": 0.9,
+            "memory_thresholds": {"danger": 97, "warning": 95, "caution": 92},
+            "cache_clear_ratios": {"danger": 0.3, "warning": 0.15, "caution": 0.05},
+            "idle_preload_enabled": True, "idle_interval_ms": 800,
+        }
+    }
+
+    @classmethod
+    def initialize(cls):
+        try:
+            cls._system_memory_gb = psutil.virtual_memory().total / (1024 ** 3)
+            physical_cores = psutil.cpu_count(logical=False)
+            logical_cores = psutil.cpu_count(logical=True)
+            cls._cpu_cores = physical_cores if physical_cores is not None and physical_cores > 0 else logical_cores
+        except Exception:
+            cls._profile = "conservative"
+            logging.warning("시스템 사양 확인 실패. 보수적인 성능 프로필을 사용합니다.")
+            return
+        
+        if cls._system_memory_gb >= 90:
+            cls._profile = "dominator"
+        elif cls._system_memory_gb >= 45:
+            cls._profile = "extreme"
+        elif cls._system_memory_gb >= 30:
+            cls._profile = "aggressive"
+        elif cls._system_memory_gb >= 22:
+            cls._profile = "enhanced"
+        elif cls._system_memory_gb >= 12:
+            cls._profile = "balanced"
+        else:
+            cls._profile = "conservative"
+        
+        logging.info(f"시스템 사양: {cls._system_memory_gb:.1f}GB RAM, {cls._cpu_cores} Cores. 성능 프로필 '{cls.PROFILES[cls._profile]['name']}' 활성화.")
+
+    @classmethod
+    def get(cls, key):
+        param = cls.PROFILES[cls._profile].get(key)
+        if callable(param):
+            return param(cls._cpu_cores)
+        return param
+
+    @classmethod
+    def get_current_profile_name(cls):
+        return cls.PROFILES[cls._profile]["name"]
+
+    @classmethod
+    def get_current_profile_key(cls):
+        return cls._profile
+
+    @classmethod
+    def set_profile_manually(cls, profile_key):
+        if profile_key in cls.PROFILES:
+            cls._profile = profile_key
+            logging.info(f"사용자가 성능 프로필을 수동으로 '{cls.PROFILES[profile_key]['name']}'(으)로 변경했습니다.")
+            return True
+        return False
+
 class LanguageManager:
     """언어 설정 및 번역을 관리하는 클래스"""
     
@@ -2197,64 +2305,31 @@ class ResourceManager:
         """리소스 매니저 초기화"""
         if ResourceManager._instance is not None:
             raise RuntimeError("ResourceManager는 싱글톤입니다. instance() 메서드를 사용하세요.")
-        
-        # 시스템 사양 확인
-        self.available_cores = cpu_count()
-        self.system_memory_gb = self.get_system_memory_gb()
-        
-        # 시스템 사양에 맞게 스레드/프로세스 수 최적화
-        max_imaging_threads = self.calculate_optimal_threads()
-        raw_processes = self.calculate_optimal_raw_processes()
-        
-        # 통합 이미징 스레드 풀 (이미지 로딩/처리에 사용)
+
+        # HardwareProfileManager에서 직접 파라미터 가져오기
+        HardwareProfileManager.initialize() # 앱의 이 시점에서 초기화
+        max_imaging_threads = HardwareProfileManager.get("max_imaging_threads")
+        raw_processes = HardwareProfileManager.get("max_raw_processes")
+
+        # 통합 이미징 스레드 풀
         self.imaging_thread_pool = PriorityThreadPoolExecutor(
             max_workers=max_imaging_threads,
             thread_name_prefix="Imaging"
         )
-        
         # RAW 디코더 프로세스 풀
         self.raw_decoder_pool = RawDecoderPool(num_processes=raw_processes)
         
-        # 작업 추적
         self.active_tasks = set()
-        self.pending_tasks = {}  # 우선순위별 대기 중인 작업
+        self.pending_tasks = {}
         self._running = True
+        logging.info(f"ResourceManager 초기화 ({HardwareProfileManager.get_current_profile_name()}): 이미징 스레드 {max_imaging_threads}개, RAW 디코더 프로세스 {raw_processes}개")
         
-        logging.info(f"ResourceManager 초기화: 이미징 스레드 {max_imaging_threads}개, RAW 디코더 프로세스 {raw_processes}개")
-        
-        # 작업 모니터링 타이머
+        # 작업 모니터링 타이머 (이 부분은 유지)
         self.monitor_timer = QTimer()
-        self.monitor_timer.setInterval(5000)  # 5초마다 확인
+        self.monitor_timer.setInterval(5000)
         self.monitor_timer.timeout.connect(self.monitor_resources)
         self.monitor_timer.start()
 
-    def get_system_memory_gb(self):
-        """시스템 메모리 크기 확인 (GB)"""
-        try:
-            import psutil
-            return psutil.virtual_memory().total / (1024 * 1024 * 1024)
-        except:
-            return 8.0  # 기본값 8GB
-        
-
-    def calculate_optimal_threads(self):
-        """시스템 사양에 맞는 최적의 스레드 수 계산"""
-        # 저사양: 2스레드, 중간사양: 3스레드, 고사양: 4스레드. 구체적인 숫자는 조율 필요.
-        if self.system_memory_gb >= 24 and self.available_cores >= 8:
-            return 4  # 고사양
-        elif self.system_memory_gb >= 12 and self.available_cores >= 6:
-            return 3  # 중간사양
-        else:
-            return 2  # 저사양 (8GB RAM, 4코어)
-        
-    def calculate_optimal_raw_processes(self):
-        """시스템 사양에 맞는 최적의 RAW 프로세스 수 계산"""
-        # RAW 처리는 메모리 집약적이므로 메모리 우선 고려
-        if self.system_memory_gb >= 12: # 32gb, 24gb, 16gb 중 구체적인 숫자는 조율 필요.
-            return min(2, max(1, self.available_cores // 4))
-        else:
-            return 1  # 8GB-15GB 시스템에서는 1개로 제한
-        
     def monitor_resources(self):
         """시스템 리소스 사용량 모니터링 및 필요시 조치"""
         if not self._running:
@@ -2640,26 +2715,11 @@ class ImageLoader(QObject):
         
         
     def calculate_adaptive_cache_size(self):
-        """시스템 메모리 기반으로 캐시 크기를 더 세분화하여 계산합니다 (절대값 할당)."""
-        
-        calculated_size = 10 # 기본값 (가장 낮은 메모리 구간 또는 예외 상황)
-    
-        # 메모리 구간 및 캐시 크기 설정 (GB 단위)
-        if self.system_memory_gb >= 45: # 48GB 이상
-            calculated_size = 120
-        elif self.system_memory_gb >= 30: # 32GB 가정
-            calculated_size = 80
-        elif self.system_memory_gb >= 22: # 24GB 가정
-            calculated_size = 60
-        elif self.system_memory_gb >= 14: # 16GB 가정
-            calculated_size = 40
-        elif self.system_memory_gb >= 7: # 8GB 가정
-            calculated_size = 20
-        else: # 7GB 미만 (매우 낮은 사양)
-            calculated_size = 10 # 최소 캐시
-
-        logging.info(f"System Memory: {self.system_memory_gb:.1f}GB -> Cache Limit (Image Count): {calculated_size}")
-        return calculated_size
+        """시스템 프로필에 맞는 캐시 크기를 가져옵니다."""
+        # HardwareProfileManager가 이미 초기화되었다고 가정
+        size = HardwareProfileManager.get("cache_size_images")
+        logging.info(f"ImageLoader: 캐시 크기 설정 -> {size}개 이미지 ({HardwareProfileManager.get_current_profile_name()} 프로필)")
+        return size
     
     def create_lru_cache(self, max_size): # 이 함수는 OrderedDict를 반환하며, 실제 크기 제한은 _add_to_cache에서 self.cache_limit을 사용하여 관리됩니다.
         """LRU 캐시 생성 (OrderedDict 기반)"""
@@ -2667,42 +2727,39 @@ class ImageLoader(QObject):
         return OrderedDict()
     
     def check_cache_health(self):
-        """캐시 상태 확인 및 필요시 축소"""
+        """캐시 상태 확인 및 시스템 프로필에 따라 동적으로 축소"""
         try:
-            # 현재 메모리 사용량 확인
             memory_percent = psutil.virtual_memory().percent
-            
-            # 메모리 사용량에 따른 단계적 캐시 정리 (임계치 상향 조정)
             current_time = time.time()
+
+            # HardwareProfileManager에서 현재 프로필의 임계값과 비율 가져오기
+            thresholds = HardwareProfileManager.get("memory_thresholds")
+            ratios = HardwareProfileManager.get("cache_clear_ratios")
             
-            # 위험 단계 (95% 이상): 대규모 정리
-            if memory_percent > 95 and current_time - self.last_cache_adjustment > 5:
-                # 캐시 크기 50% 축소 - 심각한 메모리 부족 상황
-                reduction = max(1, int(len(self.cache) * 0.5))
-                self._remove_oldest_items_from_cache(reduction)
-                logging.warning(f"심각한 메모리 부족 감지 ({memory_percent}%): 캐시 50% 정리 ({reduction}개 항목)")
-                self.last_cache_adjustment = current_time
-                gc.collect()
+            # 임시 쿨다운 (향후 프로필에 추가 가능)
+            cooldowns = {"danger": 5, "warning": 10, "caution": 30}
+
+            level = None
+            if memory_percent > thresholds["danger"]: level = "danger"
+            elif memory_percent > thresholds["warning"]: level = "warning"
+            elif memory_percent > thresholds["caution"]: level = "caution"
+
+            if level and (current_time - self.last_cache_adjustment > cooldowns[level]):
+                reduction_count = max(1, int(len(self.cache) * ratios[level]))
+                removed_count = self._remove_oldest_items_from_cache(reduction_count)
                 
-            # 경고 단계 (90% 이상): 중간 정리
-            elif memory_percent > 90 and current_time - self.last_cache_adjustment > 10:
-                # 캐시 크기 30% 축소 - 경고 수준
-                reduction = max(1, int(len(self.cache) * 0.3))
-                self._remove_oldest_items_from_cache(reduction)
-                logging.warning(f"높은 메모리 사용량 감지 ({memory_percent}%): 캐시 30% 정리 ({reduction}개 항목)")
-                self.last_cache_adjustment = current_time
-                gc.collect()
+                log_level_map = {"danger": logging.CRITICAL, "warning": logging.WARNING, "caution": logging.INFO}
+                logging.log(
+                    log_level_map[level],
+                    f"메모리 사용량 {level.upper()} 수준 ({memory_percent}%): 캐시 {ratios[level]*100:.0f}% 정리 ({removed_count}개 항목 제거)"
+                )
                 
-            # 주의 단계 (85% 이상): 소규모 정리
-            elif memory_percent > 85 and current_time - self.last_cache_adjustment > 30:
-                # 캐시 크기 15% 축소 - 예방적 조치
-                reduction = max(1, int(len(self.cache) * 0.15))
-                self._remove_oldest_items_from_cache(reduction)
-                logging.warning(f"메모리 주의 수준 감지 ({memory_percent}%): 캐시 15% 정리 ({reduction}개 항목)")
                 self.last_cache_adjustment = current_time
                 gc.collect()
-        except:
-            pass  # psutil 사용 불가 등의 예외 상황 무시
+
+        except Exception as e:
+            if "psutil" not in str(e):
+                logging.warning(f"check_cache_health에서 예외 발생: {e}")
 
     def _remove_oldest_items_from_cache(self, count):
         """캐시에서 가장 오래된 항목 제거하되, 현재 이미지와 인접 이미지는 보존"""
@@ -3815,18 +3872,18 @@ class PhotoSortApp(QMainWindow):
     SHORTCUT_DEFINITIONS = [
         ("group", "탐색"),
         ("key", "WASD / 방향키", "사진 넘기기"),
-        ("key", "Shift + WASD/방향키", "뷰포트 이동 (확대 시)"),
+        ("key", "Shift + WASD/방향키", "뷰포트 이동 (확대 중에)"),
         ("key", "Shift + A/D", "이전/다음 페이지 (그리드 모드)"),
         ("key", "Enter", "사진 목록 보기"),
         ("key", "F5", "폴더 새로고침"),
         
         ("group", "보기 설정"),
-        ("key", "G", "그리드 모드 켜기/끄기"),
-        ("key", "C", "A | B 비교 모드 켜기/끄기"),
+        ("key", "G(Grid)", "그리드 모드 켜기/끄기"),
+        ("key", "C(Compare)", "A | B 비교 모드 켜기/끄기"),
         ("key", "Space", "줌 전환 (Fit/100%) 또는 그리드에서 확대"),
-        ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / Spin)"),
-        ("key", "Z / X", "줌 아웃 / 줌 인 (Spin 모드)"),
-        ("key", "R", "뷰포트 중앙 정렬 (확대 시)"),
+        ("key", "F1 / F2 / F3", "줌 모드 변경 (Fit / 100% / 가변)"),
+        ("key", "Z(Zoom-out) / X(eXpand)", "줌 아웃 / 줌 인 (가변 모드)"),
+        ("key", "R(Reset)", "뷰포트 중앙 정렬"),
         ("key", "ESC", "줌 아웃 또는 그리드 복귀"),
 
         ("group", "파일 작업"),
@@ -3947,6 +4004,20 @@ class PhotoSortApp(QMainWindow):
 
         # 리소스 매니저 초기화
         self.resource_manager = ResourceManager.instance()
+
+        # === 유휴 프리로더(Idle Preloader) 타이머 추가 ===
+        self.idle_preload_timer = QTimer(self)
+        self.idle_preload_timer.setSingleShot(True)
+        # HardwareProfileManager에서 유휴 로딩 관련 설정 가져오기
+        self.idle_preload_enabled = HardwareProfileManager.get("idle_preload_enabled")
+        if self.idle_preload_enabled:
+            idle_interval = HardwareProfileManager.get("idle_interval_ms")
+            self.idle_preload_timer.setInterval(idle_interval)
+            self.idle_preload_timer.timeout.connect(self.start_idle_preloading)
+            self.is_idle_preloading_active = False # 진행 중 작업 추적 플래그
+            logging.info(f"유휴 프리로더 활성화 (유휴 시간: {idle_interval}ms)")
+        else:
+            logging.info("유휴 프리로더 비활성화 (Conservative 프로필)")
 
         # RAW 디코더 결과 처리 타이머 
         if not hasattr(self, 'raw_result_processor_timer'): # 중복 생성 방지
@@ -4463,6 +4534,7 @@ class PhotoSortApp(QMainWindow):
         
         # 언어 및 날짜 형식 관련 콜백 등록
         LanguageManager.register_language_change_callback(self.update_ui_texts)
+        LanguageManager.register_language_change_callback(self.update_performance_profile_combo_text)
         DateFormatManager.register_format_change_callback(self.update_date_formats)
 
         # ExifTool 가용성 확인
@@ -4516,6 +4588,78 @@ class PhotoSortApp(QMainWindow):
 
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._sync_viewports)
         self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_viewports)
+
+
+    def start_idle_preloading(self):
+        """사용자가 유휴 상태일 때 백그라운드에서 이미지를 미리 로드합니다."""
+        # 앱 상태 확인
+        if not self.image_files or self.grid_mode != "Off" or self.is_idle_preloading_active:
+            return
+
+        # 현재 캐시된 파일들의 set과 로딩 중인 파일들의 set을 만듭니다.
+        cached_paths = set(self.image_loader.cache.keys())
+        # ResourceManager를 통해 현재 활성/대기 중인 작업 경로를 가져오는 기능이 필요할 수 있으나,
+        # 여기서는 간단하게 캐시된 경로만 확인합니다.
+
+        # 미리 로드할 파일 목록을 결정합니다.
+        # 현재 이미지 위치에서부터 양방향으로 순차적으로 찾는 것이 효과적입니다.
+        files_to_preload = []
+        total_files = len(self.image_files)
+        
+        # 캐시가 꽉 찼는지 먼저 확인
+        if len(cached_paths) >= self.image_loader.cache_limit:
+            logging.info("유휴 프리로더: 캐시가 이미 가득 차서 실행하지 않습니다.")
+            return
+
+        # 현재 인덱스에서 시작하여 양방향으로 탐색
+        for i in range(1, total_files):
+            # 앞으로 탐색
+            forward_index = (self.current_image_index + i) % total_files
+            forward_path = str(self.image_files[forward_index])
+            if forward_path not in cached_paths:
+                files_to_preload.append(forward_path)
+
+            # 뒤로 탐색 (중복 방지)
+            backward_index = (self.current_image_index - i + total_files) % total_files
+            if backward_index != forward_index:
+                backward_path = str(self.image_files[backward_index])
+                if backward_path not in cached_paths:
+                    files_to_preload.append(backward_path)
+        
+        if not files_to_preload:
+            logging.info("유휴 프리로더: 모든 이미지가 이미 캐시되었습니다.")
+            return
+
+        logging.info(f"유휴 프리로더: {len(files_to_preload)}개의 이미지를 낮은 우선순위로 로딩 시작합니다.")
+        self.is_idle_preloading_active = True
+
+        # ResourceManager를 통해 'low' 우선순위로 작업을 제출합니다.
+        for path in files_to_preload:
+            # 매번 루프를 돌 때마다 중단 플래그와 캐시 상태를 확인합니다.
+            if not self.is_idle_preloading_active:
+                logging.info("유휴 프리로더: 사용자 입력으로 인해 로딩이 중단되었습니다.")
+                break
+            
+            if len(self.image_loader.cache) >= self.image_loader.cache_limit:
+                logging.info("유휴 프리로더: 캐시가 가득 차서 로딩을 중단합니다.")
+                break
+            
+            # 이미 캐시되었거나 다른 작업에서 로딩 중일 수 있으므로 다시 확인
+            if path in self.image_loader.cache:
+                continue
+            
+            # _preload_image_for_grid 함수는 내부적으로 ImageLoader 캐시를 채우므로 재사용합니다.
+            # 이 함수는 RAW 파일의 경우 preview만 로드하므로, 유휴 로딩 시에도 시스템 부하가 적습니다.
+            self.resource_manager.submit_imaging_task_with_priority(
+                'low',
+                self._preload_image_for_grid,
+                path
+            )
+
+        # 모든 작업 제출이 끝나면 플래그를 리셋합니다.
+        # 실제 작업은 백그라운드에서 계속됩니다.
+        self.is_idle_preloading_active = False
+        logging.info("유휴 프리로더: 모든 로딩 작업 제출 완료.")
 
     def deactivate_compare_mode(self):
         """비교 모드 X 버튼 클릭 시 동작 처리"""
@@ -6927,46 +7071,10 @@ class PhotoSortApp(QMainWindow):
             delattr(self, 'is_first_run')
         
         logging.info("PhotoSortApp: 첫 실행 설정 완료")
-            
-    def _build_shortcut_html_text(self):
-        """단축키 안내 HTML 테이블 텍스트 생성"""
-        # 테이블 스타일 정의 (팝업창과 동일한 스타일 사용)
-        html = """
-        <style>
-            table { width: 100%; border-collapse: collapse; font-size: 10pt; }
-            th { text-align: left; padding: 12px 8px; color: #FFFFFF; border-bottom: 1px solid #666666; }
-            td { padding: 8px; vertical-align: top; }
-            td.key { font-weight: bold; color: #E0E0E0; width: 35%; }
-            td.desc { color: #B0B0B0; }
-            .group-title { 
-                padding-top: 25px; 
-                font-size: 11pt; 
-                font-weight: bold; 
-                color: #FFFFFF; 
-            }
-        </style>
-        <table>
-        """
-        
-        for item in self.SHORTCUT_DEFINITIONS:
-            if len(item) == 2 and item[0] == "group":
-                # 그룹 제목 행
-                item_type, col1 = item
-                group_title = LanguageManager.translate(col1)
-                html += f"<tr><td colspan='2' class='group-title'>{group_title}</td></tr>"
-            elif len(item) == 3 and item[0] == "key":
-                # 단축키 항목 행
-                item_type, col1, col2 = item
-                key_text = LanguageManager.translate(col1)
-                desc_text = LanguageManager.translate(col2)
-                html += f"<tr><td class='key'>{key_text}</td><td class='desc'>{desc_text}</td></tr>"
-                
-        html += "</table>"
-        return html
-    
 
-    def _build_shortcut_popup_content_html(self):
-        """단축키 안내 팝업창에 표시될 내용을 HTML 테이블로 생성합니다."""
+
+    def _build_shortcut_html(self):
+        """단축키 안내를 위한 HTML 문자열을 생성하는 통합 함수입니다."""
         # 테이블 스타일 정의
         html = """
         <style>
@@ -6984,28 +7092,26 @@ class PhotoSortApp(QMainWindow):
         </style>
         <table>
         """
-        
         for item in self.SHORTCUT_DEFINITIONS:
             if len(item) == 2 and item[0] == "group":
                 # 그룹 제목 행
                 item_type, col1 = item
                 group_title = LanguageManager.translate(col1)
-                html += f"<tr><td colspan='2' class='group-title'>{group_title}</td></tr>"
+                # td 태그에 직접 style을 추가하여 가운데 정렬
+                html += f"<tr><td colspan='2' class='group-title' style='text-align: center;'>{group_title}</td></tr>"
             elif len(item) == 3 and item[0] == "key":
                 # 단축키 항목 행
                 item_type, col1, col2 = item
                 key_text = LanguageManager.translate(col1)
                 desc_text = LanguageManager.translate(col2)
                 html += f"<tr><td class='key'>{key_text}</td><td class='desc'>{desc_text}</td></tr>"
-                
         html += "</table>"
         return html
-
 
     def _update_shortcut_label_text(self, label_widget):
         """주어진 라벨 위젯의 텍스트를 현재 언어의 단축키 안내로 업데이트"""
         if label_widget:
-            label_widget.setText(self._build_shortcut_html_text())
+            label_widget.setText(self._build_shortcut_html())
 
     def update_counter_layout(self):
         """Grid 모드에 따라 카운터 레이블과 설정 버튼의 레이아웃을 업데이트"""
@@ -7062,72 +7168,70 @@ class PhotoSortApp(QMainWindow):
         self.update_image_count_label()
 
     def start_background_thumbnail_preloading(self):
-        """Grid Off 상태일 때 2x2 및 3x3 썸네일 백그라운드 생성을 시작합니다."""
+        """Grid Off 상태일 때 그리드 썸네일 백그라운드 생성을 시작합니다."""
         if self.grid_mode != "Off" or not self.image_files:
-            return  # Grid 모드이거나 이미지 파일이 없으면 실행 안 함
+            return
 
         logging.info("백그라운드 그리드 썸네일 생성 시작...")
-
-        # 이전 백그라운드 작업 취소
         for future in self.active_thumbnail_futures:
             future.cancel()
         self.active_thumbnail_futures.clear()
 
-        # 현재 화면에 표시된 이미지와 그 주변 이미지만 우선적으로 처리
         current_index = self.current_image_index
         if current_index < 0:
             return
+
+        # HardwareProfileManager에서 그리드 미리 로딩 한도 비율 가져오기
+        limit_factor = HardwareProfileManager.get("preload_grid_bg_limit_factor")
+        preload_limit = int(self.image_loader.cache_limit * limit_factor)
+        max_preload = min(preload_limit, len(self.image_files))
         
-        # 시스템 메모리에 따라 프리로드 범위 조정
+        logging.debug(f"그리드 썸네일 사전 로드 한도: {max_preload}개 (캐시 크기: {self.image_loader.cache_limit}, 비율: {limit_factor})")
+        # --- 로직 개선 끝 ---
+
         preload_range = self.calculate_adaptive_thumbnail_preload_range()
-        
-        # 인접 이미지 우선 처리 (현재 이미지 ± preload_range)
         futures = []
-        
-        # 최대 프리로드 개수 제한
-        max_preload = min(30, len(self.image_files))
         
         # 우선순위 이미지 (현재 이미지 주변)
         priority_indices = []
-        for offset in range(-preload_range, preload_range + 1):
-            idx = (current_index + offset) % len(self.image_files)
-            if idx not in priority_indices:
-                priority_indices.append(idx)
-        
-        # 우선순위 이미지 로드
-        for i, idx in enumerate(priority_indices):
-            if i >= max_preload:
-                break
-                
-            img_path = str(self.image_files[idx])
+        # 중복 추가를 방지하기 위한 set
+        added_indices = set()
+
+        for offset in range(preload_range + 1):
+            if len(priority_indices) >= max_preload: break
             
-            # 우선순위로 이미지 사전 로드 작업 제출
+            # 현재 위치
+            if offset == 0:
+                idx = current_index
+                if idx not in added_indices:
+                    priority_indices.append(idx)
+                    added_indices.add(idx)
+                continue
+                
+            # 앞쪽
+            idx_fwd = (current_index + offset) % len(self.image_files)
+            if idx_fwd not in added_indices:
+                priority_indices.append(idx_fwd)
+                added_indices.add(idx_fwd)
+                if len(priority_indices) >= max_preload: break
+
+            # 뒤쪽
+            idx_bwd = (current_index - offset + len(self.image_files)) % len(self.image_files)
+            if idx_bwd not in added_indices:
+                priority_indices.append(idx_bwd)
+                added_indices.add(idx_bwd)
+                if len(priority_indices) >= max_preload: break
+
+        # 우선순위 이미지 로드
+        for idx in priority_indices:
+            img_path = str(self.image_files[idx])
             future = self.grid_thumbnail_executor.submit(
                 self._preload_image_for_grid, img_path
             )
             futures.append(future)
 
-        # 나머지 이미지는 별도 작업으로 제출 (필요할 때만)
-        if len(self.image_files) > max_preload and self.system_memory_gb >= 16:
-            def delayed_preload():
-                time.sleep(3)  # 3초 후에 시작
-                remaining = [i for i in range(len(self.image_files)) if i not in priority_indices]
-                # 메모리 상황에 따라 작업 추가
-                for i in remaining[:20]:  # 최대 20개만 추가 프리로드
-                    if getattr(self, '_running', True):  # 앱이 아직 실행 중인지 확인
-                        try:
-                            img_path = str(self.image_files[i])
-                            self._preload_image_for_grid(img_path)
-                        except:
-                            pass
-            
-            # 낮은 우선순위로 지연 로드 작업 제출
-            if self.system_memory_gb >= 16:  # 16GB 이상 시스템에서만 활성화
-                delayed_future = self.grid_thumbnail_executor.submit(delayed_preload)
-                futures.append(delayed_future)
-
         self.active_thumbnail_futures = futures
-        logging.info(f"총 {len(futures)}개의 이미지 사전 로딩 작업 제출됨.")
+        logging.info(f"총 {len(futures)}개의 그리드용 이미지 사전 로딩 작업 제출됨.")
 
     def calculate_adaptive_thumbnail_preload_range(self):
         """시스템 메모리에 따라 프리로딩 범위 결정"""
@@ -7280,6 +7384,38 @@ class PhotoSortApp(QMainWindow):
         self.shortcuts_button.setStyleSheet(button_style)
         self.shortcuts_button.clicked.connect(self.show_shortcuts_popup)
 
+        # --- 성능 프로필 설정 ---
+        self.performance_profile_combo = QComboBox()
+        # 아이템 추가 로직을 전용 업데이트 함수로 이전
+        self.update_performance_profile_combo_text()
+        self.performance_profile_combo.setStyleSheet(self.generate_combobox_style())
+        self.performance_profile_combo.currentIndexChanged.connect(self.on_performance_profile_changed)
+
+    def update_performance_profile_combo_text(self):
+        """성능 프로필 콤보박스의 텍스트를 현재 언어에 맞게 업데이트합니다."""
+        if not hasattr(self, 'performance_profile_combo'):
+            return
+
+        # 현재 선택된 프로필 키를 저장해 둡니다.
+        current_key = self.performance_profile_combo.itemData(self.performance_profile_combo.currentIndex())
+        
+        # 시그널을 잠시 막고 아이템을 다시 채웁니다.
+        self.performance_profile_combo.blockSignals(True)
+        self.performance_profile_combo.clear()
+        
+        for profile_key, profile_data in HardwareProfileManager.PROFILES.items():
+            # 번역 키를 가져와서 번역합니다.
+            translated_name = LanguageManager.translate(profile_data["name"])
+            self.performance_profile_combo.addItem(translated_name, profile_key)
+        
+        # 이전에 선택했던 프로필을 다시 선택합니다.
+        if current_key:
+            index = self.performance_profile_combo.findData(current_key)
+            if index != -1:
+                self.performance_profile_combo.setCurrentIndex(index)
+                
+        self.performance_profile_combo.blockSignals(False)
+
     def update_all_settings_controls_text(self):
         """현재 언어 설정에 맞게 모든 설정 관련 컨트롤의 텍스트를 업데이트합니다."""
         # --- 라디오 버튼 ---
@@ -7427,10 +7563,37 @@ class PhotoSortApp(QMainWindow):
             return False
         return True
 
+    def on_performance_profile_changed(self, index):
+        if index < 0: return
+        profile_key = self.performance_profile_combo.itemData(index)
+        
+        HardwareProfileManager.set_profile_manually(profile_key)
+        logging.info(f"사용자가 성능 프로필을 '{profile_key}'로 변경했습니다. 앱을 재시작해야 적용됩니다.")
+        
+        # 번역 키 사용
+        title = LanguageManager.translate("설정 변경")
+        line1_key = "성능 프로필이 '{profile_name}'(으)로 변경되었습니다."
+        line2_key = "이 설정은 앱을 재시작해야 완전히 적용됩니다."
+        
+        profile_name_key = HardwareProfileManager.get("name")
+        
+        translated_profile_name = LanguageManager.translate(profile_name_key)
+        
+        message = (
+            LanguageManager.translate(line1_key).format(profile_name=translated_profile_name) +
+            "\n\n" +
+            LanguageManager.translate(line2_key)
+        )
+        
+        self.show_themed_message_box(QMessageBox.Information, title, message)
+
     def _build_advanced_tools_group(self, is_first_run=False):
         """'도구 및 고급 설정' 그룹 UI를 생성합니다."""
         def add_widgets(layout):
             if not is_first_run:
+                # 성능 프로필 설정 추가
+                layout.addWidget(self._create_setting_row("성능 설정 ⓘ", self.performance_profile_combo))
+
                 # "세션 관리" 버튼을 라벨 없이 바로 추가
                 container_session = QWidget()
                 layout_session = QHBoxLayout(container_session)
@@ -7446,7 +7609,7 @@ class PhotoSortApp(QMainWindow):
                 layout_raw.addWidget(self.reset_camera_settings_button)
                 layout_raw.addStretch(1)
                 layout.addWidget(container_raw)
-            
+
             # "단축키 확인" 버튼을 라벨 없이 바로 추가
             container_shortcuts = QWidget()
             layout_shortcuts = QHBoxLayout(container_shortcuts)
@@ -7470,6 +7633,12 @@ class PhotoSortApp(QMainWindow):
         label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
         label.setMinimumWidth(UIScaleManager.get("settings_label_width"))
         label.setObjectName(f"{label_key.replace(' ', '_')}_label")
+        # 툴팁 추가
+        if label_key == "성능 설정 ⓘ":
+            tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
+            tooltip_text = LanguageManager.translate(tooltip_key)
+            label.setToolTip(tooltip_text)
+            label.setCursor(Qt.WhatsThisCursor)
 
         row_layout.addWidget(label)
 
@@ -7991,12 +8160,12 @@ class PhotoSortApp(QMainWindow):
                 border: none; /* 테두리 없음 */
             }}
         """)
-        html_content = self._build_shortcut_popup_content_html() # 위에서 만든 함수 호출
+        html_content = self._build_shortcut_html() # 위에서 만든 함수 호출
         text_browser.setHtml(html_content)
         
         # 텍스트 브라우저의 최소/권장 크기 설정 (내용에 따라 조절)
-        text_browser.setMinimumHeight(980)
-        text_browser.setMinimumWidth(550)
+        text_browser.setMinimumHeight(900)
+        text_browser.setMinimumWidth(700)
 
         layout.addWidget(text_browser)
 
@@ -12994,129 +13163,65 @@ class PhotoSortApp(QMainWindow):
 
 
     def preload_adjacent_images(self, current_index):
-        """인접 이미지 미리 로드 - 시스템 메모리에 따라 동적으로 범위 조절."""
+        """인접 이미지 미리 로드 - 시스템 프로필에 따라 동적으로 범위 조절."""
         if not self.image_files:
             return
+
+        # HardwareProfileManager에서 현재 프로필의 미리 로드 범위 가져오기
+        forward_preload_count, backward_preload_count = HardwareProfileManager.get("preload_range_adjacent")
+        priority_close_threshold = HardwareProfileManager.get("preload_range_priority")
         
         total_images = len(self.image_files)
         
-        # --- 시스템 메모리 기반으로 미리 로드할 앞/뒤 개수 결정 ---
-        forward_preload_count = 0
-        backward_preload_count = 0
-        priority_close_threshold = 0 # 가까운 이미지에 'high' 우선순위를 줄 범위
-
-        # self.system_memory_gb는 PhotoSortApp.__init__에서 psutil을 통해 설정됨
-        if self.system_memory_gb >= 45: # 48GB 이상 (매우 적극적)
-            forward_preload_count = 12 # 예: 앞으로 10개
-            backward_preload_count = 4  # 예: 뒤로 4개
-            priority_close_threshold = 5 # 앞/뒤 5개까지 high/medium
-        elif self.system_memory_gb >= 30: # 32GB 이상 (적극적)
-            forward_preload_count = 9
-            backward_preload_count = 3
-            priority_close_threshold = 4
-        elif self.system_memory_gb >= 22: # 24GB 이상 (보통)
-            forward_preload_count = 7 
-            backward_preload_count = 2
-            priority_close_threshold = 3
-        elif self.system_memory_gb >= 14: # 16GB 이상 (약간 보수적)
-            forward_preload_count = 5
-            backward_preload_count = 2
-            priority_close_threshold = 2
-        elif self.system_memory_gb >= 7: # 8GB 이상 (보수적)
-            forward_preload_count = 4
-            backward_preload_count = 2
-            priority_close_threshold = 2
-        else: # 7GB 미만 (매우 보수적)
-            forward_preload_count = 3
-            backward_preload_count = 1
-            priority_close_threshold = 1
-        
-        logging.debug(f"preload_adjacent_images: System Memory={self.system_memory_gb:.1f}GB -> FwdPreload={forward_preload_count}, BwdPreload={backward_preload_count}, PrioCloseThr={priority_close_threshold}")
-        # --- 미리 로드 개수 결정 끝 ---
-
+        # 이동 방향 감지 (기존 로직 유지)
         direction = 1
-        if hasattr(self, 'previous_image_index') and self.previous_image_index != current_index : # 실제로 인덱스가 변경되었을 때만 방향 감지
+        if hasattr(self, 'previous_image_index') and self.previous_image_index != current_index:
             if self.previous_image_index < current_index or \
-               (self.previous_image_index == total_images - 1 and current_index == 0): # 순환 포함
-                direction = 1  # 앞으로 이동
+            (self.previous_image_index == total_images - 1 and current_index == 0):
+                direction = 1
             elif self.previous_image_index > current_index or \
-                 (self.previous_image_index == 0 and current_index == total_images - 1): # 순환 포함
-                direction = -1 # 뒤로 이동
-        
-        self.previous_image_index = current_index # 현재 인덱스 저장
-        
-        cached_images = set()
-        requested_images = set()
-        
-        # 캐시된 이미지 확인 범위도 동적으로 조절 가능 (선택적, 여기서는 기존 범위 유지)
-        # 예: max(forward_preload_count, backward_preload_count) + 약간의 여유
-        check_range = max(forward_preload_count, backward_preload_count, 3) + 5 
-        for i in range(max(0, current_index - check_range), min(total_images, current_index + check_range + 1)):
-            img_path_str = str(self.image_files[i])
-            if img_path_str in self.image_loader.cache:
-                cached_images.add(i)
+                (self.previous_image_index == 0 and current_index == total_images - 1):
+                direction = -1
+        self.previous_image_index = current_index
+
+        # 캐시된 이미지와 현재 로딩 요청된 이미지 확인
+        cached_images = set(self.image_loader.cache.keys())
+        # (이하 로직은 기존과 거의 동일하나, 범위 변수를 프로필에서 가져온 값으로 사용)
         
         to_preload = []
-        
-        # 이동 방향에 따라 미리 로드 대상 및 우선순위 결정
-        if direction >= 0: # 앞으로 이동 중 (또는 정지 상태)
-            # 앞쪽 이미지 우선 로드
+        if direction >= 0: # 앞으로 이동
             for offset in range(1, forward_preload_count + 1):
                 idx = (current_index + offset) % total_images
-                if idx not in cached_images:
+                if str(self.image_files[idx]) not in cached_images:
                     priority = 'high' if offset <= priority_close_threshold else ('medium' if offset <= priority_close_threshold * 2 else 'low')
-                    to_preload.append((idx, "forward", priority, offset)) # 우선순위 문자열 직접 전달
-            # 뒤쪽 이미지 로드
+                    to_preload.append((idx, priority))
             for offset in range(1, backward_preload_count + 1):
-                idx = (current_index - offset + total_images) % total_images # 음수 인덱스 방지
-                if idx not in cached_images:
-                    priority = 'medium' if offset <= priority_close_threshold else 'low'
-                    to_preload.append((idx, "backward", priority, offset))
-        else: # 뒤로 이동 중
-            # 뒤쪽 이미지 우선 로드
-            for offset in range(1, forward_preload_count + 1): # 변수명은 forward_preload_count 지만 실제로는 뒤쪽
                 idx = (current_index - offset + total_images) % total_images
-                if idx not in cached_images:
+                if str(self.image_files[idx]) not in cached_images:
+                    priority = 'medium' if offset <= priority_close_threshold else 'low'
+                    to_preload.append((idx, priority))
+        else: # 뒤로 이동
+            for offset in range(1, forward_preload_count + 1):
+                idx = (current_index - offset + total_images) % total_images
+                if str(self.image_files[idx]) not in cached_images:
                     priority = 'high' if offset <= priority_close_threshold else ('medium' if offset <= priority_close_threshold * 2 else 'low')
-                    to_preload.append((idx, "backward", priority, offset))
-            # 앞쪽 이미지 로드
+                    to_preload.append((idx, priority))
             for offset in range(1, backward_preload_count + 1):
                 idx = (current_index + offset) % total_images
-                if idx not in cached_images:
+                if str(self.image_files[idx]) not in cached_images:
                     priority = 'medium' if offset <= priority_close_threshold else 'low'
-                    to_preload.append((idx, "forward", priority, offset))
-        
-        # 로드 요청 제출 (우선순위 사용)
-        for idx, direction_type_log, priority_str_to_use, offset_log in to_preload:
-            img_path = str(self.image_files[idx])
-            if img_path in requested_images:
-                continue
-            
-            # 실제 로드할 RAW 파일의 처리 방식 결정 (decode or preview)
-            file_path_obj_preload = Path(img_path)
-            is_raw_preload = file_path_obj_preload.suffix.lower() in self.raw_extensions
-            # ImageLoader의 현재 전역 전략을 따르거나, 미리 로딩 시에는 강제로 preview만 하도록 결정 가능
-            # 여기서는 ImageLoader의 현재 전략을 따른다고 가정 (이전과 동일)
-            raw_processing_method_preload = self.image_loader._raw_load_strategy # ImageLoader의 현재 전략
+                    to_preload.append((idx, priority))
 
-            if is_raw_preload and raw_processing_method_preload == "decode":
-                logging.debug(f"Preloading adjacent RAW (decode): {file_path_obj_preload.name}, is_main=False")
-                # --- 콜백 래핑 시작 ---
-                wrapped_preload_callback = lambda result_dict, req_idx=idx: self._on_raw_decoded_for_display(
-                    result_dict,
-                    requested_index=req_idx, # 람다 기본 인자로 캡처
-                    is_main_display_image=False # 미리 로딩이므로 False
-                )
-                self.resource_manager.submit_raw_decoding(img_path, wrapped_preload_callback)
-            else:
-                # JPG 또는 RAW (preview 모드) 미리 로딩
-                logging.debug(f"Preloading adjacent JPG/RAW_Preview: {Path(img_path).name} with priority {priority_str_to_use}")
-                self.resource_manager.submit_imaging_task_with_priority(
-                    priority_str_to_use,
-                    self.image_loader._preload_image, 
-                    img_path
-                )
-            requested_images.add(img_path)
+        # 로드 요청 제출
+        for idx, priority in to_preload:
+            img_path = str(self.image_files[idx])
+            # ... (기존과 동일하게 RAW/JPG 구분하여 작업 제출) ...
+            # 여기서는 _preload_image_for_grid를 사용하여 preview만 로드하는 것으로 단순화
+            self.resource_manager.submit_imaging_task_with_priority(
+                priority,
+                self._preload_image_for_grid, 
+                img_path
+            )
 
 
     def on_grid_cell_clicked(self, clicked_widget, clicked_index):
@@ -13306,6 +13411,7 @@ class PhotoSortApp(QMainWindow):
             "folder_count": self.folder_count,
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
+            "performance_profile": HardwareProfileManager.get_current_profile_key(),
             "compare_mode_active": self.compare_mode_active,
             "image_B_path": str(self.image_B_path) if self.image_B_path else "",
         }
@@ -13696,6 +13802,24 @@ class PhotoSortApp(QMainWindow):
             # 6. 최종 UI 조정 및 포커스 설정
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
+
+            # --- 성능 프로필 콤보박스 UI 동기화 ---
+            # 저장된 프로필이 있다면 수동으로 설정
+            saved_profile = loaded_data.get("performance_profile")
+            if saved_profile:
+                HardwareProfileManager.set_profile_manually(saved_profile)
+
+            # 현재 활성화된 프로필(자동 또는 수동)에 맞게 콤보박스 선택
+            current_profile_key = HardwareProfileManager.get_current_profile_key()
+            if hasattr(self, 'performance_profile_combo'):
+                index = self.performance_profile_combo.findData(current_profile_key)
+                if index != -1:
+                    # 시그널 발생을 막기 위해 blockSignals 사용
+                    self.performance_profile_combo.blockSignals(True)
+                    self.performance_profile_combo.setCurrentIndex(index)
+                    self.performance_profile_combo.blockSignals(False)
+            # --- 동기화 끝 ---
+
             logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
             return True # 정상적으로 상태 로드 완료
 
@@ -14886,6 +15010,7 @@ class PhotoSortApp(QMainWindow):
                 label.setText(LanguageManager.translate(key))
 
         # --- 개별 설정 항목 라벨 업데이트 ---
+        # 사용되지 않는 키를 제거하고 '성능 프로필' 키를 추가했습니다.
         setting_row_keys = {
             "언어_label": "언어",
             "테마_label": "테마",
@@ -14895,16 +15020,18 @@ class PhotoSortApp(QMainWindow):
             "분류_폴더_개수_label": "분류 폴더 개수",
             "뷰포트_이동_속도_label": "뷰포트 이동 속도",
             "마우스_휠_동작_label": "마우스 휠 동작",
-            "세션_저장_및_불러오기_🖜_label": "세션 저장 및 불러오기 🖜",
-            "저장된_RAW_처리_방식_label": "저장된 RAW 처리 방식",
-            "단축키_확인_🖜_label": "단축키 확인 🖜"
+            "성능_설정_ⓘ_label": "성능 설정 ⓘ",
         }
-        for name, key in setting_row_keys.items():
-            label = parent_widget.findChild(QLabel, name)
+        for object_name, translation_key in setting_row_keys.items():
+            label = parent_widget.findChild(QLabel, object_name)
             if label:
-                label.setText(LanguageManager.translate(key))
-        
-        # --- 라디오 버튼 텍스트 업데이트 ---
+                label.setText(LanguageManager.translate(translation_key))
+                if translation_key == "성능 설정 ⓘ":
+                    tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
+                    tooltip_text = LanguageManager.translate(tooltip_key)
+                    label.setToolTip(tooltip_text)
+
+        # --- 라디오 버튼 텍스트 업데이트 (이전과 동일) ---
         if hasattr(self, 'panel_pos_left_radio'):
             self.panel_pos_left_radio.setText(LanguageManager.translate("좌측"))
         if hasattr(self, 'panel_pos_right_radio'):
@@ -14914,27 +15041,24 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'mouse_wheel_none_radio'):
             self.mouse_wheel_none_radio.setText(LanguageManager.translate("없음"))
 
-        # --- 버튼 텍스트 업데이트 ---
-        # reset_camera_settings_button의 텍스트를 "RAW 처리 방식 초기화"로 변경합니다.
+        # --- 버튼 텍스트 업데이트 (이전과 동일) ---
         if hasattr(self, 'reset_camera_settings_button'):
             self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
         if hasattr(self, 'session_management_button'):
             self.session_management_button.setText(LanguageManager.translate("세션 관리"))
         if hasattr(self, 'shortcuts_button'):
             self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
-        
-        # --- 정보 및 후원 섹션 텍스트 업데이트 ---
+
+        # --- 정보 및 후원 섹션 텍스트 업데이트 (이전과 동일) ---
         info_label = parent_widget.findChild(QLabel, "photosort_info_label")
         if info_label:
             info_label.setText(self.create_translated_info_text())
-
-        # QRLinkLabel은 objectName이 없으므로 직접 찾아서 업데이트 (기존 방식 유지)
         for qr_label in parent_widget.findChildren(QRLinkLabel):
-            if qr_label.url == "": # URL이 없는 QR 라벨(카카오페이, 네이버페이)을 대상으로 함
+            if qr_label.url == "":
                 if "KakaoPay" in qr_label.text() or "카카오페이" in qr_label.text():
-                     qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
+                    qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
                 elif "NaverPay" in qr_label.text() or "네이버페이" in qr_label.text():
-                     qr_label.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
+                    qr_label.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
 
     def update_date_formats(self):
         """날짜 형식이 변경되었을 때 UI 업데이트"""
@@ -15171,7 +15295,7 @@ def main():
         "WASD / 방향키": "WASD / Arrow Keys",
         "사진 넘기기": "Navigate photos",
         "Shift + WASD/방향키": "Shift + WASD/Arrow Keys",
-        "뷰포트 이동 (확대 시)": "Pan viewport (when zoomed)",
+        "뷰포트 이동 (확대 중에)": "Pan viewport (while zoomed)",
         "Shift + A/D": "Shift + A/D",
         "이전/다음 페이지 (그리드 모드)": "Previous/Next page (in Grid mode)",
         "Enter": "Enter",
@@ -15186,11 +15310,11 @@ def main():
         "Space": "Space",
         "줌 전환 (Fit/100%) 또는 그리드에서 확대": "Toggle Zoom (Fit/100%) or Zoom in from Grid",
         "F1 / F2 / F3": "F1 / F2 / F3",
-        "줌 모드 변경 (Fit / 100% / Spin)": "Change Zoom mode (Fit / 100% / Spin)",
+        "줌 모드 변경 (Fit / 100% / 가변)": "Change Zoom mode (Fit / 100% / Variable)",
         "Z / X": "Z / X",
-        "줌 아웃 / 줌 인 (Spin 모드)": "Zoom Out / Zoom In (in Spin mode)",
+        "줌 아웃 / 줌 인 (가변 모드)": "Zoom Out / Zoom In (in Variable mode)",
         "R": "R",
-        "뷰포트 중앙 정렬 (확대 시)": "Center viewport (when zoomed)",
+        "뷰포트 중앙 정렬": "Center viewport",
         "ESC": "ESC",
         "줌 아웃 또는 그리드 복귀": "Zoom out or return to Grid",
         "파일 작업": "File Actions",
@@ -15204,6 +15328,10 @@ def main():
         "페이지 전체 선택 (그리드 모드)": "Select all on page (in Grid mode)",
         "Delete": "Delete",
         "작업 상태 초기화": "Reset working state",
+        "G(Grid)": "G(Grid)",
+        "C(Compare)": "C(Compare)",
+        "Z(Zoom Out) / X(eXpand)": "Z(Zoom Out) / X(eXpand)",
+        "R(Reset)": "R(Reset)",
         # 단축키 번역 키 끝
         # EditableFolderPathLabel 및 InfoFolderPathLabel 관련 번역 키
         "새 폴더명을 입력하거나 폴더를 드래그하여 지정하세요.": "Enter a new folder name or drag a folder here.",
@@ -15225,6 +15353,19 @@ def main():
         "현재 진행 중인 작업을 종료하고 새로운 폴더를 불러오시겠습니까?": "Do you want to end the current session and load a new folder?",
         "예": "Yes",
         "취소": "Cancel",
+        # 성능 프로필 관련 번역키
+        "성능 설정 ⓘ": "Performance Setting ⓘ",
+        "저사양 (8GB RAM)": "Low Spec (8GB RAM)",
+        "표준 (16GB RAM)": "Standard (16GB RAM, Default)",
+        "상급 (24GB RAM)": "Upper-Mid (24GB RAM)",
+        "고성능 (32GB RAM)": "Performance (32GB RAM)",
+        "초고성능 (64GB RAM)": "Ultra Performance (64GB RAM)",
+        "워크스테이션 (96GB+ RAM)": "Workstation (96GB+ RAM)",
+        "설정 변경": "Settings Changed",
+        "성능 프로필이 '{profile_name}'(으)로 변경되었습니다.": "Performance profile has been changed to '{profile_name}'.",
+        "이 설정은 앱을 재시작해야 완전히 적용됩니다.": "This setting will be fully applied after restarting the app.",
+        "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요.":
+        "This profile is automatically set based on your system specifications.\nHigher levels use more memory and CPU to increase processing speed.\nIf the app slows down your system or consumes too much memory, please change to a lower setting.",
     }
     
     LanguageManager.initialize_translations(translations)
