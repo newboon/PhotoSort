@@ -148,7 +148,7 @@ class UIScaleManager:
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가
         "settings_popup_width": 1280,
-        "settings_popup_height": 1070,
+        "settings_popup_height": 1120,
         "settings_layout_vspace": 18,
         "settings_group_title_spacing": 15,
         "infotext_licensebutton": 30,
@@ -208,8 +208,8 @@ class UIScaleManager:
         "checkbox_border_radius": 1,
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
-        "settings_popup_width": 950,
-        "settings_popup_height": 840,
+        "settings_popup_width": 1000,
+        "settings_popup_height": 870,
         "settings_layout_vspace": 12,
         "settings_group_title_spacing": 10,
         "infotext_licensebutton": 20,
@@ -4016,7 +4016,7 @@ class PhotoSortApp(QMainWindow):
         self.zoom_spin_value = 2.0  # 기본 200% (2.0 배율)
         self.original_pixmap = None  # 원본 이미지 pixmap
         self.panning = False  # 패닝 모드 여부
-        self.pan_start_pos = QPoint(0, 0)  # 패닝 시작 위치
+        self.pan_last_mouse_pos = QPointF(0, 0)  # 패닝 중 마우스의 마지막 위치 (QPointF로 정밀도 향상)
         self.scroll_pos = QPoint(0, 0)  # 스크롤 위치 
 
         self.control_panel_on_right = False # 기본값: 왼쪽 (False)
@@ -4031,6 +4031,8 @@ class PhotoSortApp(QMainWindow):
         self.wheel_reset_timer.setSingleShot(True)  # 한 번만 실행
         self.wheel_reset_timer.setInterval(1000)    # 1초 (1000ms)
         self.wheel_reset_timer.timeout.connect(self._reset_wheel_accumulator)
+
+        self.mouse_pan_sensitivity = 1.5  # 마우스 패닝 감도 (1.0, 1.5, 2.0 등)
 
         self.last_processed_camera_model = None
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
@@ -4636,6 +4638,7 @@ class PhotoSortApp(QMainWindow):
         LanguageManager.register_language_change_callback(self.update_ui_texts)
         LanguageManager.register_language_change_callback(self.update_performance_profile_combo_text)
         LanguageManager.register_language_change_callback(self.update_mouse_wheel_sensitivity_combo_text)
+        LanguageManager.register_language_change_callback(self.update_mouse_pan_sensitivity_combo_text)
         DateFormatManager.register_format_change_callback(self.update_date_formats)
 
         # ExifTool 가용성 확인
@@ -7497,6 +7500,12 @@ class PhotoSortApp(QMainWindow):
         self.mouse_wheel_sensitivity_combo.setStyleSheet(self.generate_combobox_style())
         self.mouse_wheel_sensitivity_combo.currentIndexChanged.connect(self.on_mouse_wheel_sensitivity_changed)
 
+        # --- 마우스 패닝 감도 설정 ---
+        self.mouse_pan_sensitivity_combo = QComboBox()
+        self.update_mouse_pan_sensitivity_combo_text() # 텍스트 채우는 함수 호출
+        self.mouse_pan_sensitivity_combo.setStyleSheet(self.generate_combobox_style())
+        self.mouse_pan_sensitivity_combo.currentIndexChanged.connect(self.on_mouse_pan_sensitivity_changed)
+
         # --- 저장된 RAW 처리 방식 초기화 버튼 ---
         button_style = f"""
             QPushButton {{
@@ -7530,6 +7539,39 @@ class PhotoSortApp(QMainWindow):
         self.update_performance_profile_combo_text()
         self.performance_profile_combo.setStyleSheet(self.generate_combobox_style())
         self.performance_profile_combo.currentIndexChanged.connect(self.on_performance_profile_changed)
+
+    def update_mouse_pan_sensitivity_combo_text(self):
+        """마우스 패닝 감도 콤보박스의 텍스트를 현재 언어에 맞게 업데이트합니다."""
+        if not hasattr(self, 'mouse_pan_sensitivity_combo'):
+            return
+        
+        current_data = self.mouse_pan_sensitivity_combo.itemData(self.mouse_pan_sensitivity_combo.currentIndex())
+        
+        self.mouse_pan_sensitivity_combo.blockSignals(True)
+        self.mouse_pan_sensitivity_combo.clear()
+        
+        ## 수정: 옵션 확장 ##
+        self.mouse_pan_sensitivity_combo.addItem(LanguageManager.translate("100% (정확)"), 1.0)
+        self.mouse_pan_sensitivity_combo.addItem(LanguageManager.translate("150% (기본값)"), 1.5)
+        self.mouse_pan_sensitivity_combo.addItem(LanguageManager.translate("200% (빠름)"), 2.0)
+        self.mouse_pan_sensitivity_combo.addItem(LanguageManager.translate("250% (매우 빠름)"), 2.5)
+        self.mouse_pan_sensitivity_combo.addItem(LanguageManager.translate("300% (최고 속도)"), 3.0)
+        ## 수정 끝 ##
+        
+        if current_data is not None:
+            import math
+            for i in range(self.mouse_pan_sensitivity_combo.count()):
+                if math.isclose(self.mouse_pan_sensitivity_combo.itemData(i), current_data):
+                    self.mouse_pan_sensitivity_combo.setCurrentIndex(i)
+                    break
+        else:
+            # 기본값(150%)이 설정되도록 인덱스를 찾아서 설정
+            default_index = self.mouse_pan_sensitivity_combo.findData(1.5)
+            if default_index != -1:
+                self.mouse_pan_sensitivity_combo.setCurrentIndex(default_index)
+
+        self.mouse_pan_sensitivity_combo.blockSignals(False)
+
 
     def update_mouse_wheel_sensitivity_combo_text(self):
         """마우스 휠 민감도 콤보박스의 텍스트를 현재 언어에 맞게 업데이트합니다."""
@@ -7739,10 +7781,19 @@ class PhotoSortApp(QMainWindow):
         self._create_setting_row(grid_layout, current_row, "뷰포트 이동 속도", self.viewport_speed_combo); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 휠 동작", self._create_mouse_wheel_radios()); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 휠 민감도", self.mouse_wheel_sensitivity_combo); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "마우스 패닝 감도", self.mouse_pan_sensitivity_combo); current_row += 1
 
         return current_row
 
 
+    @Slot(int)
+    def on_mouse_pan_sensitivity_changed(self, index):
+        """마우스 패닝 감도 설정 변경 시 호출"""
+        if index < 0: return
+        new_sensitivity = self.mouse_pan_sensitivity_combo.itemData(index)
+        if new_sensitivity is not None:
+            self.mouse_pan_sensitivity = float(new_sensitivity)
+            logging.info(f"마우스 패닝 감도 변경됨: {self.mouse_pan_sensitivity}")
 
     def _build_advanced_tools_group(self, grid_layout, start_row, is_first_run=False):
         """'도구 및 고급 설정' 그룹 UI를 공유 그리드에 추가합니다."""
@@ -9204,7 +9255,7 @@ class PhotoSortApp(QMainWindow):
             if event.button() == Qt.LeftButton:
                 # 패닝 상태 활성화
                 self.panning = True
-                self.pan_start_pos = event.position().toPoint()
+                self.pan_last_mouse_pos = event.position()
                 self.image_start_pos = self.image_label.pos()
                 self.setCursor(Qt.ClosedHandCursor)
     
@@ -9307,82 +9358,70 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"이미지 드래그 시작 오류: {e}")
 
     def image_mouse_move_event(self, event):
-        """이미지 영역 마우스 이동 이벤트 처리"""
-        # === Fit 모드에서 드래그 시작 감지 ===
+        """이미지 영역 마우스 이동 이벤트 처리 (상대 위치 방식으로 개선)"""
+        # === Fit 모드에서 드래그 시작 감지 (기존 코드 유지) ===
         if (self.is_potential_drag and 
             self.zoom_mode == "Fit" and 
             self.image_files and 
             0 <= self.current_image_index < len(self.image_files)):
-            
             current_pos = event.position().toPoint()
             move_distance = (current_pos - self.drag_start_pos).manhattanLength()
-            
             if move_distance > self.drag_threshold:
-                # 드래그 시작
                 self.start_image_drag()
                 self.is_potential_drag = False
                 return
-        
-        # === 기존 패닝 기능 ===
-        # 패닝 중이 아니면 이벤트 무시
-        if not self.panning:
-            return
-            
-        if self.original_pixmap:
-            # 현재 시간 확인 (스로틀링)
-            current_time = int(time.time() * 1000)
-            if current_time - self.last_event_time < 8:  # ~120fps 제한 (8ms)
-                return
-            self.last_event_time = current_time
-            
-            # 마우스 이동 거리 계산 - 패닝 감도 2배 향상
-            delta = (event.position().toPoint() - self.pan_start_pos) * 2
-            
-            # 새로운 이미지 위치 계산 (시작 위치 기준 - 절대 위치 기반)
-            new_pos = self.image_start_pos + delta
-            
-            # 이미지 크기 가져오기 - 키보드 이동과 동일한 로직 적용
-            if self.zoom_mode == "100%":
-                img_width = self.original_pixmap.width()
-                img_height = self.original_pixmap.height()
-            else:  # Spin 모드 - zoom_spin_value 사용으로 수정
-                img_width = self.original_pixmap.width() * self.zoom_spin_value
-                img_height = self.original_pixmap.height() * self.zoom_spin_value
-            
-            # 뷰포트 크기
-            view_width = self.scroll_area.width()
-            view_height = self.scroll_area.height()
-            
-            # 패닝 범위 계산 (이미지가 화면을 벗어나지 않도록)
-            if img_width <= view_width:
-                # 이미지가 뷰포트보다 작으면 가운데 정렬
-                x_min = (view_width - img_width) // 2
-                x_max = x_min
-            else:
-                # 이미지가 뷰포트보다 크면 자유롭게 패닝
-                x_min = min(0, view_width - img_width)
-                x_max = 0
-            
-            if img_height <= view_height:
-                y_min = (view_height - img_height) // 2
-                y_max = y_min
-            else:
-                y_min = min(0, view_height - img_height)
-                y_max = 0
-            
-            # 범위 내로 제한
-            new_x = max(x_min, min(x_max, new_pos.x()))
-            new_y = max(y_min, min(y_max, new_pos.y()))
-            
-            # 이미지 위치 업데이트 - 실제 이동만 여기서 진행
-            self.image_label.move(int(new_x), int(new_y))
-            self._sync_viewports()
 
-            # 미니맵 뷰박스 업데이트 - 패닝 중에는 미니맵 업데이트 빈도 낮추기
-            if current_time - getattr(self, 'last_minimap_update_time', 0) > 50:  # 20fps로 제한
-                self.last_minimap_update_time = current_time
-                if self.minimap_visible and self.minimap_widget.isVisible():
-                    self.update_minimap()
+        # === 부드러운 패닝 로직 (상대 위치 방식) ===
+        if not self.panning or not self.original_pixmap:
+            return
+
+        # 1. 이벤트 스로틀링 (기존과 동일)
+        current_time = int(time.time() * 1000)
+        if current_time - self.last_event_time < 8:  # ~125fps 제한
+            return
+        self.last_event_time = current_time
+
+        # 2. 이전 마우스 위치로부터의 변화량(delta) 계산
+        current_mouse_pos = event.position() # QPointF
+        delta = current_mouse_pos - self.pan_last_mouse_pos
+
+        scaled_delta = delta * self.mouse_pan_sensitivity
+
+        # 3. 이미지의 현재 위치에 변화량을 더해 새 위치 계산
+        current_image_pos = self.image_label.pos()
+        new_pos = QPointF(current_image_pos) + scaled_delta
+
+        # 4. 패닝 범위 제한 (기존 로직 재사용)
+        if self.zoom_mode == "100%":
+            zoom_factor = 1.0
+        else: # Spin 모드
+            zoom_factor = self.zoom_spin_value
+        
+        img_width = self.original_pixmap.width() * zoom_factor
+        img_height = self.original_pixmap.height() * zoom_factor
+        view_width = self.scroll_area.width()
+        view_height = self.scroll_area.height()
+
+        x_min = min(0, view_width - img_width) if img_width > view_width else (view_width - img_width) / 2
+        x_max = 0 if img_width > view_width else x_min
+        y_min = min(0, view_height - img_height) if img_height > view_height else (view_height - img_height) / 2
+        y_max = 0 if img_height > view_height else y_min
+        
+        final_x = max(x_min, min(x_max, new_pos.x()))
+        final_y = max(y_min, min(y_max, new_pos.y()))
+
+        # 5. 이미지 위치 업데이트
+        self.image_label.move(int(final_x), int(final_y))
+        self._sync_viewports()
+
+        # 6. 다음 이벤트를 위해 현재 마우스 위치를 '마지막 위치'로 업데이트
+        self.pan_last_mouse_pos = current_mouse_pos
+        
+        # 7. 미니맵 업데이트 (기존과 동일)
+        if current_time - getattr(self, 'last_minimap_update_time', 0) > 50:
+            self.last_minimap_update_time = current_time
+            if self.minimap_visible and self.minimap_widget.isVisible():
+                self.update_minimap()
     
     def image_mouse_release_event(self, event: QMouseEvent): # QMouseEvent 타입 명시
         # === 드래그 상태 초기화 ===
@@ -13505,6 +13544,7 @@ class PhotoSortApp(QMainWindow):
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
             "mouse_wheel_action": getattr(self, 'mouse_wheel_action', 'photo_navigation'),  # 마우스 휠 동작
             "mouse_wheel_sensitivity": getattr(self, 'mouse_wheel_sensitivity', 1),
+            "mouse_pan_sensitivity": getattr(self, 'mouse_pan_sensitivity', 1.5),
             "folder_count": self.folder_count,
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
@@ -13588,6 +13628,8 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
             self.mouse_wheel_sensitivity = loaded_data.get("mouse_wheel_sensitivity", 1)
             logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_sensitivity: {self.mouse_wheel_sensitivity}")
+            self.mouse_pan_sensitivity = loaded_data.get("mouse_pan_sensitivity", 1.5)
+            logging.info(f"PhotoSortApp.load_state: 로드된 mouse_pan_sensitivity: {self.mouse_pan_sensitivity}")
             self.saved_sessions = loaded_data.get("saved_sessions", {})
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
             # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
@@ -13636,6 +13678,12 @@ class PhotoSortApp(QMainWindow):
                 index = self.mouse_wheel_sensitivity_combo.findData(self.mouse_wheel_sensitivity)
                 if index >= 0:
                     self.mouse_wheel_sensitivity_combo.setCurrentIndex(index)
+            if hasattr(self, 'mouse_pan_sensitivity_combo'):
+                import math
+                for i in range(self.mouse_pan_sensitivity_combo.count()):
+                    if math.isclose(self.mouse_pan_sensitivity_combo.itemData(i), self.mouse_pan_sensitivity):
+                        self.mouse_pan_sensitivity_combo.setCurrentIndex(i)
+                        break
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
@@ -15084,6 +15132,8 @@ class PhotoSortApp(QMainWindow):
             "분류_폴더_개수_label": "분류 폴더 개수",
             "뷰포트_이동_속도_label": "뷰포트 이동 속도",
             "마우스_휠_동작_label": "마우스 휠 동작",
+            "마우스_휠_민감도_label": "마우스 휠 민감도",
+            "마우스_패닝_감도_label": "마우스 패닝 감도",
             "성능_설정_ⓘ_label": "성능 설정 ⓘ",
         }
         for object_name, translation_key in setting_row_keys.items():
@@ -15332,6 +15382,12 @@ def main():
         "1 (보통)": "1 (Normal)",
         "1/2 (둔감)": "1/2 (Less Sensitive)",
         "1/3 (매우 둔감)": "1/3 (Least Sensitive)",
+        "마우스 패닝 감도": "Mouse Panning Sensitivity",
+        "100% (정확)": "100% (Precise)",
+        "150% (기본값)": "150% (Default)",
+        "200% (빠름)": "200% (Fast)",
+        "250% (매우 빠름)": "250% (Very Fast)",
+        "300% (최고 속도)": "300% (Maximum Speed)",
         "사진 넘기기": "Photo Navigation", 
         "없음": "None",
         "이동 - 폴더 {0}": "Move to Folder {0}",
