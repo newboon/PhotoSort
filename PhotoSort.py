@@ -4589,6 +4589,75 @@ class PhotoSortApp(QMainWindow):
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._sync_viewports)
         self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_viewports)
 
+    def reset_application_settings(self):
+        """사용자에게 확인을 받은 후, 설정 파일을 삭제하고 앱을 재시작합니다."""
+        title = LanguageManager.translate("초기화 확인")
+        message = LanguageManager.translate("모든 설정을 초기화하고 프로그램을 재시작하시겠습니까?\n이 작업은 되돌릴 수 없습니다.")
+        
+        reply = self.show_themed_message_box(
+            QMessageBox.Question,
+            title,
+            message,
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel
+        )
+
+        if reply == QMessageBox.Yes:
+            logging.info("사용자가 프로그램 설정 초기화를 승인했습니다.")
+            
+            state_file_path = self.get_script_dir() / self.STATE_FILE
+            
+            try:
+                if state_file_path.exists():
+                    state_file_path.unlink()
+                    logging.info(f"설정 파일 삭제 성공: {state_file_path}")
+            except Exception as e:
+                logging.error(f"설정 파일 삭제 실패: {e}")
+                self.show_themed_message_box(
+                    QMessageBox.Critical, LanguageManager.translate("오류"),
+                    f"설정 파일 삭제에 실패했습니다:\n{e}"
+                )
+                return
+
+            # 파일 삭제 후 즉시 재시작 함수 호출
+            self.restart_application()
+
+    def restart_application(self):
+        """현재 애플리케이션을 재시작합니다. (안정적인 os.execv 방식)"""
+        logging.info("애플리케이션 재시작을 시도합니다.")
+        
+        # closeEvent가 호출되지 않으므로, 재시작 전에 필수적인 정리 작업을 수행합니다.
+        try:
+            logging.info("재시작 전 리소스 정리 시작...")
+            # 활성 타이머 중지
+            if hasattr(self, 'memory_monitor_timer') and self.memory_monitor_timer.isActive():
+                self.memory_monitor_timer.stop()
+            if hasattr(self, 'raw_result_processor_timer') and self.raw_result_processor_timer.isActive():
+                self.raw_result_processor_timer.stop()
+                
+            # 리소스 매니저 종료
+            if hasattr(self, 'resource_manager'):
+                self.resource_manager.shutdown()
+            
+            # 로그 핸들러 닫기
+            for handler in logging.root.handlers[:]:
+                handler.close()
+                logging.root.removeHandler(handler)
+                
+            logging.info("리소스 정리 완료. os.execv 호출...")
+
+            # 현재 실행 파일 경로와 인자 가져오기
+            executable = sys.executable
+            args = sys.argv
+            
+            # 현재 프로세스를 새 프로세스로 완전히 대체합니다.
+            os.execv(executable, [executable] + args)
+            
+        except Exception as e:
+            logging.error(f"애플리케이션 재시작 실패: {e}")
+            # 이 시점에서는 메시지 박스가 제대로 동작하지 않을 수 있으므로, 로그에만 의존합니다.
+            # 만약 이 코드가 실행된다면, os.execv 호출에 실패한 것입니다.
+
 
     def start_idle_preloading(self):
         """사용자가 유휴 상태일 때 백그라운드에서 이미지를 미리 로드합니다."""
@@ -5009,7 +5078,6 @@ class PhotoSortApp(QMainWindow):
                 return
             
             if self.raw_folder and Path(self.raw_folder).is_dir():
-                # <<< [BUG FIX] silent=True 옵션을 사용하여 팝업 없이 RAW 매칭 실행 >>>
                 self.match_raw_files(self.raw_folder, silent=True)
 
         self.image_files = new_image_files
@@ -7323,7 +7391,9 @@ class PhotoSortApp(QMainWindow):
 
         # --- 날짜 형식 설정 ---
         self.date_format_combo = QComboBox()
-        # 날짜 형식 이름은 언어에 따라 바뀔 수 있으므로, 추가 시점이 아니라 텍스트 업데이트 시점에 설정
+        for format_code in DateFormatManager.get_available_formats():
+            display_name = DateFormatManager.get_format_display_name(format_code)
+            self.date_format_combo.addItem(display_name, format_code)
         self.date_format_combo.setStyleSheet(self.generate_combobox_style())
         self.date_format_combo.currentIndexChanged.connect(self.on_date_format_changed)
 
@@ -7374,6 +7444,11 @@ class PhotoSortApp(QMainWindow):
         self.reset_camera_settings_button = QPushButton() # 텍스트 제거
         self.reset_camera_settings_button.setStyleSheet(button_style)
         self.reset_camera_settings_button.clicked.connect(self.reset_all_camera_raw_settings)
+
+        # --- 프로그램 초기화 버튼 ---
+        self.reset_app_settings_button = QPushButton(LanguageManager.translate("프로그램 설정 초기화"))
+        self.reset_app_settings_button.setStyleSheet(button_style)
+        self.reset_app_settings_button.clicked.connect(self.reset_application_settings)
 
         # --- 세션 관리 및 단축키 버튼 생성 ---
         self.session_management_button = QPushButton() # 텍스트 제거
@@ -7426,18 +7501,10 @@ class PhotoSortApp(QMainWindow):
 
         # --- 버튼 ---
         self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
+        self.reset_app_settings_button.setText(LanguageManager.translate("프로그램 설정 초기화"))
         self.session_management_button.setText(LanguageManager.translate("세션 관리"))
         self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
 
-        # --- 콤보 박스 (내용이 언어에 따라 바뀌는 경우) ---
-        # DateFormatManager가 언어 지원을 한다면 여기서 업데이트
-        # 현재는 고정 텍스트이므로 상태만 복원
-        self.date_format_combo.clear()
-        for format_code in DateFormatManager.get_available_formats():
-            # DateFormatManager.get_format_display_name이 내부적으로 LanguageManager를 쓴다고 가정
-            display_name = DateFormatManager.get_format_display_name(format_code)
-            self.date_format_combo.addItem(display_name, format_code)
-        
         # 설정 창이 열려있을 때, 그 내부의 라벨 텍스트들도 업데이트
         if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
             self.update_settings_labels_texts(self.settings_popup)
@@ -7617,6 +7684,14 @@ class PhotoSortApp(QMainWindow):
             layout_shortcuts.addWidget(self.shortcuts_button)
             layout_shortcuts.addStretch(1)
             layout.addWidget(container_shortcuts)
+
+            if not is_first_run:
+                container_app_reset = QWidget()
+                layout_app_reset = QHBoxLayout(container_app_reset)
+                layout_app_reset.setContentsMargins(0,0,0,0)
+                layout_app_reset.addWidget(self.reset_app_settings_button)
+                layout_app_reset.addStretch(1)
+                layout.addWidget(container_app_reset)
 
         return self._build_group_widget("도구 및 고급 설정", add_widgets, show_title=not is_first_run)
 
@@ -7893,19 +7968,13 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'folder_path_labels'):
             self.update_all_folder_labels_state()
     
-    def show_settings_popup(self):
-        """설정 버튼 클릭 시 호출되는 메서드, 2컬럼 구조의 설정 팝업을 표시"""
-        if hasattr(self, 'settings_popup') and self.settings_popup.isVisible():
-            self.settings_popup.activateWindow()
-            return
-
+    def _create_settings_popup(self):
+        """설정 팝업창을 최초 한 번만 생성하고 레이아웃을 구성합니다."""
         self.settings_popup = QDialog(self)
         self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
         popup_width = UIScaleManager.get("settings_popup_width", 785)
         popup_height = UIScaleManager.get("settings_popup_height", 910)
         self.settings_popup.setMinimumSize(popup_width, popup_height)
-
-        apply_dark_title_bar(self.settings_popup)
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.settings_popup.setPalette(palette)
@@ -7921,47 +7990,62 @@ class PhotoSortApp(QMainWindow):
         left_layout = QVBoxLayout(left_column)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
-
-        # setup_settings_ui를 호출하여 모든 설정 그룹이 포함된 위젯 생성
-        settings_ui_widget = self.setup_settings_ui() # 파라미터 없이 호출하면 모든 그룹 생성
+        settings_ui_widget = self.setup_settings_ui()
         left_layout.addWidget(settings_ui_widget)
-        
+
         # --- 중앙 구분선 ---
         separator_vertical = QFrame()
         separator_vertical.setFrameShape(QFrame.VLine)
         separator_vertical.setFrameShadow(QFrame.Sunken)
         separator_vertical.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-width: 1px;")
-        
+
         # --- 오른쪽 컬럼 (정보 및 후원) ---
         right_column = QWidget()
         right_layout = QVBoxLayout(right_column)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(UIScaleManager.get("info_donation_spacing", 40))
-
-        # 정보 섹션
         info_section = self._build_info_section()
         right_layout.addWidget(info_section)
-
-        # 구분선
         separator_horizontal = QFrame()
         separator_horizontal.setFrameShape(QFrame.HLine)
         separator_horizontal.setFrameShadow(QFrame.Sunken)
         separator_horizontal.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
         right_layout.addWidget(separator_horizontal)
-
-        # 후원 섹션
         donation_section = self._build_donation_section()
         right_layout.addWidget(donation_section)
-
-        right_layout.addStretch(1) # 하단 여백
+        right_layout.addStretch(1)
 
         # --- 메인 레이아웃에 컬럼 추가 ---
-        main_layout.addWidget(left_column, 6)    # 왼쪽 컬럼이 6의 비율
+        main_layout.addWidget(left_column, 6)
         main_layout.addWidget(separator_vertical)
-        main_layout.addWidget(right_column, 4) # 오른쪽 컬럼이 4의 비율
+        main_layout.addWidget(right_column, 4)
 
+    def show_settings_popup(self):
+        """설정 버튼 클릭 시 호출, 팝업을 생성하거나 기존 팝업을 보여줍니다."""
+        if not hasattr(self, 'settings_popup') or self.settings_popup is None:
+            self._create_settings_popup()
+
+        # 팝업을 보여주기 전에 현재 상태를 UI 컨트롤에 반영
+        # (예: 테마 콤보박스)
+        current_theme_name = ThemeManager.get_current_theme_name()
+        index = self.theme_combo.findText(current_theme_name.capitalize(), Qt.MatchFixedString)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
+        
+        # 현재 언어 설정 반영
+        current_lang = LanguageManager.get_current_language()
+        if current_lang == "en":
+            self.english_radio.setChecked(True)
+        else:
+            self.korean_radio.setChecked(True)
+
+        # 팝업의 모든 텍스트를 현재 언어에 맞게 업데이트
+        self.update_settings_labels_texts(self.settings_popup)
+
+        apply_dark_title_bar(self.settings_popup)
         self.settings_popup.exec_()
-    
+
+
     def _build_info_section(self):
         """'정보' 섹션 UI를 생성합니다."""
         info_section = QWidget()
@@ -13427,86 +13511,53 @@ class PhotoSortApp(QMainWindow):
     def load_state(self):
         """JSON 파일에서 애플리케이션 상태 불러오기"""
         logging.info(f"PhotoSortApp.load_state: 상태 불러오기 시작")
-
         load_path = self.get_script_dir() / self.STATE_FILE
         is_first_run = not load_path.exists()
         logging.debug(f"  load_state: is_first_run = {is_first_run}")
 
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
-            # --- 첫 실행 시 기본값 설정 (내부 상태 변수) ---
-            self.camera_raw_settings = {} 
+            
+            # --- 1. 모든 상태 변수를 안전한 기본값으로 초기화 ---
+            self.initialize_to_default_state()
+
+            # --- 2. 첫 실행 시 특별히 설정할 기본값들 (상태 변수) ---
+            #    (대부분 initialize_to_default_state에 포함되었지만,
+            #     첫 실행에만 적용할 설정이 있다면 여기에 추가)
             LanguageManager.set_language("en") 
             ThemeManager.set_theme("default")  
             DateFormatManager.set_date_format("yyyy-mm-dd")
-            if hasattr(self, 'image_loader'):
-                self.image_loader.set_raw_load_strategy("preview")
-            self.current_folder = ""
-            self.raw_folder = ""
-            self.image_files = []
-            self.raw_files = {}
-            self.is_raw_only_mode = False
-            self.move_raw_files = True
-            self.folder_count = 3
-            self.target_folders = [""] * self.folder_count
-            self.zoom_mode = "Fit"
-            self.zoom_spin_value = 2.0
-            self.grid_mode = "Off"
-            self.current_image_index = -1
-            self.current_grid_index = 0
-            self.grid_page_start_index = 0
-            self.previous_grid_mode = None
-            self.original_pixmap = None
-            self.last_processed_camera_model = None
-            self.viewport_move_speed = 5
-            self.show_grid_filenames = False
-            self.control_panel_on_right = False
             self.supported_image_extensions = {'.jpg', '.jpeg'}
             self.mouse_wheel_action = "photo_navigation"
-            # --- 첫 실행 시 기본값 설정 끝 ---
+            # camera_raw_settings는 기본적으로 빈 딕셔너리로 시작하므로 별도 설정 불필요
 
-            # --- UI 컨트롤에 기본값 설정 ---
-            # 이 시점에는 컨트롤이 모두 생성되었으므로 hasattr 검사는 생략 가능하지만, 안전을 위해 유지합니다.
-            
-            # 1-1. 언어 설정 라디오 버튼 (초기 설정 창)
+            # --- 3. UI 컨트롤들을 기본값으로 설정 ---
+            #    (UI 컨트롤은 initialize_to_default_state에서 처리하지 않으므로 여기서 설정)
             if hasattr(self, 'english_radio'):
                 self.english_radio.setChecked(True)
-            
-            # 1-2. 컨트롤 패널 위치 라디오 버튼 (초기 설정 창)
             if hasattr(self, 'panel_pos_left_radio'):
                 self.panel_pos_left_radio.setChecked(True)
-
-            # 2-1. 불러올 이미지 형식 체크박스 (설정 및 정보 창)
             if hasattr(self, 'ext_checkboxes'):
                 for name, checkbox in self.ext_checkboxes.items():
                     checkbox.setChecked(name == "JPG")
-
-            # 2-2. 분류 폴더 개수 콤보박스 (설정 및 정보 창)
             if hasattr(self, 'folder_count_combo'):
                 index = self.folder_count_combo.findData(self.folder_count)
-                if index != -1:
-                    self.folder_count_combo.setCurrentIndex(index)
-
-            # 2-3. 뷰포트 이동 속도 콤보박스 (설정 및 정보 창)
+                if index != -1: self.folder_count_combo.setCurrentIndex(index)
             if hasattr(self, 'viewport_speed_combo'):
                 index = self.viewport_speed_combo.findData(self.viewport_move_speed)
-                if index != -1:
-                    self.viewport_speed_combo.setCurrentIndex(index)
-
-            # 2-4. 마우스 휠 동작 라디오 버튼 (설정 및 정보 창)
+                if index != -1: self.viewport_speed_combo.setCurrentIndex(index)
             if hasattr(self, 'mouse_wheel_photo_radio'):
                 self.mouse_wheel_photo_radio.setChecked(True)
-            
-            # --- UI 컨트롤 설정 끝 ---
 
-            self.update_all_ui_after_load_failure_or_first_run() # UI를 기본 상태로
+            # --- 4. 전체 UI 상태를 데이터에 맞춰 최종 업데이트 ---
+            self.update_all_ui_after_load_failure_or_first_run()
+            self._sync_performance_profile_ui() # 자동 감지된 프로필로 UI 동기화
 
-            # 첫 실행 플래그 설정 (팝업은 메인 윈도우 표시 후에 표시)
+            # --- 5. 첫 실행 플래그 설정 및 마무리 ---
             self.is_first_run = True
-            
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-            return True # 앱 정상 시작을 알림
+            return True
 
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
@@ -13808,16 +13859,8 @@ class PhotoSortApp(QMainWindow):
             saved_profile = loaded_data.get("performance_profile")
             if saved_profile:
                 HardwareProfileManager.set_profile_manually(saved_profile)
-
-            # 현재 활성화된 프로필(자동 또는 수동)에 맞게 콤보박스 선택
-            current_profile_key = HardwareProfileManager.get_current_profile_key()
-            if hasattr(self, 'performance_profile_combo'):
-                index = self.performance_profile_combo.findData(current_profile_key)
-                if index != -1:
-                    # 시그널 발생을 막기 위해 blockSignals 사용
-                    self.performance_profile_combo.blockSignals(True)
-                    self.performance_profile_combo.setCurrentIndex(index)
-                    self.performance_profile_combo.blockSignals(False)
+            
+            self._sync_performance_profile_ui()
             # --- 동기화 끝 ---
 
             logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
@@ -13853,15 +13896,52 @@ class PhotoSortApp(QMainWindow):
 
             return True # 정상적으로 상태 로드 완료
 
+    def _sync_performance_profile_ui(self):
+        """현재 활성화된 HardwareProfileManager 프로필을 UI 콤보박스와 동기화합니다."""
+        # 저장된 프로필이 있다면 수동으로 설정 (load_state에서 호출 시)
+        # 이 부분은 load_state에서만 처리하도록 분리하는 것이 더 명확할 수 있습니다.
+        # 여기서는 현재 활성화된 프로필을 UI에 반영하는 데 집중합니다.
+        
+        current_profile_key = HardwareProfileManager.get_current_profile_key()
+        if hasattr(self, 'performance_profile_combo'):
+            index = self.performance_profile_combo.findData(current_profile_key)
+            if index != -1:
+                # 시그널 발생을 막기 위해 blockSignals 사용
+                self.performance_profile_combo.blockSignals(True)
+                self.performance_profile_combo.setCurrentIndex(index)
+                self.performance_profile_combo.blockSignals(False)
+                logging.debug(f"성능 프로필 UI 동기화 완료: '{current_profile_key}'")
+
     def initialize_to_default_state(self):
         """애플리케이션 상태를 안전한 기본값으로 초기화합니다 (파일 로드 실패 시 등)."""
         logging.info("PhotoSortApp.initialize_to_default_state: 앱 상태를 기본값으로 초기화합니다.")
 
-        # 언어, 테마 등은 이전 세션 값이나 설치 시 기본값 유지 또는 여기서 명시적 기본값 설정
-        # LanguageManager.set_language("ko") # 이미 load_state 시작 시 또는 첫 실행 시 설정됨
-        # ThemeManager.set_theme("default")
-        # DateFormatManager.set_date_format("yyyy-mm-dd")
-        # self.loaded_raw_strategy는 사용 안 함
+        # --- 1. 모든 백그라운드 작업 및 타이머 중지 ---
+        logging.debug("  -> 활성 타이머 및 백그라운드 작업 중지...")
+        
+        # 리소스 매니저를 통해 모든 스레드/프로세스 풀의 작업을 취소합니다.
+        if hasattr(self, 'resource_manager'):
+            self.resource_manager.cancel_all_tasks()
+        
+        # 그리드 썸네일 전용 스레드 풀의 작업도 취소합니다.
+        if hasattr(self, 'active_thumbnail_futures'):
+            for future in self.active_thumbnail_futures:
+                future.cancel()
+            self.active_thumbnail_futures.clear()
+
+        # 모든 활성 타이머를 중지합니다.
+        if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
+            self.loading_indicator_timer.stop()
+        if hasattr(self, 'state_save_timer') and self.state_save_timer.isActive():
+            self.state_save_timer.stop()
+        if hasattr(self, 'viewport_move_timer') and self.viewport_move_timer.isActive():
+            self.viewport_move_timer.stop()
+        if hasattr(self, 'idle_preload_timer') and self.idle_preload_timer.isActive():
+            self.idle_preload_timer.stop()
+        # raw_result_processor_timer와 memory_monitor_timer는 앱 전역에서 계속 실행되어야 하므로 중지하지 않습니다.
+
+        # --- 2. 상태 변수 초기화 ---
+        logging.debug("  -> 상태 변수 초기화...")
 
         # 폴더 및 파일 관련 상태
         self.current_folder = ""
@@ -13869,45 +13949,45 @@ class PhotoSortApp(QMainWindow):
         self.image_files = []
         self.raw_files = {}
         self.is_raw_only_mode = False
-        self.move_raw_files = True # RAW 이동 기본값
+        self.move_raw_files = True
         self.folder_count = 3
         self.target_folders = [""] * self.folder_count
-
         
         # 뷰 관련 상태
         self.zoom_mode = "Fit"
-        self.zoom_spin_value = 2.0  # 동적 줌 SpinBox 기본값 추가
+        self.zoom_spin_value = 2.0
         self.grid_mode = "Off"
         self.current_image_index = -1
         self.current_grid_index = 0
         self.grid_page_start_index = 0
         self.previous_grid_mode = None
         self.original_pixmap = None
-        self.fit_pixmap_cache.clear() # Fit 모드 캐시 비우기
+        self.compare_mode_active = False
+        self.image_B_path = None
+        self.original_pixmap_B = None
+
+        # 캐시 초기화
+        if hasattr(self, 'image_loader'):
+            self.image_loader.clear_cache()
+            self.image_loader.set_raw_load_strategy("preview")
+        self.fit_pixmap_cache.clear()
         self.last_fit_size = (0,0)
 
-        # ImageLoader 상태 (존재한다면)
-        if hasattr(self, 'image_loader'):
-            self.image_loader.clear_cache() # ImageLoader 캐시 비우기
-            self.image_loader.set_raw_load_strategy("preview") # ImageLoader 전략 기본값으로
-
-        # 카메라별 RAW 설정은 유지 (요구사항에 따라)
-        # self.camera_raw_settings = {} # 만약 이것도 초기화하려면 주석 해제
-
-        # 기타 UI 관련 상태
+        # 기타 UI 및 상호작용 관련 상태
         self.last_processed_camera_model = None
-        self.viewport_move_speed = 5 # 뷰포트 이동 속도 기본값
-        self.show_grid_filenames = False # 파일명 표시 기본값 Off
-        self.control_panel_on_right = False # 컨트롤 패널 위치 기본값 왼쪽
+        self.viewport_move_speed = 5
+        self.show_grid_filenames = False
+        self.control_panel_on_right = False
+        self.pressed_keys_for_viewport.clear()
+        self.pressed_number_keys.clear()
+        self.is_potential_drag = False
+        self.is_idle_preloading_active = False
 
         # Undo/Redo 히스토리 초기화
         self.move_history = []
         self.history_pointer = -1
-
-        # 로딩 관련 타이머 등 중지 (필요시)
-        if hasattr(self, 'loading_indicator_timer') and self.loading_indicator_timer.isActive():
-            self.loading_indicator_timer.stop()
-        # ... (다른 타이머나 백그라운드 작업 관련 상태 초기화)
+        
+        logging.info("  -> 상태 초기화 완료.")
 
     def update_all_ui_after_load_failure_or_first_run(self):
         """load_state 실패 또는 첫 실행 시 UI를 기본 상태로 설정하는 헬퍼"""
@@ -14372,7 +14452,7 @@ class PhotoSortApp(QMainWindow):
     def closeEvent(self, event):
         """창 닫기 이벤트 처리 시 상태 저장 및 스레드 종료"""
         logging.info("앱 종료 중: 리소스 정리 시작...")
-        
+
         # 타이머 중지
         if hasattr(self, 'memory_monitor_timer') and self.memory_monitor_timer.isActive():
             self.memory_monitor_timer.stop()
@@ -15046,6 +15126,8 @@ class PhotoSortApp(QMainWindow):
             self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
         if hasattr(self, 'session_management_button'):
             self.session_management_button.setText(LanguageManager.translate("세션 관리"))
+        if hasattr(self, 'reset_app_settings_button'):
+            self.reset_app_settings_button.setText(LanguageManager.translate("프로그램 설정 초기화"))
         if hasattr(self, 'shortcuts_button'):
             self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
 
@@ -15366,6 +15448,12 @@ def main():
         "이 설정은 앱을 재시작해야 완전히 적용됩니다.": "This setting will be fully applied after restarting the app.",
         "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요.":
         "This profile is automatically set based on your system specifications.\nHigher levels use more memory and CPU to increase processing speed.\nIf the app slows down your system or consumes too much memory, please change to a lower setting.",
+        # 프로그램 초기화 관련 번역
+        "프로그램 설정 초기화": "Reset App Settings",
+        "초기화 확인": "Confirm Reset",
+        "모든 설정을 초기화하고 프로그램을 재시작하시겠습니까?\n이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset all settings and restart the application?\nThis action cannot be undone.",
+        "재시작 중...": "Restarting...",
+        "설정이 초기화되었습니다. 프로그램을 재시작합니다.": "Settings have been reset. The application will now restart.",
     }
     
     LanguageManager.initialize_translations(translations)
