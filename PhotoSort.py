@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                               QMainWindow, QMenu, QMessageBox, QPushButton, QRadioButton,
                               QScrollArea, QSizePolicy, QSplitter, QTextBrowser,
                               QVBoxLayout, QWidget, QToolTip, QInputDialog, QLineEdit, 
-                              QSpinBox, QProgressDialog)
+                              QSpinBox, QProgressDialog, QLayout)
 
 
 # 로깅 시스템 설정
@@ -147,9 +147,10 @@ class UIScaleManager:
         "checkbox_border_radius": 2,
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가
-        "settings_popup_width": 785,
-        "settings_popup_height": 800,
-        "settings_layout_vspace": 15,
+        "settings_popup_width": 1280,
+        "settings_popup_height": 1020,
+        "settings_layout_vspace": 18,
+        "settings_group_title_spacing": 15,
         "infotext_licensebutton": 30,
         "donation_between_tworows": 25,
         "bottom_space": 25,
@@ -207,9 +208,10 @@ class UIScaleManager:
         "checkbox_border_radius": 1,
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
-        "settings_popup_width": 750,
-        "settings_popup_height": 700,
-        "settings_layout_vspace": 7,
+        "settings_popup_width": 950,
+        "settings_popup_height": 800,
+        "settings_layout_vspace": 12,
+        "settings_group_title_spacing": 10,
         "infotext_licensebutton": 20,
         "donation_between_tworows": 17,
         "bottom_space": 15,
@@ -7044,44 +7046,36 @@ class PhotoSortApp(QMainWindow):
         self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
         self.settings_popup.setProperty("is_first_run_popup", True)
         self.settings_popup.setMinimumSize(500,350) # 가로, 세로 크기 조정
-        
         # 제목 표시줄 다크 테마 적용 (Windows용)
         apply_dark_title_bar(self.settings_popup)
-        
         # 다크 테마 배경 설정
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor(ThemeManager.get_color('bg_primary')))
         self.settings_popup.setPalette(palette)
         self.settings_popup.setAutoFillBackground(True)
-        
         # ========== 메인 레이아웃 변경: QVBoxLayout (전체) ==========
         # 전체 구조: 세로 (환영 메시지 - 가로(설정|단축키) - 확인 버튼)
         main_layout = QVBoxLayout(self.settings_popup)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
         # =========================================================
-        
         self.settings_popup.welcome_label = QLabel(LanguageManager.translate("기본 설정을 선택해주세요."))
         self.settings_popup.welcome_label.setObjectName("first_run_welcome_label")
         self.settings_popup.welcome_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; font-size: 11pt;")
         self.settings_popup.welcome_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.settings_popup.welcome_label)
         main_layout.addSpacing(10)
-
         settings_ui_widget = self.setup_settings_ui(
             groups_to_build=["general", "advanced"], 
             is_first_run=True
         )
         main_layout.addWidget(settings_ui_widget)
-
         # 확인 버튼 추가
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 10, 0, 0)
-        
         # 🎯 중요: 확인 버튼을 self의 멤버로 만들어서 언어 변경 시 업데이트 가능하게 함
         self.first_run_confirm_button = QPushButton(LanguageManager.translate("확인"))
-        
         # 스타일 적용 (기존 스타일 재사용 또는 새로 정의)
         if platform.system() == "Darwin": # Mac 스타일
             self.first_run_confirm_button.setStyleSheet("""
@@ -7095,9 +7089,7 @@ class PhotoSortApp(QMainWindow):
                             border: none; padding: 8px 16px; border-radius: 4px; min-width: 100px; }}
                 QPushButton:hover {{ background-color: {ThemeManager.get_color('accent_hover')}; }}
                 QPushButton:pressed {{ background-color: {ThemeManager.get_color('accent_pressed')}; }} """)
-
         self.first_run_confirm_button.clicked.connect(self.settings_popup.accept)
-        
         # 🎯 언어 변경 콜백 등록 - 첫 실행 팝업의 텍스트 업데이트
         def update_first_run_popup_texts():
             if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
@@ -7109,24 +7101,21 @@ class PhotoSortApp(QMainWindow):
                 # 확인 버튼 텍스트 업데이트
                 if hasattr(self, 'first_run_confirm_button'):
                     self.first_run_confirm_button.setText(LanguageManager.translate("확인"))
-        
         LanguageManager.register_language_change_callback(update_first_run_popup_texts)
-        
         button_layout.addStretch(1)
         button_layout.addWidget(self.first_run_confirm_button)
         button_layout.addStretch(1)
-        
         main_layout.addWidget(button_container)
-        
         # --- dialog.exec_() 호출 및 결과에 따른 save_state() 실행 ---
         result = self.settings_popup.exec_() # 모달로 실행하고 결과 받기
-
         # 🎯 팝업이 닫힌 후 콜백 제거 및 멤버 변수 정리
         if update_first_run_popup_texts in LanguageManager._language_change_callbacks:
             LanguageManager._language_change_callbacks.remove(update_first_run_popup_texts)
-        
         if hasattr(self, 'first_run_confirm_button'):
             delattr(self, 'first_run_confirm_button')
+        
+        # [BUG FIX] "초기 설정" 창의 참조를 제거하여 다음번에는 "설정 및 정보" 창이 생성되도록 함
+        self.settings_popup = None
 
         if result == QDialog.Accepted: # 사용자가 "확인" 버튼을 눌렀다면
             logging.info("첫 실행 설정: '확인' 버튼 클릭됨. 상태 저장 실행.")
@@ -7547,40 +7536,54 @@ class PhotoSortApp(QMainWindow):
 
     def setup_settings_ui(self, groups_to_build=None, is_first_run=False):
         """
-        설정 UI의 특정 그룹들을 동적으로 구성하고 컨테이너 위젯을 반환합니다.
-        is_first_run: 최초 실행 팝업인지 여부를 나타내는 플래그.
+        [수정] 설정 UI를 단일 그리드 레이아웃으로 구성하고 컨테이너 위젯을 반환합니다.
         """
-        if groups_to_build is None:
-            groups_to_build = ["general", "workflow", "advanced"]
-
+        # 메인 컨테이너와 단일 그리드 레이아웃 생성
         main_container = QWidget()
-        main_layout = QVBoxLayout(main_container)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 15) * 1.5) # 그룹 간 간격 조정
+        grid_layout = QGridLayout(main_container)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setColumnStretch(1, 1) # 컨트롤 열이 남은 공간을 차지하도록 설정
+        grid_layout.setHorizontalSpacing(25) # 라벨과 컨트롤 사이의 가로 간격
+        # [변경] setRowSpacing -> setVerticalSpacing 으로 수정
+        grid_layout.setVerticalSpacing(UIScaleManager.get("settings_layout_vspace", 18)) # 항목 간 기본 세로 간격
 
-        group_builders = {
-            "general": self._build_general_settings_group,
-            "workflow": self._build_workflow_settings_group,
-            "advanced": self._build_advanced_tools_group,
-        }
-
-        for i, group_name in enumerate(groups_to_build):
-            if group_name in group_builders:
-                # is_first_run 플래그를 각 그룹 빌더에 전달
-                group_widget = group_builders[group_name](is_first_run=is_first_run)
-                main_layout.addWidget(group_widget)
-                
-                # 그룹 사이에 구분선 추가 (최초 실행이 아니고, 마지막 그룹이 아닐 때)
-                if not is_first_run and i < len(groups_to_build) - 1:
-                    separator = QFrame()
-                    separator.setFrameShape(QFrame.HLine)
-                    separator.setFrameShadow(QFrame.Sunken)
-                    separator.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
-                    main_layout.addWidget(separator)
+        current_row = 0
         
-        main_layout.addStretch(1)
+        # --- UI 설정 그룹 ---
+        current_row = self._build_general_settings_group(grid_layout, current_row, is_first_run=is_first_run)
+
+        # --- 작업 설정 그룹 ---
+        if not is_first_run:
+            # 그룹 사이에 구분선과 추가 여백 추가
+            grid_layout.setRowMinimumHeight(current_row, 20) # 그룹 간 여백
+            current_row += 1
+            separator1 = QFrame(); separator1.setFrameShape(QFrame.HLine); separator1.setFrameShadow(QFrame.Sunken)
+            separator1.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+            grid_layout.addWidget(separator1, current_row, 0, 1, 2)
+            current_row += 1
+            grid_layout.setRowMinimumHeight(current_row, 10) # 그룹 간 여백
+            current_row += 1
+            
+            current_row = self._build_workflow_settings_group(grid_layout, current_row, is_first_run=is_first_run)
+
+        # --- 도구 및 고급 설정 그룹 ---
+        # 그룹 사이에 구분선과 추가 여백 추가
+        grid_layout.setRowMinimumHeight(current_row, 20)
+        current_row += 1
+        separator2 = QFrame(); separator2.setFrameShape(QFrame.HLine); separator2.setFrameShadow(QFrame.Sunken)
+        separator2.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+        grid_layout.addWidget(separator2, current_row, 0, 1, 2)
+        current_row += 1
+        grid_layout.setRowMinimumHeight(current_row, 10)
+        current_row += 1
+        
+        current_row = self._build_advanced_tools_group(grid_layout, current_row, is_first_run=is_first_run)
+        
+        # 맨 아래에 Stretch를 추가하여 모든 항목이 위로 붙도록 함
+        grid_layout.setRowStretch(current_row, 1)
 
         return main_container
+
 
     def _build_group_widget(self, title_key, add_widgets_func, show_title=True):
         """설정 그룹 UI를 위한 템플릿 위젯을 생성합니다."""
@@ -7588,45 +7591,129 @@ class PhotoSortApp(QMainWindow):
         group_layout = QVBoxLayout(group_box)
         group_layout.setContentsMargins(0, 0, 0, 0)
         group_layout.setSpacing(UIScaleManager.get("settings_layout_vspace", 15))
-
         if show_title:
-            title_label = QLabel(LanguageManager.translate(title_key))
+            title_label = QLabel(f"[ {LanguageManager.translate(title_key)} ]")
             font = QFont(self.font())
             font.setBold(True)
-            font.setPointSize(UIScaleManager.get("font_size") + 1)
+            font.setPointSize(UIScaleManager.get("font_size") + 2) # 11pt -> 12pt (Normal 기준)
             title_label.setFont(font)
+            title_label.setAlignment(Qt.AlignCenter)
             title_label.setStyleSheet(f"""
                 color: {ThemeManager.get_color('text')}; 
-                margin-bottom: 5px;
+                margin-bottom: 15;
                 padding-left: 0px;
             """)
             title_label.setObjectName(f"group_title_{title_key.replace(' ', '_')}")
-            
             group_layout.addWidget(title_label)
-        
         add_widgets_func(group_layout)
-
         return group_box
 
-    def _build_general_settings_group(self, is_first_run=False):
-        """'UI 설정' 그룹 UI를 생성합니다."""
-        def add_widgets(layout):
-            layout.addWidget(self._create_setting_row("언어", self._create_language_radios()))
-            layout.addWidget(self._create_setting_row("테마", self.theme_combo))
-            layout.addWidget(self._create_setting_row("컨트롤 패널", self._create_panel_position_radios()))
-            layout.addWidget(self._create_setting_row("날짜 형식", self.date_format_combo))
-        
-        return self._build_group_widget("UI 설정", add_widgets, show_title=not is_first_run)
-    
-    def _build_workflow_settings_group(self, is_first_run=False):
-        """'작업 설정' 그룹 UI를 생성합니다."""
-        def add_widgets(layout):
-            layout.addWidget(self._create_setting_row("불러올 이미지 형식", self._create_extension_checkboxes()))
-            layout.addWidget(self._create_setting_row("분류 폴더 개수", self.folder_count_combo))
-            layout.addWidget(self._create_setting_row("뷰포트 이동 속도", self.viewport_speed_combo))
-            layout.addWidget(self._create_setting_row("마우스 휠 동작", self._create_mouse_wheel_radios()))
+    def _build_general_settings_group(self, grid_layout, start_row, is_first_run=False):
+        """'UI 설정' 그룹 UI를 공유 그리드에 추가합니다."""
+        current_row = start_row
+        if not is_first_run:
+            title_label = QLabel(f"[ {LanguageManager.translate('UI 설정')} ]")
+            font = QFont(self.font()); font.setBold(True); font.setPointSize(UIScaleManager.get("font_size") + 2)
+            title_label.setFont(font); title_label.setAlignment(Qt.AlignCenter)
+            title_spacing = UIScaleManager.get("settings_group_title_spacing")
+            title_label.setStyleSheet(f"""
+                color: {ThemeManager.get_color('text')}; 
+                margin-bottom: {title_spacing}px;
+            """)
+            title_label.setObjectName("group_title_UI_설정")
+            grid_layout.addWidget(title_label, current_row, 0, 1, 2) # 두 열에 걸쳐 추가
+            current_row += 1
 
-        return self._build_group_widget("작업 설정", add_widgets)
+        self._create_setting_row(grid_layout, current_row, "언어", self._create_language_radios()); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "테마", self.theme_combo); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "컨트롤 패널", self._create_panel_position_radios()); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "날짜 형식", self.date_format_combo); current_row += 1
+        
+        return current_row
+
+    
+    def _build_workflow_settings_group(self, grid_layout, start_row, is_first_run=False):
+        """'작업 설정' 그룹 UI를 공유 그리드에 추가합니다."""
+        current_row = start_row
+        title_label = QLabel(f"[ {LanguageManager.translate('작업 설정')} ]")
+        font = QFont(self.font()); font.setBold(True); font.setPointSize(UIScaleManager.get("font_size") + 2)
+        title_label.setFont(font); title_label.setAlignment(Qt.AlignCenter)
+        title_spacing = UIScaleManager.get("settings_group_title_spacing")
+        title_label.setStyleSheet(f"""
+            color: {ThemeManager.get_color('text')}; 
+            margin-bottom: {title_spacing}px;
+        """)
+        title_label.setObjectName("group_title_작업_설정")
+        grid_layout.addWidget(title_label, current_row, 0, 1, 2)
+        current_row += 1
+
+        # '불러올 이미지 형식' 항목을 특별 처리하여 상단 정렬합니다.
+        label_key = "불러올 이미지 형식"
+        label_text = LanguageManager.translate(label_key)
+        checkbox_label = QLabel(label_text)
+        checkbox_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        checkbox_label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; font-weight: bold;")
+        checkbox_label.setObjectName(f"{label_key.replace(' ', '_')}_label")
+        
+        # [변경] 라벨을 미세 조정하기 위한 컨테이너 생성
+        label_container = QWidget()
+        label_layout = QVBoxLayout(label_container)
+        label_layout.setContentsMargins(0, 0, 0, 0)
+        label_layout.setSpacing(0)
+        
+        # [핵심] 라벨 위에 2px의 고정된 빈 공간을 추가하여 라벨을 아래로 밀어냅니다.
+        label_layout.addSpacing(3)
+        label_layout.addWidget(checkbox_label)
+        
+        checkbox_control = self._create_extension_checkboxes()
+
+        # 라벨 컨테이너와 컨트롤을 그리드에 상단 정렬로 추가합니다.
+        grid_layout.addWidget(label_container, current_row, 0, Qt.AlignTop | Qt.AlignLeft)
+        grid_layout.addWidget(checkbox_control, current_row, 1, Qt.AlignTop)
+        current_row += 1
+
+        # 나머지 항목들은 기존 _create_setting_row (AlignVCenter)를 사용합니다.
+        self._create_setting_row(grid_layout, current_row, "분류 폴더 개수", self.folder_count_combo); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "뷰포트 이동 속도", self.viewport_speed_combo); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "마우스 휠 동작", self._create_mouse_wheel_radios()); current_row += 1
+        
+        return current_row
+
+
+
+    def _build_advanced_tools_group(self, grid_layout, start_row, is_first_run=False):
+        """'도구 및 고급 설정' 그룹 UI를 공유 그리드에 추가합니다."""
+        current_row = start_row
+        if not is_first_run:
+            title_label = QLabel(f"[ {LanguageManager.translate('도구 및 고급 설정')} ]")
+            font = QFont(self.font()); font.setBold(True); font.setPointSize(UIScaleManager.get("font_size") + 2)
+            title_label.setFont(font); title_label.setAlignment(Qt.AlignCenter)
+            title_spacing = UIScaleManager.get("settings_group_title_spacing")
+            title_label.setStyleSheet(f"""
+                color: {ThemeManager.get_color('text')}; 
+                margin-bottom: {title_spacing}px;
+            """)
+            title_label.setObjectName("group_title_도구_및_고급_설정")
+            grid_layout.addWidget(title_label, current_row, 0, 1, 2)
+            current_row += 1
+
+            self._create_setting_row(grid_layout, current_row, "성능 설정 ⓘ", self.performance_profile_combo); current_row += 1
+            grid_layout.addWidget(self.session_management_button, current_row, 0, 1, 2, Qt.AlignLeft); current_row += 1
+            grid_layout.addWidget(self.reset_camera_settings_button, current_row, 0, 1, 2, Qt.AlignLeft); current_row += 1
+        
+        # [변경] is_first_run 플래그에 따라 '단축키 확인' 버튼의 정렬을 다르게 설정합니다.
+        if is_first_run:
+            # 초기 설정 창에서는 가운데 정렬
+            grid_layout.addWidget(self.shortcuts_button, current_row, 0, 1, 2, Qt.AlignCenter)
+        else:
+            # 일반 설정 창에서는 왼쪽 정렬
+            grid_layout.addWidget(self.shortcuts_button, current_row, 0, 1, 2, Qt.AlignLeft)
+        current_row += 1
+
+        if not is_first_run:
+            grid_layout.addWidget(self.reset_app_settings_button, current_row, 0, 1, 2, Qt.AlignLeft); current_row += 1
+            
+        return current_row
 
     def update_quick_sort_input_style(self):
         """빠른 분류 입력 필드의 활성화/비활성화 스타일을 업데이트합니다."""
@@ -7690,60 +7777,15 @@ class PhotoSortApp(QMainWindow):
         
         self.show_themed_message_box(QMessageBox.Information, title, message)
 
-    def _build_advanced_tools_group(self, is_first_run=False):
-        """'도구 및 고급 설정' 그룹 UI를 생성합니다."""
-        def add_widgets(layout):
-            if not is_first_run:
-                # 성능 프로필 설정 추가
-                layout.addWidget(self._create_setting_row("성능 설정 ⓘ", self.performance_profile_combo))
-
-                # "세션 관리" 버튼을 라벨 없이 바로 추가
-                container_session = QWidget()
-                layout_session = QHBoxLayout(container_session)
-                layout_session.setContentsMargins(0,0,0,0)
-                layout_session.addWidget(self.session_management_button)
-                layout_session.addStretch(1)
-                layout.addWidget(container_session)
-
-                # "RAW 처리 방식 초기화" 버튼을 라벨 없이 바로 추가
-                container_raw = QWidget()
-                layout_raw = QHBoxLayout(container_raw)
-                layout_raw.setContentsMargins(0,0,0,0)
-                layout_raw.addWidget(self.reset_camera_settings_button)
-                layout_raw.addStretch(1)
-                layout.addWidget(container_raw)
-
-            # "단축키 확인" 버튼을 라벨 없이 바로 추가
-            container_shortcuts = QWidget()
-            layout_shortcuts = QHBoxLayout(container_shortcuts)
-            layout_shortcuts.setContentsMargins(0,0,0,0)
-            layout_shortcuts.addWidget(self.shortcuts_button)
-            layout_shortcuts.addStretch(1)
-            layout.addWidget(container_shortcuts)
-
-            if not is_first_run:
-                container_app_reset = QWidget()
-                layout_app_reset = QHBoxLayout(container_app_reset)
-                layout_app_reset.setContentsMargins(0,0,0,0)
-                layout_app_reset.addWidget(self.reset_app_settings_button)
-                layout_app_reset.addStretch(1)
-                layout.addWidget(container_app_reset)
-
-        return self._build_group_widget("도구 및 고급 설정", add_widgets, show_title=not is_first_run)
-
-    def _create_setting_row(self, label_key, control_widget):
-        """설정 항목 한 줄(라벨 + 컨트롤)을 생성하는 헬퍼 메서드"""
-        row_container = QWidget()
-        row_layout = QHBoxLayout(row_container)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(10)
-
+    def _create_setting_row(self, grid_layout, row_index, label_key, control_widget):
+        """[수정] 설정 항목 한 줄(라벨 + 컨트롤)을 그리드 레이아웃에 추가합니다."""
         label_text = LanguageManager.translate(label_key)
         label = QLabel(label_text)
-        label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        label.setMinimumWidth(UIScaleManager.get("settings_label_width"))
+        # [변경] 라벨 내부 텍스트도 수직 중앙 정렬로 변경
+        label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        label.setStyleSheet(f"color: {ThemeManager.get_color('text')}; font-weight: bold;")
         label.setObjectName(f"{label_key.replace(' ', '_')}_label")
+
         # 툴팁 추가
         if label_key == "성능 설정 ⓘ":
             tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
@@ -7751,23 +7793,11 @@ class PhotoSortApp(QMainWindow):
             label.setToolTip(tooltip_text)
             label.setCursor(Qt.WhatsThisCursor)
 
-        row_layout.addWidget(label)
-
+        # [변경] 그리드 셀 내 위젯 정렬을 AlignTop에서 AlignVCenter로 변경
+        grid_layout.addWidget(label, row_index, 0, Qt.AlignVCenter | Qt.AlignLeft)
         if control_widget:
-            row_layout.addWidget(control_widget)
-            # 컨트롤 위젯이 버튼이면, 버튼 크기만큼만 공간을 차지하고 나머지는 빈 공간으로 둡니다.
-            if isinstance(control_widget, QPushButton):
-                row_layout.addStretch(1)
-            # 콤보박스나 체크박스 그룹처럼 스스로 너비를 조절하는 위젯이 아니면 Stretch 추가
-            elif not isinstance(control_widget, (QComboBox, QCheckBox)):
-                 if control_widget.layout() is not None and isinstance(control_widget.layout(), QHBoxLayout):
-                     pass
-                 else:
-                     row_layout.addStretch(1)
-        else:
-             row_layout.addStretch(1)
-
-        return row_container
+            # [변경] 컨트롤 위젯에도 AlignVCenter를 적용하여 수직 정렬을 맞춥니다.
+            grid_layout.addWidget(control_widget, row_index, 1, Qt.AlignVCenter)
 
     def _create_language_radios(self):
         """언어 선택 라디오 버튼 그룹 위젯 생성"""
@@ -8041,12 +8071,18 @@ class PhotoSortApp(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(UIScaleManager.get("info_donation_spacing", 40))
         info_section = self._build_info_section()
+        right_layout.addStretch(1)
+        separator_top = QFrame()
+        separator_top.setFrameShape(QFrame.HLine)
+        separator_top.setFrameShadow(QFrame.Sunken)
+        separator_top.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+        right_layout.addWidget(separator_top)
         right_layout.addWidget(info_section)
-        separator_horizontal = QFrame()
-        separator_horizontal.setFrameShape(QFrame.HLine)
-        separator_horizontal.setFrameShadow(QFrame.Sunken)
-        separator_horizontal.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
-        right_layout.addWidget(separator_horizontal)
+        separator_middle = QFrame()
+        separator_middle.setFrameShape(QFrame.HLine)
+        separator_middle.setFrameShadow(QFrame.Sunken)
+        separator_middle.setStyleSheet(f"background-color: {ThemeManager.get_color('border')}; max-height: 1px;")
+        right_layout.addWidget(separator_middle)
         donation_section = self._build_donation_section()
         right_layout.addWidget(donation_section)
         right_layout.addStretch(1)
@@ -8119,136 +8155,80 @@ class PhotoSortApp(QMainWindow):
 
     def _build_donation_section(self):
         """'후원' 섹션 UI를 생성합니다."""
-        # 이 부분은 기존 show_settings_popup의 후원 섹션 로직을 그대로 가져옵니다.
-        # (코드가 길어 생략하고, 기존 로직을 이 함수 안으로 옮기면 됩니다.)
         donation_section = QWidget()
         donation_layout = QVBoxLayout(donation_section)
         donation_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 공통 아이콘 생성
+        coffee_icon_path = self.resource_path("resources/coffee_icon.png")
+        coffee_icon = QPixmap(coffee_icon_path)
+        coffee_emoji = QLabel()
+        if not coffee_icon.isNull():
+            coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            coffee_emoji.setPixmap(coffee_icon)
+        else:
+            coffee_emoji.setText("☕")
+        coffee_emoji.setFixedWidth(60)
+        coffee_emoji.setStyleSheet("padding-left: 10px;")
+        coffee_emoji.setAlignment(Qt.AlignCenter)
+
+        # 언어별 위젯을 담을 컨테이너
+        links_container = QWidget()
+        links_layout = QVBoxLayout(links_container)
+        links_layout.setContentsMargins(0, 0, 0, 0)
+        links_layout.setSpacing(0)
+
+        # --- 한국어용 위젯 생성 ---
+        self.korean_donation_widget = QWidget()
+        ko_links_layout = QVBoxLayout(self.korean_donation_widget)
+        ko_links_layout.setContentsMargins(0, 0, 0, 0)
+        ko_links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
         
+        ko_row1_container = QHBoxLayout()
+        qr_path_kakaopay_ko = self.resource_path("resources/kakaopay_qr.png")
+        kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), "", qr_path=qr_path_kakaopay_ko, qr_display_size=400, parent=self.settings_popup)
+        kakaopay_label.setAlignment(Qt.AlignCenter)
+        kakaopay_label.setObjectName("kakaopay_label") # [추가] 객체 이름 설정
+        qr_path_naverpay_ko = self.resource_path("resources/naverpay_qr.png")
+        naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), "", qr_path=qr_path_naverpay_ko, qr_display_size=250, parent=self.settings_popup)
+        naverpay_label.setAlignment(Qt.AlignCenter)
+        naverpay_label.setObjectName("naverpay_label") # [추가] 객체 이름 설정
+        ko_row1_container.addWidget(kakaopay_label)
+        ko_row1_container.addWidget(naverpay_label)
+        ko_links_layout.addLayout(ko_row1_container)
+        links_layout.addWidget(self.korean_donation_widget)
+
+        # --- 영어용 위젯 생성 ---
+        self.english_donation_widget = QWidget()
+        en_links_layout = QVBoxLayout(self.english_donation_widget)
+        en_links_layout.setContentsMargins(0, 0, 0, 0)
+        en_links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
+        
+        en_row1_container = QHBoxLayout()
+        bmc_url = "https://buymeacoffee.com/ffamilist"
+        qr_path_bmc = self.resource_path("resources/bmc_qr.png")
+        bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path=qr_path_bmc, qr_display_size=250, parent=self.settings_popup)
+        bmc_label.setAlignment(Qt.AlignCenter)
+        paypal_url = "https://paypal.me/ffamilist"
+        paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path="", qr_display_size=250, parent=self.settings_popup)
+        paypal_label.setAlignment(Qt.AlignCenter)
+        paypal_label.setToolTip("Click to go to PayPal")
+        en_row1_container.addWidget(bmc_label)
+        en_row1_container.addWidget(paypal_label)
+        en_links_layout.addLayout(en_row1_container)
+        links_layout.addWidget(self.english_donation_widget)
+        
+        # 최종 레이아웃 조립
+        content_container = QHBoxLayout()
+        content_container.setContentsMargins(0, 0, 0, 0)
+        content_container.addWidget(coffee_emoji, 0, Qt.AlignVCenter)
+        content_container.addWidget(links_container, 1)
+        donation_layout.addLayout(content_container)
+
+        # 초기 가시성 설정
         current_language = LanguageManager.get_current_language()
-
-        if current_language == "en":
-            donation_content_container = QWidget()
-            donation_content_layout = QHBoxLayout(donation_content_container)
-            donation_content_layout.setContentsMargins(0, 0, 0, 0)
-            
-            coffee_icon_path = self.resource_path("resources/coffee_icon.png")
-            coffee_icon = QPixmap(coffee_icon_path)
-            coffee_emoji = QLabel()
-            if not coffee_icon.isNull():
-                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                coffee_emoji.setPixmap(coffee_icon)
-            else:
-                coffee_emoji.setText("☕")
-            coffee_emoji.setFixedWidth(60)
-            coffee_emoji.setStyleSheet("padding-left: 10px;")
-            coffee_emoji.setAlignment(Qt.AlignCenter)
-
-            links_container = QWidget()
-            links_layout = QVBoxLayout(links_container)
-            links_layout.setContentsMargins(0, 0, 0, 0)
-            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
-            
-            row1_container = QWidget()
-            row1_layout = QHBoxLayout(row1_container)
-            row1_layout.setContentsMargins(0, 0, 0, 0)
-            
-            bmc_url = "https://buymeacoffee.com/ffamilist"
-            qr_path_bmc = self.resource_path("resources/bmc_qr.png")
-            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url, qr_path=qr_path_bmc, qr_display_size=250, parent=self.settings_popup)
-            bmc_label.setAlignment(Qt.AlignCenter)
-            
-            paypal_url = "https://paypal.me/ffamilist"
-            paypal_label = QRLinkLabel("PayPal", paypal_url, qr_path="", qr_display_size=250, parent=self.settings_popup)
-            paypal_label.setAlignment(Qt.AlignCenter)
-            paypal_label.setToolTip("Click to go to PayPal")
-            
-            row1_layout.addWidget(bmc_label)
-            row1_layout.addWidget(paypal_label)
-            
-            row2_container = QWidget()
-            row2_layout = QHBoxLayout(row2_container)
-            row2_layout.setContentsMargins(0, 0, 0, 0)
-            
-            qr_path_kakaopay = self.resource_path("resources/kakaopay_qr.png")
-            kakaopay_label = QRLinkLabel("KakaoPay 🇰🇷", "", qr_path=qr_path_kakaopay, qr_display_size=400, parent=self.settings_popup)
-            kakaopay_label.setAlignment(Qt.AlignCenter)
-            
-            qr_path_naverpay = self.resource_path("resources/naverpay_qr.png")
-            naverpay_label = QRLinkLabel("NaverPay 🇰🇷", "", qr_path=qr_path_naverpay, qr_display_size=250, parent=self.settings_popup)
-            naverpay_label.setAlignment(Qt.AlignCenter)
-            
-            row2_layout.addWidget(kakaopay_label)
-            row2_layout.addWidget(naverpay_label)
-            
-            links_layout.addWidget(row1_container)
-            links_layout.addWidget(row2_container)
-            
-            donation_content_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)
-            donation_content_layout.addWidget(links_container, 1)
-            
-            donation_layout.addWidget(donation_content_container)
-        else: # "ko"
-            ko_payment_container = QWidget()
-            ko_payment_layout = QHBoxLayout(ko_payment_container)
-            ko_payment_layout.setContentsMargins(0, 0, 0, 0)
-            
-            coffee_icon_path = self.resource_path("resources/coffee_icon.png")
-            coffee_icon = QPixmap(coffee_icon_path)
-            coffee_emoji = QLabel()
-            if not coffee_icon.isNull():
-                coffee_icon = coffee_icon.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                coffee_emoji.setPixmap(coffee_icon)
-            else:
-                coffee_emoji.setText("☕")
-            coffee_emoji.setFixedWidth(60)
-            coffee_emoji.setStyleSheet("padding-left: 10px;")
-            coffee_emoji.setAlignment(Qt.AlignCenter)
-            
-            links_container = QWidget()
-            links_layout = QVBoxLayout(links_container)
-            links_layout.setContentsMargins(0, 0, 0, 0)
-            links_layout.setSpacing(UIScaleManager.get("donation_between_tworows", 30))
-            
-            row1_container = QWidget()
-            row1_layout = QHBoxLayout(row1_container)
-            row1_layout.setContentsMargins(0, 0, 0, 0)
-            
-            qr_path_kakaopay_ko = self.resource_path("resources/kakaopay_qr.png")
-            kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), "", qr_path=qr_path_kakaopay_ko, qr_display_size=400, parent=self.settings_popup)
-            kakaopay_label.setAlignment(Qt.AlignCenter)
-            
-            qr_path_naverpay_ko = self.resource_path("resources/naverpay_qr.png")
-            naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), "", qr_path=qr_path_naverpay_ko, qr_display_size=250, parent=self.settings_popup)
-            naverpay_label.setAlignment(Qt.AlignCenter)
-            
-            row1_layout.addWidget(kakaopay_label)
-            row1_layout.addWidget(naverpay_label)
-            
-            row2_container = QWidget()
-            row2_layout = QHBoxLayout(row2_container)
-            row2_layout.setContentsMargins(0, 0, 0, 0)
-            
-            bmc_url_ko = "https://buymeacoffee.com/ffamilist"
-            qr_path_bmc_ko = self.resource_path("resources/bmc_qr.png")
-            bmc_label = QRLinkLabel("Buy Me a Coffee", bmc_url_ko, qr_path=qr_path_bmc_ko, qr_display_size=250, parent=self.settings_popup)
-            bmc_label.setAlignment(Qt.AlignCenter)
-            
-            paypal_url_ko = "https://paypal.me/ffamilist"
-            paypal_label = QRLinkLabel("PayPal", paypal_url_ko, qr_path="", qr_display_size=250, parent=self.settings_popup)
-            paypal_label.setAlignment(Qt.AlignCenter)
-            paypal_label.setToolTip("Click to go to PayPal")
-            
-            row2_layout.addWidget(bmc_label)
-            row2_layout.addWidget(paypal_label)
-            
-            links_layout.addWidget(row1_container)
-            links_layout.addWidget(row2_container)
-            
-            ko_payment_layout.addWidget(coffee_emoji, 0, Qt.AlignVCenter)
-            ko_payment_layout.addWidget(links_container, 1)
-            
-            donation_layout.addWidget(ko_payment_container)
+        self.korean_donation_widget.setVisible(current_language == "ko")
+        self.english_donation_widget.setVisible(current_language == "en")
 
         return donation_section
 
@@ -13465,13 +13445,10 @@ class PhotoSortApp(QMainWindow):
         load_path = self.get_script_dir() / self.STATE_FILE
         is_first_run = not load_path.exists()
         logging.debug(f"  load_state: is_first_run = {is_first_run}")
-
         if is_first_run:
             logging.info("PhotoSortApp.load_state: 첫 실행 감지. 초기 설정으로 시작합니다.")
-            
             # --- 1. 모든 상태 변수를 안전한 기본값으로 초기화 ---
             self.initialize_to_default_state()
-
             # --- 2. 첫 실행 시 특별히 설정할 기본값들 (상태 변수) ---
             #    (대부분 initialize_to_default_state에 포함되었지만,
             #     첫 실행에만 적용할 설정이 있다면 여기에 추가)
@@ -13481,7 +13458,6 @@ class PhotoSortApp(QMainWindow):
             self.supported_image_extensions = {'.jpg', '.jpeg'}
             self.mouse_wheel_action = "photo_navigation"
             # camera_raw_settings는 기본적으로 빈 딕셔너리로 시작하므로 별도 설정 불필요
-
             # --- 3. UI 컨트롤들을 기본값으로 설정 ---
             #    (UI 컨트롤은 initialize_to_default_state에서 처리하지 않으므로 여기서 설정)
             if hasattr(self, 'english_radio'):
@@ -13499,55 +13475,41 @@ class PhotoSortApp(QMainWindow):
                 if index != -1: self.viewport_speed_combo.setCurrentIndex(index)
             if hasattr(self, 'mouse_wheel_photo_radio'):
                 self.mouse_wheel_photo_radio.setChecked(True)
-
             # --- 4. 전체 UI 상태를 데이터에 맞춰 최종 업데이트 ---
             self.update_all_ui_after_load_failure_or_first_run()
             self._sync_performance_profile_ui() # 자동 감지된 프로필로 UI 동기화
-
             # --- 5. 첫 실행 플래그 설정 및 마무리 ---
             self.is_first_run = True
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
             return True
-
         try:
             with open(load_path, 'r', encoding='utf-8') as f:
                 loaded_data = json.load(f)
             logging.info(f"PhotoSortApp.load_state: 상태 파일 로드 완료 ({load_path})")
             logging.debug(f"PhotoSortApp.load_state: 로드된 데이터: {loaded_data}")
-
             # 1. 기본 설정 복원 (언어, 날짜 형식, 테마, RAW 전략, 패널 위치, 파일명 표시 여부 등)
             language = loaded_data.get("language", "en")
             LanguageManager.set_language(language)
-
             date_format = loaded_data.get("date_format", "yyyy-mm-dd")
             DateFormatManager.set_date_format(date_format)
-
             theme = loaded_data.get("theme", "default")
             ThemeManager.set_theme(theme)
-
             self.camera_raw_settings = loaded_data.get("camera_raw_settings", {}) # <<< 카메라별 설정 로드, 없으면 빈 딕셔셔너리
             logging.info(f"PhotoSortApp.load_state: 로드된 camera_raw_settings: {self.camera_raw_settings}")
-            
             self.control_panel_on_right = loaded_data.get("control_panel_on_right", False)
             self.show_grid_filenames = loaded_data.get("show_grid_filenames", False)
-            
             self.viewport_move_speed = loaded_data.get("viewport_move_speed", 5) # <<< 뷰포트 이동속도, 기본값 5
             logging.info(f"PhotoSortApp.load_state: 로드된 viewport_move_speed: {self.viewport_move_speed}")
-    
             self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")
-
             self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")  # 추가
             logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
-
             self.saved_sessions = loaded_data.get("saved_sessions", {})
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
-
             # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
             default_extensions = {'.jpg', '.jpeg'}
             loaded_extensions = loaded_data.get("supported_image_extensions", list(default_extensions))
             self.supported_image_extensions = set(loaded_extensions)
-
             # 불러온 데이터로 체크박스 UI 상태 동기화
             if hasattr(self, 'ext_checkboxes'):
                 extension_groups = {"JPG": ['.jpg', '.jpeg'], "PNG": ['.png'], "WebP": ['.webp'], "HEIC": ['.heic', '.heif'], "BMP": ['.bmp'], "TIFF": ['.tif', '.tiff']}
@@ -13555,67 +13517,53 @@ class PhotoSortApp(QMainWindow):
                     # 해당 그룹의 확장자 중 하나라도 지원 목록에 포함되어 있는지 확인
                     is_checked = any(ext in self.supported_image_extensions for ext in extension_groups[name])
                     checkbox.setChecked(is_checked)
-
             self.folder_count = loaded_data.get("folder_count", 3)
             loaded_folders = loaded_data.get("target_folders", [])
             self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
-
             # 2. UI 컨트롤 업데이트 (설정 복원 후, 폴더 경로 설정 전)
             if hasattr(self, 'language_group'):
                 lang_button_id = 0 if language == "en" else 1
                 button_to_check = self.language_group.button(lang_button_id)
                 if button_to_check: button_to_check.setChecked(True)
-            
             if hasattr(self, 'date_format_combo'):
                 idx = self.date_format_combo.findData(date_format)
                 if idx >= 0: self.date_format_combo.setCurrentIndex(idx)
-
             if hasattr(self, 'theme_combo'):
                 idx = self.theme_combo.findText(theme.capitalize())
                 if idx >= 0: self.theme_combo.setCurrentIndex(idx)
-            
             if hasattr(self, 'panel_position_group'):
                 panel_button_id = 1 if self.control_panel_on_right else 0
                 panel_button_to_check = self.panel_position_group.button(panel_button_id)
                 if panel_button_to_check: panel_button_to_check.setChecked(True)
-
             if hasattr(self, 'filename_toggle_grid'):
                 self.filename_toggle_grid.setChecked(self.show_grid_filenames)
-
             # 뷰포트 속도 콤보박스 UI 업데이트 (만약 setup_settings_ui보다 먼저 호출된다면, 콤보박스 생성 후 설정 필요)
             if hasattr(self, 'viewport_speed_combo'): # 콤보박스가 이미 생성되었다면
                 idx = self.viewport_speed_combo.findData(self.viewport_move_speed)
                 if idx >= 0:
                     self.viewport_speed_combo.setCurrentIndex(idx)
-
             # 마우스 휠 라디오 버튼 UI 업데이트 (설정창이 생성된 후)
             if hasattr(self, 'mouse_wheel_photo_radio') and hasattr(self, 'mouse_wheel_none_radio'):
                 if self.mouse_wheel_action == 'photo_navigation':
                     self.mouse_wheel_photo_radio.setChecked(True)
                 else:
                     self.mouse_wheel_none_radio.setChecked(True)
-        
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
-
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
             self.zoom_spin_value = loaded_data.get("zoom_spin_value", 2.0)
             if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
             elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
             elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
-
             # SpinBox UI 업데이트 추가
             if hasattr(self, 'zoom_spin'):
                 self.zoom_spin.setValue(int(self.zoom_spin_value * 100))
                 logging.info(f"PhotoSortApp.load_state: 동적 줌 SpinBox 값 복원: {int(self.zoom_spin_value * 100)}%")
-
             if hasattr(self, 'folder_count_combo'):
                 index = self.folder_count_combo.findData(self.folder_count)
                 if index >= 0:
                     self.folder_count_combo.setCurrentIndex(index)
-
             self.minimap_toggle.setChecked(loaded_data.get("minimap_visible", True))
-
             # 3. 폴더 경로 및 파일 목록 관련 '상태 변수' 우선 설정
             self.current_folder = loaded_data.get("current_folder", "")
             self.raw_folder = loaded_data.get("raw_folder", "")
@@ -13626,27 +13574,21 @@ class PhotoSortApp(QMainWindow):
             self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
             self.is_raw_only_mode = loaded_data.get("is_raw_only_mode", False)
             self.previous_grid_mode = loaded_data.get("previous_grid_mode", None)
-
             # ===> 폴더 경로 상태 변수가 설정된 직후, UI 레이블에 '저장된 경로'를 먼저 반영 <===
             if self.current_folder and Path(self.current_folder).is_dir():
                 self.folder_path_label.setText(self.current_folder)
             else:
                 self.current_folder = "" # 유효하지 않으면 상태 변수도 비움
                 self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-
             if self.raw_folder and Path(self.raw_folder).is_dir():
                 self.raw_folder_path_label.setText(self.raw_folder)
             else:
                 self.raw_folder = ""
                 self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            
-
             # ===> 앱 재시작 시 마지막 사용된 RAW 처리 방식 로드 <===
             # 이 값은 이미지 목록 로드 후, 실제 display_current_image/update_grid_view 전에 ImageLoader에 설정됨
             self.last_loaded_raw_method_from_state = loaded_data.get("last_used_raw_method", "preview")
             logging.info(f"PhotoSortApp.load_state: 직전 세션 RAW 처리 방식 로드: {self.last_loaded_raw_method_from_state}")
-
-
             # 4. 이미지 목록 로드 시도
             images_loaded_successfully = False
             if self.is_raw_only_mode:
@@ -13663,78 +13605,60 @@ class PhotoSortApp(QMainWindow):
                         self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 실패 시 초기화
             elif self.current_folder and Path(self.current_folder).is_dir(): # JPG 모드
                 logging.info(f"PhotoSortApp.load_state: JPG 모드 복원 시도 - 폴더: {self.current_folder}")
-                images_loaded_successfully = self.load_images_from_folder(self.current_folder) # 내부에서 folder_path_label 업데이트
-                if images_loaded_successfully:
-                    if self.raw_folder and Path(self.raw_folder).is_dir():
-                        # self.raw_folder_path_label.setText(self.raw_folder) # 이미 위에서 설정됨
-                        # self.match_raw_files(self.raw_folder) # 필요시 호출 또는 저장된 raw_files 사용
-                        pass # raw_files는 이미 로드됨
-                    else:
-                        self.raw_folder = ""
-                        self.raw_files = {}
-                        self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-                else:
-                    logging.warning(f"PhotoSortApp.load_state: JPG 모드 폴더({self.current_folder})에서 파일 로드 실패.")
-                    self.current_folder = ""
-                    self.image_files = []
-                    self.folder_path_label.setText(LanguageManager.translate("폴더 경로")) # 실패 시 초기화
+                # [BUG FIX] 저장된 상태에 따라 올바른 모드로 백그라운드 로딩을 시작합니다.
+                mode_on_load = 'jpg_with_raw' if self.raw_folder and Path(self.raw_folder).is_dir() else 'jpg_only'
+                self.start_background_loading(
+                    jpg_folder_path=self.current_folder,
+                    raw_folder_path=self.raw_folder,
+                    mode=mode_on_load,
+                    raw_file_list=None
+                )
+                # 비동기이므로 즉시 성공으로 간주하고 UI 설정 진행 (콜백에서 실패 처리)
+                images_loaded_successfully = True
             else:
                 logging.info("PhotoSortApp.load_state: 저장된 폴더 정보가 없거나 유효하지 않아 이미지 로드 건너뜀.")
                 self.image_files = []
-
             # --- 로드 후 폴더 관련 UI '상태'(활성화, 버튼 텍스트 등) 최종 업데이트 ---
             self.update_jpg_folder_ui_state() # JPG 폴더 레이블 스타일/X버튼, JPG 로드 버튼 상태
             self.update_raw_folder_ui_state() # RAW 폴더 레이블 스타일/X버튼, RAW 이동 토글 상태
             self.update_match_raw_button_state()# RAW 관련 버튼 텍스트/상태
             self._rebuild_folder_selection_ui()
-
             # ===> ImageLoader 전략 설정 (이미지 목록 로드 성공 후, 뷰 업데이트 전) <===
             if images_loaded_successfully and self.image_files:
                 # 앱 재시작 시에는 저장된 last_loaded_raw_method_from_state를 사용
                 self.image_loader.set_raw_load_strategy(self.last_loaded_raw_method_from_state)
                 logging.info(f"PhotoSortApp.load_state: ImageLoader 처리 방식 설정됨 (재시작): {self.last_loaded_raw_method_from_state}")
-
                 # --- 재실행 시 RAW 디코딩 모드이면 진행률 대화상자 표시 ---
                 if self.is_raw_only_mode and self.last_loaded_raw_method_from_state == "decode":
                     self._show_first_raw_decode_progress()
-
             elif hasattr(self, 'image_loader'): # 이미지가 없더라도 ImageLoader는 존재하므로 기본값 설정
                 self.image_loader.set_raw_load_strategy("preview") # 이미지가 없으면 기본 preview
                 logging.info(f"PhotoSortApp.load_state: 이미지 로드 실패/없음. ImageLoader 기본 'preview' 설정.")
-
-
             # 5. 뷰 상태 복원 (이미지 로드 성공 시)
             if images_loaded_successfully and self.image_files:
                 self.thumbnail_panel.set_image_files(self.image_files)
                 total_images = len(self.image_files)
-
                 # <<< 최종 수정된 뷰 복원 로직 시작 >>>
-                
                 # 1. 저장된 상태 값들을 먼저 변수로 불러옵니다.
                 saved_compare_mode = loaded_data.get("compare_mode_active", False)
                 saved_grid_mode = loaded_data.get("grid_mode", "Off")
                 image_B_path_str = loaded_data.get("image_B_path", "")
-
                 # 2. 최종으로 적용할 모드를 결정합니다. (예외 조건 우선 처리)
                 final_compare_mode = saved_compare_mode
                 final_grid_mode = saved_grid_mode
-
                 if self.is_raw_only_mode and self.last_loaded_raw_method_from_state == "decode":
                     logging.info("RAW+Decode 모드 재실행 감지. Grid/Compare 모드를 강제로 'Off'로 설정합니다.")
                     final_compare_mode = False
                     final_grid_mode = "Off"
-                
                 # B 캔버스 이미지가 없으면 Compare 모드를 강제로 비활성화합니다.
                 if image_B_path_str and Path(image_B_path_str).exists():
                     self.image_B_path = Path(image_B_path_str)
                 else:
                     self.image_B_path = None
                     final_compare_mode = False # B 이미지가 없으면 Compare 모드는 무조건 해제
-
                 # 3. 최종 결정된 모드를 앱 상태 변수에 할당합니다.
                 self.compare_mode_active = final_compare_mode
                 self.grid_mode = final_grid_mode
-                
                 # 4. 최종 모드에 따라 UI 컨트롤(라디오 버튼, 콤보박스)의 상태를 명확하게 설정합니다.
                 if self.compare_mode_active:
                     self.compare_radio.setChecked(True)
@@ -13745,16 +13669,12 @@ class PhotoSortApp(QMainWindow):
                     combo_text = self.grid_mode.replace("x", " x ")
                     index = self.grid_size_combo.findText(combo_text)
                     if index != -1: self.grid_size_combo.setCurrentIndex(index)
-                
                 self.grid_size_combo.setEnabled(self.grid_mode != "Off" and not self.compare_mode_active)
                 self.update_zoom_radio_buttons_state()
-
                 # 5. 마지막으로 보고 있던 이미지 인덱스를 복원합니다.
                 loaded_actual_current_image_index = loaded_data.get("current_image_index", -1)
-                
                 if not (0 <= loaded_actual_current_image_index < total_images):
                     loaded_actual_current_image_index = 0 if total_images > 0 else -1
-                
                 # 6. 최종 결정된 모드에 따라 뷰를 업데이트하고 이미지를 표시합니다.
                 if self.grid_mode != "Off": # Grid On
                     rows, cols = self._get_grid_dimensions()
@@ -13766,7 +13686,6 @@ class PhotoSortApp(QMainWindow):
                     self.current_image_index = loaded_actual_current_image_index
                     self._update_view_for_grid_change() # 뷰 구조 먼저 설정
                     self.display_current_image() # 그 다음 이미지 표시
-
                 # 7. B 캔버스 이미지 복원 (필요한 경우)
                 if self.compare_mode_active and self.image_B_path:
                     def restore_b_canvas():
@@ -13775,14 +13694,11 @@ class PhotoSortApp(QMainWindow):
                         self._sync_viewports()
                         self.update_compare_filenames()
                     QTimer.singleShot(100, restore_b_canvas)
-                
                 # 8. 썸네일 패널 스크롤
                 if 0 <= loaded_actual_current_image_index < total_images:
                     self.thumbnail_panel.model.set_current_index(loaded_actual_current_image_index)
                     QTimer.singleShot(100, lambda idx=loaded_actual_current_image_index: self.thumbnail_panel.scroll_to_index(idx))
-                    
                     logging.info(f"앱 재실행: 썸네일 패널 스크롤 예약 (index: {loaded_actual_current_image_index}).")
-
                 self.update_counter_layout()
                 self.toggle_minimap(self.minimap_toggle.isChecked())
                 if self.grid_mode == "Off":
@@ -13800,23 +13716,18 @@ class PhotoSortApp(QMainWindow):
                 self.update_file_info_display(None)
                 self.update_counter_layout()
                 self.toggle_minimap(False)
-            
             # 6. 최종 UI 조정 및 포커스 설정
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
-
             # --- 성능 프로필 콤보박스 UI 동기화 ---
             # 저장된 프로필이 있다면 수동으로 설정
             saved_profile = loaded_data.get("performance_profile")
             if saved_profile:
                 HardwareProfileManager.set_profile_manually(saved_profile)
-            
             self._sync_performance_profile_ui()
             # --- 동기화 끝 ---
-
             logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
             return True # 정상적으로 상태 로드 완료
-
         except json.JSONDecodeError as e:
             logging.error(f"PhotoSortApp.load_state: 상태 파일 JSON 디코딩 오류: {e}. 기본 설정으로 시작합니다.")
             self.show_themed_message_box(QMessageBox.Warning, 
@@ -13841,10 +13752,8 @@ class PhotoSortApp(QMainWindow):
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
             logging.info("PhotoSortApp.load_state: 상태 불러오기 완료됨.")
-
             # 상태 로드가 완료된 후, 최종 언어 설정에 맞게 모든 컨트롤의 텍스트를 업데이트합니다.
             self.update_all_settings_controls_text()
-
             return True # 정상적으로 상태 로드 완료
 
     def _sync_performance_profile_ui(self):
@@ -15021,7 +14930,7 @@ class PhotoSortApp(QMainWindow):
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
         if hasattr(self, 'image_label_B') and not self.image_B_path:
-            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸일 패널에서 이곳으로 드래그하세요."))
         if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
         if not self.current_folder:
@@ -15035,7 +14944,26 @@ class PhotoSortApp(QMainWindow):
             self.settings_popup.setWindowTitle(LanguageManager.translate("설정 및 정보"))
 
         # --- 설정 창 관련 모든 컨트롤의 텍스트 업데이트 ---
-        self.update_all_settings_controls_text()
+        # [변경] 분리된 함수를 호출합니다.
+        if hasattr(self, 'settings_popup') and self.settings_popup:
+            self.update_settings_labels_texts(self.settings_popup)
+        
+        # [변경] 후원 섹션 가시성 및 텍스트 업데이트
+        if hasattr(self, 'korean_donation_widget') and hasattr(self, 'english_donation_widget'):
+            current_language = LanguageManager.get_current_language()
+            self.korean_donation_widget.setVisible(current_language == "ko")
+            self.english_donation_widget.setVisible(current_language == "en")
+            
+            # 객체 이름으로 위젯을 찾아 텍스트 업데이트
+            if self.settings_popup:
+                kakaopay_label = self.settings_popup.findChild(QRLinkLabel, "kakaopay_label")
+                if kakaopay_label:
+                    kakaopay_label.setText(LanguageManager.translate("카카오페이"))
+                
+                naverpay_label = self.settings_popup.findChild(QRLinkLabel, "naverpay_label")
+                if naverpay_label:
+                    naverpay_label.setText(LanguageManager.translate("네이버페이"))
+        
         # --- 현재 파일 정보 다시 표시 (날짜 형식 등이 바뀌었을 수 있으므로) ---
         self.update_file_info_display(self.get_current_image_path())
 
@@ -15043,7 +14971,6 @@ class PhotoSortApp(QMainWindow):
         """설정 UI의 모든 텍스트를 현재 언어로 업데이트합니다."""
         if not parent_widget:
             return
-
         # --- 그룹 제목 업데이트 ---
         group_title_keys = {
             "group_title_UI_설정": "UI 설정",
@@ -15053,10 +14980,8 @@ class PhotoSortApp(QMainWindow):
         for name, key in group_title_keys.items():
             label = parent_widget.findChild(QLabel, name)
             if label:
-                label.setText(LanguageManager.translate(key))
-
+                label.setText(f"[ {LanguageManager.translate(key)} ]")
         # --- 개별 설정 항목 라벨 업데이트 ---
-        # 사용되지 않는 키를 제거하고 '성능 프로필' 키를 추가했습니다.
         setting_row_keys = {
             "언어_label": "언어",
             "테마_label": "테마",
@@ -15076,7 +15001,6 @@ class PhotoSortApp(QMainWindow):
                     tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
                     tooltip_text = LanguageManager.translate(tooltip_key)
                     label.setToolTip(tooltip_text)
-
         # --- 라디오 버튼 텍스트 업데이트 (이전과 동일) ---
         if hasattr(self, 'panel_pos_left_radio'):
             self.panel_pos_left_radio.setText(LanguageManager.translate("좌측"))
@@ -15086,7 +15010,6 @@ class PhotoSortApp(QMainWindow):
             self.mouse_wheel_photo_radio.setText(LanguageManager.translate("사진 넘기기"))
         if hasattr(self, 'mouse_wheel_none_radio'):
             self.mouse_wheel_none_radio.setText(LanguageManager.translate("없음"))
-
         # --- 버튼 텍스트 업데이트 (이전과 동일) ---
         if hasattr(self, 'reset_camera_settings_button'):
             self.reset_camera_settings_button.setText(LanguageManager.translate("RAW 처리 방식 초기화"))
@@ -15096,17 +15019,10 @@ class PhotoSortApp(QMainWindow):
             self.reset_app_settings_button.setText(LanguageManager.translate("프로그램 설정 초기화"))
         if hasattr(self, 'shortcuts_button'):
             self.shortcuts_button.setText(LanguageManager.translate("단축키 확인"))
-
         # --- 정보 및 후원 섹션 텍스트 업데이트 (이전과 동일) ---
         info_label = parent_widget.findChild(QLabel, "photosort_info_label")
         if info_label:
             info_label.setText(self.create_translated_info_text())
-        for qr_label in parent_widget.findChildren(QRLinkLabel):
-            if qr_label.url == "":
-                if "KakaoPay" in qr_label.text() or "카카오페이" in qr_label.text():
-                    qr_label.setText(LanguageManager.translate("카카오페이") if LanguageManager.get_current_language() == "ko" else "KakaoPay 🇰🇷")
-                elif "NaverPay" in qr_label.text() or "네이버페이" in qr_label.text():
-                    qr_label.setText(LanguageManager.translate("네이버페이") if LanguageManager.get_current_language() == "ko" else "NaverPay 🇰🇷")
 
     def update_date_formats(self):
         """날짜 형식이 변경되었을 때 UI 업데이트"""
