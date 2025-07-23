@@ -148,7 +148,7 @@ class UIScaleManager:
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가
         "settings_popup_width": 1280,
-        "settings_popup_height": 1020,
+        "settings_popup_height": 1070,
         "settings_layout_vspace": 18,
         "settings_group_title_spacing": 15,
         "infotext_licensebutton": 30,
@@ -209,7 +209,7 @@ class UIScaleManager:
         "checkbox_padding": 0,
         # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
         "settings_popup_width": 950,
-        "settings_popup_height": 800,
+        "settings_popup_height": 840,
         "settings_layout_vspace": 12,
         "settings_group_title_spacing": 10,
         "infotext_licensebutton": 20,
@@ -1453,20 +1453,44 @@ class ZoomScrollArea(QScrollArea):
                 if wheel_delta == 0:
                     super().wheelEvent(event)
                     return
-                if self.app_parent.grid_mode == "Off":
-                    # === Grid Off 모드: 이전/다음 사진 ===
-                    if wheel_delta > 0:
-                        self.app_parent.show_previous_image()
-                    else:
-                        self.app_parent.show_next_image()
+
+                ## 수정: 민감도 로직 적용 ##
+                current_direction = 1 if wheel_delta > 0 else -1
+
+                # 휠 방향이 바뀌면 누적 카운터 초기화
+                if self.app_parent.last_wheel_direction != current_direction:
+                    self.app_parent.mouse_wheel_accumulator = 0
+                    self.app_parent.last_wheel_direction = current_direction
+                
+                # 카운터 증가
+                self.app_parent.mouse_wheel_accumulator += 1
+                # 휠 이벤트 발생 시마다 타이머 재시작
+                self.app_parent.wheel_reset_timer.start()
+
+                # 민감도 설정값에 도달했는지 확인
+                if self.app_parent.mouse_wheel_accumulator >= self.app_parent.mouse_wheel_sensitivity:
+                    # 도달했으면 액션 수행 및 카운터 초기화
+                    self.app_parent.mouse_wheel_accumulator = 0
+                    # 액션 수행 시 타이머 중지
+                    self.app_parent.wheel_reset_timer.stop()
+
+                    if self.app_parent.grid_mode == "Off":
+                        # === Grid Off 모드: 이전/다음 사진 ===
+                        if current_direction > 0:
+                            self.app_parent.show_previous_image()
+                        else:
+                            self.app_parent.show_next_image()
+                    elif self.app_parent.grid_mode != "Off":
+                        # === Grid 모드: 그리드 셀 간 이동 ===
+                        if current_direction > 0:
+                            self.app_parent.navigate_grid(-1)
+                        else:
+                            self.app_parent.navigate_grid(1)
+                    
                     event.accept()
                     return
-                elif self.app_parent.grid_mode != "Off":
-                    # === Grid 모드: 그리드 셀 간 이동 ===
-                    if wheel_delta > 0:
-                        self.app_parent.navigate_grid(-1)
-                    else:
-                        self.app_parent.navigate_grid(1)
+                else:
+                    # 민감도에 도달하지 않았으면 이벤트만 소비하고 아무것도 하지 않음
                     event.accept()
                     return
         # 기타 경우에는 기본 스크롤 동작 수행
@@ -3999,6 +4023,15 @@ class PhotoSortApp(QMainWindow):
 
         self.viewport_move_speed = 5 # 뷰포트 이동 속도 (1~10), 기본값 5
         self.mouse_wheel_action = "photo_navigation"  # 마우스 휠 동작: "photo_navigation" 또는 "none"
+
+        self.mouse_wheel_sensitivity = 1 # 휠 민감도 (1, 2, 3)
+        self.mouse_wheel_accumulator = 0 # 휠 틱 누적 카운터
+        self.last_wheel_direction = 0    # 마지막 휠 방향 (1: 위, -1: 아래)
+        self.wheel_reset_timer = QTimer(self)
+        self.wheel_reset_timer.setSingleShot(True)  # 한 번만 실행
+        self.wheel_reset_timer.setInterval(1000)    # 1초 (1000ms)
+        self.wheel_reset_timer.timeout.connect(self._reset_wheel_accumulator)
+
         self.last_processed_camera_model = None
         self.show_grid_filenames = False  # 그리드 모드에서 파일명 표시 여부 (기본값: False)
 
@@ -4267,7 +4300,7 @@ class PhotoSortApp(QMainWindow):
         self.image_label_B = QLabel(self.image_container_B)
         self.image_label_B.setAlignment(Qt.AlignCenter)
         self.image_label_B.setStyleSheet("background-color: transparent; color: #888888;")
-        self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+        self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다."))
         self.scroll_area_B = ZoomScrollArea(self)
         self.scroll_area_B.setWidget(self.image_container_B)
         self.scroll_area_B.setWidgetResizable(True)
@@ -4602,6 +4635,7 @@ class PhotoSortApp(QMainWindow):
         # 언어 및 날짜 형식 관련 콜백 등록
         LanguageManager.register_language_change_callback(self.update_ui_texts)
         LanguageManager.register_language_change_callback(self.update_performance_profile_combo_text)
+        LanguageManager.register_language_change_callback(self.update_mouse_wheel_sensitivity_combo_text)
         DateFormatManager.register_format_change_callback(self.update_date_formats)
 
         # ExifTool 가용성 확인
@@ -4936,7 +4970,7 @@ class PhotoSortApp(QMainWindow):
             self.image_B_path = None
             self.original_pixmap_B = None
             self.image_label_B.clear()
-            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다."))
         else:
             # B 캔버스가 비어있으면, 비교 모드 종료 (Grid Off로 전환)
             logging.info("비교 모드 종료")
@@ -5048,7 +5082,7 @@ class PhotoSortApp(QMainWindow):
             self.image_B_path = None
             self.original_pixmap_B = None
             self.image_label_B.clear()
-            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다."))
             
             # 5. 메인 파일 리스트에서 제거 및 A 패널 업데이트
             if image_to_move_index != -1:
@@ -7457,6 +7491,12 @@ class PhotoSortApp(QMainWindow):
         self.mouse_wheel_group.addButton(self.mouse_wheel_none_radio, 1)
         self.mouse_wheel_group.buttonClicked.connect(self.on_mouse_wheel_action_changed)
 
+        # --- 마우스 휠 민감도 설정 ---
+        self.mouse_wheel_sensitivity_combo = QComboBox()
+        self.update_mouse_wheel_sensitivity_combo_text() # 텍스트 채우는 함수 호출
+        self.mouse_wheel_sensitivity_combo.setStyleSheet(self.generate_combobox_style())
+        self.mouse_wheel_sensitivity_combo.currentIndexChanged.connect(self.on_mouse_wheel_sensitivity_changed)
+
         # --- 저장된 RAW 처리 방식 초기화 버튼 ---
         button_style = f"""
             QPushButton {{
@@ -7490,6 +7530,28 @@ class PhotoSortApp(QMainWindow):
         self.update_performance_profile_combo_text()
         self.performance_profile_combo.setStyleSheet(self.generate_combobox_style())
         self.performance_profile_combo.currentIndexChanged.connect(self.on_performance_profile_changed)
+
+    def update_mouse_wheel_sensitivity_combo_text(self):
+        """마우스 휠 민감도 콤보박스의 텍스트를 현재 언어에 맞게 업데이트합니다."""
+        if not hasattr(self, 'mouse_wheel_sensitivity_combo'):
+            return
+        
+        current_data = self.mouse_wheel_sensitivity_combo.itemData(self.mouse_wheel_sensitivity_combo.currentIndex())
+        
+        self.mouse_wheel_sensitivity_combo.blockSignals(True)
+        self.mouse_wheel_sensitivity_combo.clear()
+        
+        self.mouse_wheel_sensitivity_combo.addItem(LanguageManager.translate("1 (보통)"), 1)
+        self.mouse_wheel_sensitivity_combo.addItem(LanguageManager.translate("1/2 (둔감)"), 2)
+        self.mouse_wheel_sensitivity_combo.addItem(LanguageManager.translate("1/3 (매우 둔감)"), 3)
+        
+        if current_data is not None:
+            index = self.mouse_wheel_sensitivity_combo.findData(current_data)
+            if index != -1:
+                self.mouse_wheel_sensitivity_combo.setCurrentIndex(index)
+        
+        self.mouse_wheel_sensitivity_combo.blockSignals(False)
+
 
     def update_performance_profile_combo_text(self):
         """성능 프로필 콤보박스의 텍스트를 현재 언어에 맞게 업데이트합니다."""
@@ -7676,7 +7738,8 @@ class PhotoSortApp(QMainWindow):
         self._create_setting_row(grid_layout, current_row, "분류 폴더 개수", self.folder_count_combo); current_row += 1
         self._create_setting_row(grid_layout, current_row, "뷰포트 이동 속도", self.viewport_speed_combo); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 휠 동작", self._create_mouse_wheel_radios()); current_row += 1
-        
+        self._create_setting_row(grid_layout, current_row, "마우스 휠 민감도", self.mouse_wheel_sensitivity_combo); current_row += 1
+
         return current_row
 
 
@@ -7788,7 +7851,7 @@ class PhotoSortApp(QMainWindow):
 
         # 툴팁 추가
         if label_key == "성능 설정 ⓘ":
-            tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
+            tooltip_key = "프로그램을 처음 실행하면 시스템 사양에 맞춰 자동으로 설정됩니다.\n높은 옵션일수록 더 많은 메모리와 CPU 자원을 사용함으로써 더 많은 사진을 백그라운드에서 미리 로드하여 작업 속도를 높입니다.\n프로그램이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 옵션으로 변경해주세요.\n특히 고용량 사진을 다루는 경우 높은 옵션은 시스템에 큰 부하를 줄 수 있습니다."
             tooltip_text = LanguageManager.translate(tooltip_key)
             label.setToolTip(tooltip_text)
             label.setCursor(Qt.WhatsThisCursor)
@@ -7882,6 +7945,24 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"뷰포트 이동 속도 변경됨: {self.viewport_move_speed}")
             # self.save_state() # 즉시 저장하려면 호출 (set_camera_raw_setting처럼)
 
+    @Slot()
+    def _reset_wheel_accumulator(self):
+        """비활성 상태가 1초간 지속되면 마우스 휠 누적 카운터를 초기화합니다."""
+        logging.debug("마우스 휠 비활성으로 누적 카운터 초기화됨.")
+        self.mouse_wheel_accumulator = 0
+        self.last_wheel_direction = 0
+
+    def on_mouse_wheel_sensitivity_changed(self, index):
+        """마우스 휠 민감도 설정 변경 시 호출"""
+        if index < 0: return
+        new_sensitivity = self.mouse_wheel_sensitivity_combo.itemData(index)
+        if new_sensitivity is not None:
+            self.mouse_wheel_sensitivity = new_sensitivity
+            # 민감도 변경 시 누적 카운터와 방향, 타이머 초기화
+            self.mouse_wheel_accumulator = 0
+            self.last_wheel_direction = 0
+            self.wheel_reset_timer.stop() # 타이머도 중지
+            logging.info(f"마우스 휠 민감도 변경됨: {self.mouse_wheel_sensitivity}")
 
     def on_theme_changed(self, theme_name):
         """테마 변경 시 호출되는 함수"""
@@ -8878,7 +8959,7 @@ class PhotoSortApp(QMainWindow):
         # 2. 원본 이미지가 없으면 캔버스를 비우고 종료합니다.
         if not original_pixmap or original_pixmap.isNull():
             image_label.clear()
-            image_label.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.") if canvas_id == 'B' else "")
+            image_label.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다.") if canvas_id == 'B' else "")
             return
             
         # 3. 기존 apply_zoom_to_image의 로직을 그대로 가져와서,
@@ -11337,7 +11418,7 @@ class PhotoSortApp(QMainWindow):
             self.scroll_area_B.show()
             self.close_compare_button.show()
             if not self.image_B_path:
-                self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요."))
+                self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다."))
             self.grid_mode = "Off"
         else:
             self.scroll_area_B.hide()
@@ -13423,6 +13504,7 @@ class PhotoSortApp(QMainWindow):
             "camera_raw_settings": self.camera_raw_settings, # 카메라별 raw 설정
             "viewport_move_speed": getattr(self, 'viewport_move_speed', 5), # 키보드 뷰포트 이동속도
             "mouse_wheel_action": getattr(self, 'mouse_wheel_action', 'photo_navigation'),  # 마우스 휠 동작
+            "mouse_wheel_sensitivity": getattr(self, 'mouse_wheel_sensitivity', 1),
             "folder_count": self.folder_count,
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
@@ -13504,6 +13586,8 @@ class PhotoSortApp(QMainWindow):
             self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")
             self.mouse_wheel_action = loaded_data.get("mouse_wheel_action", "photo_navigation")  # 추가
             logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_action: {self.mouse_wheel_action}")
+            self.mouse_wheel_sensitivity = loaded_data.get("mouse_wheel_sensitivity", 1)
+            logging.info(f"PhotoSortApp.load_state: 로드된 mouse_wheel_sensitivity: {self.mouse_wheel_sensitivity}")
             self.saved_sessions = loaded_data.get("saved_sessions", {})
             logging.info(f"PhotoSortApp.load_state: 로드된 saved_sessions: (총 {len(self.saved_sessions)}개)")
             # <<< 저장된 확장자 설정 불러오기 (기본값 설정 포함) >>>
@@ -13548,6 +13632,10 @@ class PhotoSortApp(QMainWindow):
                     self.mouse_wheel_photo_radio.setChecked(True)
                 else:
                     self.mouse_wheel_none_radio.setChecked(True)
+            if hasattr(self, 'mouse_wheel_sensitivity_combo'):
+                index = self.mouse_wheel_sensitivity_combo.findData(self.mouse_wheel_sensitivity)
+                if index >= 0:
+                    self.mouse_wheel_sensitivity_combo.setCurrentIndex(index)
             self.move_raw_files = loaded_data.get("move_raw_files", True)
             # update_raw_toggle_state()는 폴더 유효성 검사 후 호출 예정
             self.zoom_mode = loaded_data.get("zoom_mode", "Fit")
@@ -13798,6 +13886,8 @@ class PhotoSortApp(QMainWindow):
             self.viewport_move_timer.stop()
         if hasattr(self, 'idle_preload_timer') and self.idle_preload_timer.isActive():
             self.idle_preload_timer.stop()
+        if hasattr(self, 'wheel_reset_timer') and self.wheel_reset_timer.isActive():
+            self.wheel_reset_timer.stop()
         # raw_result_processor_timer와 memory_monitor_timer는 앱 전역에서 계속 실행되어야 하므로 중지하지 않습니다.
 
         # --- 2. 상태 변수 초기화 ---
@@ -13837,6 +13927,9 @@ class PhotoSortApp(QMainWindow):
         self.last_processed_camera_model = None
         self.viewport_move_speed = 5
         self.show_grid_filenames = False
+        self.mouse_wheel_sensitivity = 1
+        self.mouse_wheel_accumulator = 0
+        self.last_wheel_direction = 0
         self.control_panel_on_right = False
         self.pressed_keys_for_viewport.clear()
         self.pressed_number_keys.clear()
@@ -14930,7 +15023,7 @@ class PhotoSortApp(QMainWindow):
         self.raw_toggle_button.setText(LanguageManager.translate("JPG + RAW 이동"))
         self.minimap_toggle.setText(LanguageManager.translate("미니맵"))
         if hasattr(self, 'image_label_B') and not self.image_B_path:
-            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸일 패널에서 이곳으로 드래그하세요."))
+            self.image_label_B.setText(LanguageManager.translate("비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다."))
         if hasattr(self, 'filename_toggle_grid'):
             self.filename_toggle_grid.setText(LanguageManager.translate("파일명"))
         if not self.current_folder:
@@ -14998,7 +15091,7 @@ class PhotoSortApp(QMainWindow):
             if label:
                 label.setText(LanguageManager.translate(translation_key))
                 if translation_key == "성능 설정 ⓘ":
-                    tooltip_key = "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요."
+                    tooltip_key = "프로그램을 처음 실행하면 시스템 사양에 맞춰 자동으로 설정됩니다.\n높은 옵션일수록 더 많은 메모리와 CPU 자원을 사용함으로써 더 많은 사진을 백그라운드에서 미리 로드하여 작업 속도를 높입니다.\n프로그램이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 옵션으로 변경해주세요.\n특히 고용량 사진을 다루는 경우 높은 옵션은 시스템에 큰 부하를 줄 수 있습니다."
                     tooltip_text = LanguageManager.translate(tooltip_key)
                     label.setToolTip(tooltip_text)
         # --- 라디오 버튼 텍스트 업데이트 (이전과 동일) ---
@@ -15235,6 +15328,10 @@ def main():
         "선택한 폴더에 지원하는 파일이 없습니다.": "No supported files found in the selected folder.",
         "분류 폴더 개수": "Number of Sorting Folders",
         "마우스 휠 동작": "Mouse Wheel Action",
+        "마우스 휠 민감도": "Mouse Wheel Sensitivity",
+        "1 (보통)": "1 (Normal)",
+        "1/2 (둔감)": "1/2 (Less Sensitive)",
+        "1/3 (매우 둔감)": "1/3 (Least Sensitive)",
         "사진 넘기기": "Photo Navigation", 
         "없음": "None",
         "이동 - 폴더 {0}": "Move to Folder {0}",
@@ -15313,7 +15410,7 @@ def main():
         "선택된 그리드 이미지가 없습니다.": "No grid image selected.",
         "호환성 문제": "Compatibility Issue",
         "RAW 디코딩 실패. 미리보기를 대신 사용합니다.": "RAW decoding failed. Using preview instead.",
-        "비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.": "Drag an image from the thumbnail panel here to compare.",
+        "비교할 이미지를 썸네일 패널에서 이곳으로 드래그하세요.\n\n* 이곳의 이미지는 우클릭 메뉴를 통해서만 분류 폴더로 이동할 수 있습니다.": "Drag an image from the thumbnail panel here to compare.\n\n* Images here can only be moved to sorting folders via the right-click menu.",
         "새 폴더 불러오기": "Load New Folder",
         "현재 진행 중인 작업을 종료하고 새로운 폴더를 불러오시겠습니까?": "Do you want to end the current session and load a new folder?",
         "예": "Yes",
@@ -15329,8 +15426,8 @@ def main():
         "설정 변경": "Settings Changed",
         "성능 프로필이 '{profile_name}'(으)로 변경되었습니다.": "Performance profile has been changed to '{profile_name}'.",
         "이 설정은 앱을 재시작해야 완전히 적용됩니다.": "This setting will be fully applied after restarting the app.",
-        "시스템 사양에 맞춰 자동으로 설정된 프로필입니다.\n높은 단계일수록 더 많은 메모리와 CPU를 사용하여 작업 속도를 높입니다.\n앱이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 단계로 변경해주세요.":
-        "This profile is automatically set based on your system specifications.\nHigher levels use more memory and CPU to increase processing speed.\nIf the app slows down your system or consumes too much memory, please change to a lower setting.",
+        "프로그램을 처음 실행하면 시스템 사양에 맞춰 자동으로 설정됩니다.\n높은 옵션일수록 더 많은 메모리와 CPU 자원을 사용함으로써 더 많은 사진을 백그라운드에서 미리 로드하여 작업 속도를 높입니다.\n프로그램이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 옵션으로 변경해주세요.\n특히 고용량 사진을 다루는 경우 높은 옵션은 시스템에 큰 부하를 줄 수 있습니다.":
+        "This profile is automatically set based on your system specifications when the app is first launched.\nHigher options use more memory and CPU resources to preload more photos in the background, increasing workflow speed.\nIf the application slows down your system or consumes too much memory, please change to a lower option.\nEspecially when dealing with large, high-resolution photos, higher options can put a significant load on your system.",
         # 프로그램 초기화 관련 번역
         "프로그램 설정 초기화": "Reset App Settings",
         "초기화 확인": "Confirm Reset",
