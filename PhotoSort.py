@@ -30,7 +30,7 @@ from PIL import Image, ImageQt
 import pillow_heif
 
 # PySide6 - Qt framework imports
-from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, 
+from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, Slot,
                            QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
                            QMimeData, QAbstractListModel, QModelIndex, QSize, QSharedMemory)
 
@@ -3865,6 +3865,70 @@ def format_camera_name(make, model):
         return model_str
     return f"{make_str} {model_str}".strip()
 
+class FolderLoaderWorker(QObject):
+    """백그라운드 스레드에서 폴더 스캔, 파일 매칭, 정렬 작업을 수행하는 워커"""
+    startProcessing = Signal(str, str, str, list)
+    
+    finished = Signal(list, dict, str, str, str)
+    progress = Signal(str)
+    error = Signal(str, str)
+
+    def __init__(self, supported_extensions, raw_extensions, get_datetime_func):
+        super().__init__()
+        self.supported_image_extensions = supported_extensions
+        self.raw_extensions = raw_extensions
+        self.get_datetime_from_file_fast = get_datetime_func
+        self._is_running = True
+        
+        self.startProcessing.connect(self.process_folders)
+
+    def stop(self):
+        self._is_running = False
+
+    @Slot(str, str, str, list)
+    def process_folders(self, jpg_folder_path, raw_folder_path, mode, raw_file_list_from_main):
+        """메인 처리 함수 (mode에 따라 분기)"""
+        self._is_running = True
+        try:
+            image_files = []
+            raw_files = {}
+
+            if mode == 'raw_only':
+                self.progress.emit(LanguageManager.translate("RAW 파일 정렬 중..."))
+                image_files = sorted(raw_file_list_from_main, key=self.get_datetime_from_file_fast)
+            
+            else: # 'jpg_with_raw' or 'jpg_only'
+                self.progress.emit(LanguageManager.translate("이미지 파일 스캔 중..."))
+                target_path = Path(jpg_folder_path)
+                temp_image_files = []
+                for file_path in target_path.iterdir():
+                    if not self._is_running: return
+                    if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                        temp_image_files.append(file_path)
+                
+                if not temp_image_files:
+                    self.error.emit(LanguageManager.translate("선택한 폴더에 지원하는 이미지 파일이 없습니다."), LanguageManager.translate("경고"))
+                    return
+
+                self.progress.emit(LanguageManager.translate("파일 정렬 중..."))
+                image_files = sorted(temp_image_files, key=self.get_datetime_from_file_fast)
+
+                if mode == 'jpg_with_raw' and raw_folder_path:
+                    self.progress.emit(LanguageManager.translate("RAW 파일 매칭 중..."))
+                    jpg_filenames = {f.stem: f for f in image_files}
+                    for file_path in Path(raw_folder_path).iterdir():
+                        if not self._is_running: return
+                        if file_path.is_file() and file_path.suffix.lower() in self.raw_extensions:
+                            if file_path.stem in jpg_filenames:
+                                raw_files[file_path.stem] = file_path
+            
+            if not self._is_running: return
+            self.finished.emit(image_files, raw_files, jpg_folder_path, raw_folder_path, mode)
+
+        except Exception as e:
+            logging.error(f"백그라운드 폴더 로딩 중 오류: {e}")
+            self.error.emit(str(e), LanguageManager.translate("오류"))
+
 class PhotoSortApp(QMainWindow):
     STATE_FILE = "photosort_data.json" # 상태 저장 파일 이름 정의
     
@@ -4521,7 +4585,7 @@ class PhotoSortApp(QMainWindow):
         self.space_pressed = False
 
         # 애플리케이션 레벨 이벤트 필터 설치
-        QApplication.instance().installEventFilter(self)
+        self.installEventFilter(self)
 
         # --- 프로그램 시작 시 상태 불러오기 (UI 로드 후 실행) ---
         # QTimer.singleShot(100, self.load_state)
@@ -4586,8 +4650,136 @@ class PhotoSortApp(QMainWindow):
 
         self.update_all_folder_labels_state()
 
+        self._is_silent_load = False
+
+        # --- 백그라운드 폴더 로더 설정 ---
+        self.folder_loader_thread = QThread()
+        self.folder_loader_worker = FolderLoaderWorker(
+            self.supported_image_extensions, self.raw_extensions, self.get_datetime_from_file_fast
+        )
+        self.folder_loader_worker.moveToThread(self.folder_loader_thread)
+
+        # 시그널 연결
+        self.folder_loader_worker.finished.connect(self.on_loading_finished)
+        self.folder_loader_worker.progress.connect(self.on_loading_progress)
+        self.folder_loader_worker.error.connect(self.on_loading_error)
+        
+        self.folder_loader_thread.start()
+        self.loading_progress_dialog = None
+        # --- 백그라운드 폴더 로더 설정 끝 ---
+
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._sync_viewports)
         self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_viewports)
+
+
+    def on_loading_progress(self, message):
+        """로딩 진행 상황을 로딩창에 업데이트합니다."""
+        if self.loading_progress_dialog:
+            self.loading_progress_dialog.setLabelText(message)
+            QApplication.processEvents() # UI 업데이트 강제
+
+    def on_loading_error(self, message, title):
+        """로딩 중 오류 발생 시 처리합니다."""
+        if self.loading_progress_dialog:
+            self.loading_progress_dialog.close()
+            self.loading_progress_dialog = None
+        
+        self.show_themed_message_box(QMessageBox.Warning, title, message)
+        self._reset_workspace_after_load_fail()
+
+    def on_loading_finished(self, image_files, raw_files, jpg_folder, raw_folder, final_mode):
+        """백그라운드 로딩 완료 시 UI를 업데이트합니다."""
+        if self.loading_progress_dialog:
+            self.loading_progress_dialog.close()
+            self.loading_progress_dialog = None
+
+        if not image_files:
+            logging.warning("백그라운드 로더가 빈 이미지 목록을 반환했습니다.")
+            self._reset_workspace_after_load_fail()
+            return
+            
+        # 성공적으로 로드된 데이터로 앱 상태 업데이트
+        self.image_files = image_files
+        self.raw_files = raw_files
+        
+        if final_mode == 'raw_only':
+            self.is_raw_only_mode = True
+            self.raw_folder = jpg_folder
+            self.current_folder = ""
+        else:
+            self.is_raw_only_mode = False
+            self.current_folder = jpg_folder
+            self.raw_folder = raw_folder
+
+        logging.info(f"백그라운드 로딩 완료 (모드: {final_mode}): {len(self.image_files)}개 이미지, {len(self.raw_files)}개 RAW 매칭")
+
+        if final_mode == 'jpg_with_raw' and not self._is_silent_load:
+            matched_count = len(raw_files)
+            total_jpg_count = len(image_files)
+            if matched_count > 0:
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("RAW 파일 매칭 결과"),
+                    f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {total_jpg_count}"
+                )
+            else:
+                self.show_themed_message_box(
+                    QMessageBox.Information,
+                    LanguageManager.translate("정보"),
+                    LanguageManager.translate("선택한 RAW 폴더에서 매칭되는 파일을 찾을 수 없습니다.")
+                )
+
+        # UI 업데이트
+        if self.current_folder:
+            self.folder_path_label.setText(self.current_folder)
+        else:
+            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        
+        if self.raw_folder:
+            self.raw_folder_path_label.setText(self.raw_folder)
+        else:
+            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
+        
+        self.grid_page_start_index = 0
+        self.current_grid_index = 0
+        self.image_loader.clear_cache()
+        self.zoom_mode = "Fit"
+        self.fit_radio.setChecked(True)
+        self.grid_mode = "Off"
+        self.grid_off_radio.setChecked(True)
+        self.update_zoom_radio_buttons_state()
+        
+        self.current_image_index = 0
+        self.display_current_image()
+        
+        self.update_jpg_folder_ui_state()
+        self.update_raw_folder_ui_state()
+        self.update_match_raw_button_state()
+        self.update_all_folder_labels_state()
+
+        self.thumbnail_panel.set_image_files(self.image_files)
+        self.update_thumbnail_panel_visibility()
+        if self.current_image_index >= 0:
+            self.thumbnail_panel.set_current_index(self.current_image_index)
+        
+        self.save_state()
+
+        self._is_silent_load = False
+
+    def _reset_workspace_after_load_fail(self):
+        """로드 실패 후 UI를 안전한 상태로 초기화합니다."""
+        self.image_files = []
+        self.current_image_index = -1
+        self.is_raw_only_mode = False
+        self.image_label.clear()
+        self.image_label.setStyleSheet("background-color: black;")
+        self.setWindowTitle("PhotoSort")
+        self.update_counters()
+        self.update_file_info_display(None)
+        self.update_jpg_folder_ui_state()
+        self.update_raw_folder_ui_state()
+        self.update_match_raw_button_state()
+        self.update_all_folder_labels_state()
 
     def reset_application_settings(self):
         """사용자에게 확인을 받은 후, 설정 파일을 삭제하고 앱을 재시작합니다."""
@@ -4985,8 +5177,7 @@ class PhotoSortApp(QMainWindow):
             line2 = LanguageManager.translate("잠시만 기다려주세요.")
             progress_text = f"<p style='margin-bottom: 10px;'>{line1}</p><p>{line2}</p>"
             progress_title = LanguageManager.translate("파일 준비 중")
-
-            # min/max를 0으로 설정하여 "Busy Indicator" (움직이는 바) 활성화
+            
             self.first_raw_load_progress = QProgressDialog(
                 progress_text,
                 "", 0, 0, self
@@ -4995,9 +5186,9 @@ class PhotoSortApp(QMainWindow):
             self.first_raw_load_progress.setCancelButton(None)
             self.first_raw_load_progress.setWindowModality(Qt.WindowModal)
             self.first_raw_load_progress.setMinimumDuration(0)
-            
             apply_dark_title_bar(self.first_raw_load_progress)
             
+            # [FIX] start_background_loading과 동일한 스타일시트 적용
             self.first_raw_load_progress.setStyleSheet(f"""
                 QProgressDialog {{
                     background-color: {ThemeManager.get_color('bg_primary')};
@@ -5009,16 +5200,9 @@ class PhotoSortApp(QMainWindow):
                 }}
                 QProgressBar {{
                     text-align: center;
-                    background-color: {ThemeManager.get_color('bg_secondary')};
-                    border: 1px solid {ThemeManager.get_color('border')};
-                    border-radius: 4px;
-                }}
-                QProgressBar::chunk {{
-                    background-color: {ThemeManager.get_color('accent')};
-                    width: 20px; /* 움직이는 청크의 너비 */
                 }}
             """)
-
+            
         # 대화상자를 메인 윈도우 중앙에 위치시키는 로직
         parent_geometry = self.geometry()
         self.first_raw_load_progress.adjustSize()
@@ -5026,7 +5210,6 @@ class PhotoSortApp(QMainWindow):
         new_x = parent_geometry.x() + (parent_geometry.width() - dialog_size.width()) // 2
         new_y = parent_geometry.y() + (parent_geometry.height() - dialog_size.height()) // 2
         self.first_raw_load_progress.move(new_x, new_y)
-
         self.first_raw_load_progress.show()
         QApplication.processEvents()
 
@@ -5662,279 +5845,148 @@ class PhotoSortApp(QMainWindow):
             logging.error(f"_handle_image_folder_drop 오류: {e}")
             return False
 
-    def _load_raw_only_from_path(self, folder_path):
-        """RAW 전용 폴더를 지정된 경로에서 로드 (드래그 앤 드랍용)"""
-        try:
-            if not folder_path:
-                return False
-                
-            target_path = Path(folder_path)
-            temp_raw_file_list = []
+    def _prepare_raw_only_load(self, folder_path):
+        """RAW 단독 로드 전처리: 파일 스캔, 첫 파일 분석, 사용자 선택 요청 (메인 스레드)"""
+        if not folder_path:
+            return None, None
+        
+        # [빠른 작업] 파일 목록 스캔
+        target_path = Path(folder_path)
+        temp_raw_file_list = []
+        for ext in self.raw_extensions:
+            temp_raw_file_list.extend(target_path.glob(f'*{ext}'))
+            temp_raw_file_list.extend(target_path.glob(f'*{ext.upper()}'))
+        
+        unique_raw_files = list(set(temp_raw_file_list))
+        if not unique_raw_files:
+            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 RAW 파일이 없습니다."))
+            return None, None
 
-            # RAW 파일 검색
-            for ext in self.raw_extensions:
-                temp_raw_file_list.extend(target_path.glob(f'*{ext}'))
-                temp_raw_file_list.extend(target_path.glob(f'*{ext.upper()}')) # 대문자 확장자도 고려
+        # [빠른 작업] 첫 파일 분석 및 사용자 선택 다이얼로그
+        first_raw_file_path_obj = sorted(unique_raw_files)[0]
+        is_raw_compatible, model_name, orig_res, prev_res = self._analyze_first_raw_file(str(first_raw_file_path_obj))
+        chosen_method, dont_ask = self._get_user_raw_method_choice(is_raw_compatible, model_name, orig_res, prev_res)
 
-            # 중복 제거 및 촬영 시간 기준 정렬
-            unique_raw_files = list(set(temp_raw_file_list))
-            unique_raw_files = sorted(unique_raw_files, key=lambda x: self.get_datetime_from_file_fast(x))
+        if chosen_method is None:
+            return None, None # 사용자가 취소
 
-            if not unique_raw_files:
-                self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 RAW 파일이 없습니다."))
-                # UI 초기화 (기존 JPG 로드 실패와 유사하게)
-                self.image_files = []
-                self.current_image_index = -1
-                self.image_label.clear()
-                self.image_label.setStyleSheet("background-color: black;")
-                self.setWindowTitle("PhotoSort")
-                self.update_counters()
-                self.update_file_info_display(None)
-                # RAW 관련 UI 업데이트
-                self.raw_folder = ""
-                self.is_raw_only_mode = False # 실패 시 모드 해제
-                self.update_raw_folder_ui_state() # raw_folder_path_label 포함
-                self.update_match_raw_button_state() # 버튼 텍스트 원복
-                # JPG 버튼 활성화
-                self.load_button.setEnabled(True)
-                if self.session_management_popup and self.session_management_popup.isVisible():
-                    self.session_management_popup.update_all_button_states()          
-                self.update_all_folder_labels_state()      
-                return False
+        # "다시 묻지 않음" 설정 저장
+        if model_name != LanguageManager.translate("알 수 없는 카메라"):
+            self.set_camera_raw_setting(model_name, chosen_method, dont_ask)
+        
+        self.image_loader.set_raw_load_strategy(chosen_method)
+        
+        # RAW 디코딩 모드일 경우 진행률 대화상자 표시
+        if chosen_method == "decode":
+            self._show_first_raw_decode_progress()
             
-            # --- 1. 첫 번째 RAW 파일 분석 ---
-            first_raw_file_path_obj = unique_raw_files[0]
-            first_raw_file_path_str = str(first_raw_file_path_obj)
-            logging.info(f"첫 번째 RAW 파일 분석 시작: {first_raw_file_path_obj.name}")
-
-            is_raw_compatible = False
-            camera_model_name = LanguageManager.translate("알 수 없는 카메라") # 기본값
-            original_resolution_str = "-"
-            preview_resolution_str = "-"
-            
-            # exiftool을 사용해야 할 수도 있으므로 미리 경로 확보
-            exiftool_path = self.get_exiftool_path() # 기존 get_exiftool_path() 사용
-            exiftool_available = Path(exiftool_path).exists() and Path(exiftool_path).is_file()
-
-            # 1.1. {RAW 호환 여부} 및 {원본 해상도 (rawpy 시도)}, {카메라 모델명 (rawpy 시도)}
-            rawpy_exif_data = {} # rawpy에서 얻은 부분적 EXIF 저장용
-            try:
-                with rawpy.imread(first_raw_file_path_str) as raw:
-                    is_raw_compatible = True
-                    original_width = raw.sizes.width # postprocess 후 크기 (raw_width는 센서 크기)
-                    original_height = raw.sizes.height
-                    if original_width > 0 and original_height > 0 :
-                        original_resolution_str = f"{original_width}x{original_height}"
-                    
-                    if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer and \
-                    hasattr(raw, 'model') and raw.model:
-                        camera_model_name = f"{raw.camera_manufacturer.strip()} {raw.model.strip()}"
-                    elif hasattr(raw, 'model') and raw.model: # 모델명만 있는 경우
-                        camera_model_name = raw.model.strip()
-                    
-                    # 임시로 rawpy에서 일부 EXIF 정보 추출 (카메라 모델 등)
-                    rawpy_exif_data["exif_make"] = raw.camera_manufacturer.strip() if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer else ""
-                    rawpy_exif_data["exif_model"] = raw.model.strip() if hasattr(raw, 'model') and raw.model else ""
-
-            except Exception as e_rawpy:
-                is_raw_compatible = False # rawpy로 기본 정보 읽기 실패 시 호환 안됨으로 간주
-                logging.warning(f"rawpy로 첫 파일({first_raw_file_path_obj.name}) 분석 중 오류 (호환 안됨 가능성): {e_rawpy}")
-
-            # 1.2. {카메라 모델명 (ExifTool 시도 - rawpy 실패 시 또는 보강)} 및 {원본 해상도 (ExifTool 시도 - rawpy 실패 시)}
-            if (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라") or \
-            not original_resolution_str or original_resolution_str == "-") and exiftool_available:
-                logging.info(f"Exiftool로 추가 정보 추출 시도: {first_raw_file_path_obj.name}")
-                try:
-                    cmd = [exiftool_path, "-json", "-Model", "-ImageWidth", "-ImageHeight", "-Make", first_raw_file_path_str]
-                    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                    process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
-                    if process.returncode == 0 and process.stdout:
-                        exif_data_list = json.loads(process.stdout)
-                        if exif_data_list and isinstance(exif_data_list, list):
-                            exif_data = exif_data_list[0]
-                            model = exif_data.get("Model")
-                            make = exif_data.get("Make")
-                            
-                            if make and model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
-                                camera_model_name = f"{make.strip()} {model.strip()}"
-                            elif model and (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라")):
-                                camera_model_name = model.strip()
-                            
-                            # rawpy_exif_data 보강
-                            if not rawpy_exif_data.get("exif_make") and make: rawpy_exif_data["exif_make"] = make.strip()
-                            if not rawpy_exif_data.get("exif_model") and model: rawpy_exif_data["exif_model"] = model.strip()
-
-                            if (not original_resolution_str or original_resolution_str == "-"): # is_raw_compatible이 False인 경우 등
-                                width = exif_data.get("ImageWidth")
-                                height = exif_data.get("ImageHeight")
-                                if width and height and int(width) > 0 and int(height) > 0:
-                                    original_resolution_str = f"{width}x{height}"
-                except Exception as e_exiftool:
-                    logging.error(f"Exiftool로 정보 추출 중 오류: {e_exiftool}")
-            
-            # 최종 카메라 모델명 결정 (rawpy_exif_data 우선, 없으면 camera_model_name 변수 사용)
-            final_camera_model_display = ""
-            if rawpy_exif_data.get("exif_make") and rawpy_exif_data.get("exif_model"):
-                final_camera_model_display = format_camera_name(rawpy_exif_data["exif_make"], rawpy_exif_data["exif_model"])
-            elif rawpy_exif_data.get("exif_model"):
-                final_camera_model_display = rawpy_exif_data["exif_model"]
-            elif camera_model_name and camera_model_name != LanguageManager.translate("알 수 없는 카메라"):
-                final_camera_model_display = camera_model_name
-            else:
-                final_camera_model_display = LanguageManager.translate("알 수 없는 카메라")
-
-            # 1.3. {미리보기 해상도} 추출
-            # ImageLoader의 _load_raw_preview_with_orientation을 임시로 호출하여 미리보기 정보 얻기
-            # (ImageLoader 인스턴스가 필요)
-            preview_pixmap, preview_width, preview_height = self.image_loader._load_raw_preview_with_orientation(first_raw_file_path_str)
-            if preview_pixmap and not preview_pixmap.isNull() and preview_width and preview_height:
-                preview_resolution_str = f"{preview_width}x{preview_height}"
-            else: # 미리보기 추출 실패 또는 정보 없음
-                preview_resolution_str = LanguageManager.translate("정보 없음") # 또는 "-"
-
-            logging.info(f"파일 분석 완료: 호환={is_raw_compatible}, 모델='{final_camera_model_display}', 원본={original_resolution_str}, 미리보기={preview_resolution_str}")
-
-            self.last_processed_camera_model = None # 새 폴더 로드 시 이전 카메라 모델 정보 초기화
-            
-            # --- 2. 저장된 설정 확인 및 메시지 박스 표시 결정 ---
-            chosen_method = None # 사용자가 최종 선택한 처리 방식 ("preview" or "decode")
-            dont_ask_again_for_this_model = False
-
-            # final_camera_model_display가 유효할 때만 camera_raw_settings 확인
-            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
-                saved_setting_for_this_action = self.get_camera_raw_setting(final_camera_model_display)
-                if saved_setting_for_this_action: # 해당 모델에 대한 설정이 존재하면
-                    # 저장된 "dont_ask" 값을 dont_ask_again_for_this_model의 초기값으로 사용
-                    dont_ask_again_for_this_model = saved_setting_for_this_action.get("dont_ask", False)
-
-                    if dont_ask_again_for_this_model: # "다시 묻지 않음"이 True이면
-                        chosen_method = saved_setting_for_this_action.get("method")
-                        logging.info(f"'{final_camera_model_display}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
-                    else: # "다시 묻지 않음"이 False이거나 dont_ask 키가 없으면 메시지 박스 표시
-                        chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
-                            is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
-                        )
-                        # 사용자가 대화상자를 닫지 않았을 때만 dont_ask_again_for_this_model 값을 업데이트
-                        if chosen_method is not None:
-                            dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
-                else: # 해당 모델에 대한 설정이 아예 없으면 메시지 박스 표시
-                    chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
-                        is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
-                    )
-                    if chosen_method is not None:
-                        dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
-            else: # 카메라 모델을 알 수 없는 경우 -> 항상 메시지 박스 표시
-                logging.info(f"카메라 모델을 알 수 없어, 메시지 박스 표시 (호환성 기반)")
-                chosen_method, dont_ask_again_for_this_model_from_dialog = self._show_raw_processing_choice_dialog(
-                    is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
-                )
-                if chosen_method is not None:
-                    dont_ask_again_for_this_model = dont_ask_again_for_this_model_from_dialog
-
-            if chosen_method is None:
-                logging.info("RAW 처리 방식 선택되지 않음 (대화상자 닫힘 등). 로드 취소.")
-                return False
-            
-            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}")
-
-            # --- "decode" 모드일 경우 진행률 대화상자 표시 ---
-            if chosen_method == "decode":
-                self._show_first_raw_decode_progress()
-
-            # --- 3. "다시 묻지 않음" 선택 시 설정 저장 ---
-            # dont_ask_again_for_this_model은 위 로직을 통해 올바른 값 (기존 값 또는 대화상자 선택 값)을 가짐
-            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
-                # chosen_method가 None이 아닐 때만 저장 로직 실행
-                self.set_camera_raw_setting(final_camera_model_display, chosen_method, dont_ask_again_for_this_model)
-            
-            if final_camera_model_display != LanguageManager.translate("알 수 없는 카메라"):
-                self.last_processed_camera_model = final_camera_model_display
-            else:
-                self.last_processed_camera_model = None
-            
-            # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
-            self.image_loader.set_raw_load_strategy(chosen_method)
-            logging.info(f"ImageLoader 처리 방식 설정 (새 로드): {chosen_method}")
-
-            # --- RAW 로드 성공 시 ---
-            logging.info(f"로드된 RAW 파일 수: {len(unique_raw_files)}")
-            self.image_files = unique_raw_files
-
-            # 썸네일 패널에 파일 목록 설정
-            self.thumbnail_panel.set_image_files(self.image_files)
-            
-            self.raw_folder = folder_path
-            self.is_raw_only_mode = True
-
-            self.current_folder = ""
-            self.raw_files = {} # RAW 전용 모드에서는 이 딕셔너리는 다른 용도로 사용되지 않음
-            self.folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            self.update_jpg_folder_ui_state()
-
-            self.raw_folder_path_label.setText(folder_path)
-            self.update_raw_folder_ui_state()
-            self.update_match_raw_button_state()
-            self.load_button.setEnabled(False)
-
-            self.grid_page_start_index = 0
-            self.current_grid_index = 0
-            self.image_loader.clear_cache() # 이전 캐시 비우기 (다른 전략이었을 수 있으므로)
-
-            self.zoom_mode = "Fit"
-            self.fit_radio.setChecked(True)
-            self.grid_mode = "Off"
-            self.grid_off_radio.setChecked(True)
-            self.update_zoom_radio_buttons_state()
-            self.save_state()
-
-            self.current_image_index = 0
-            # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
-            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})")
-            self.display_current_image() 
-
-            if self.grid_mode == "Off":
-                self.start_background_thumbnail_preloading()
-
-            if self.session_management_popup and self.session_management_popup.isVisible():
-                self.session_management_popup.update_all_button_states()
-
-            self.update_all_folder_labels_state()
-            return True
-            
-        except Exception as e:
-            logging.error(f"_load_raw_only_from_path 오류: {e}")
-            return False
+        return unique_raw_files, chosen_method
 
     def _handle_raw_folder_drop(self, folder_path):
-        """RAW 폴더 드랍 처리"""
+        """RAW 폴더 드랍 처리 (비동기 로딩으로 변경)"""
         try:
-            # 이미지 파일이 로드되지 않았다면 RAW 전용 모드로 동작
-            if not self.image_files:
-                # RAW 전용 모드: 새로운 함수 사용
-                success = self._load_raw_only_from_path(folder_path)
-                if success:
-                    logging.info(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 성공: {folder_path}")
+            if not self.image_files: # RAW 단독 로드
+                raw_files_to_load, chosen_method = self._prepare_raw_only_load(folder_path)
+                if raw_files_to_load and chosen_method:
+                    self.start_background_loading(
+                        jpg_folder_path=folder_path,
+                        raw_folder_path=None,
+                        mode='raw_only',
+                        raw_file_list=raw_files_to_load
+                    )
                     return True
-                else:
-                    logging.warning(f"드래그 앤 드랍으로 RAW 전용 폴더 로드 실패: {folder_path}")
-                    return False
-            else:
-                # JPG-RAW 매칭 모드: 이미 로드된 이미지들과 RAW 파일 매칭
-                self.raw_folder = folder_path
-                self.raw_folder_path_label.setText(folder_path)
-                
-                # 현재 로드된 이미지들과 RAW 파일 매칭 시도
-                self.match_raw_files(folder_path)
-                logging.info(f"드래그 앤 드랍으로 RAW 폴더 설정 및 매칭 완료: {folder_path}")
-                
-                # UI 상태 업데이트
-                self.update_raw_folder_ui_state()
-                self.update_match_raw_button_state()
-                self.save_state()
+                return False
+            else: # JPG-RAW 매칭
+                self.start_background_loading(
+                    jpg_folder_path=self.current_folder,
+                    raw_folder_path=folder_path,
+                    mode='jpg_with_raw',
+                    raw_file_list=None
+                )
                 return True
         except Exception as e:
             logging.error(f"_handle_raw_folder_drop 오류: {e}")
             return False
+
+    def _analyze_first_raw_file(self, first_raw_file_path_str):
+        """첫 번째 RAW 파일을 분석하여 호환성, 모델명, 해상도 정보를 반환합니다."""
+        logging.info(f"첫 번째 RAW 파일 분석 시작: {Path(first_raw_file_path_str).name}")
+        is_raw_compatible = False
+        camera_model_name = LanguageManager.translate("알 수 없는 카메라")
+        original_resolution_str = "-"
+        preview_resolution_str = "-"
+        rawpy_exif_data = {}
+        exiftool_path = self.get_exiftool_path()
+        exiftool_available = Path(exiftool_path).exists() and Path(exiftool_path).is_file()
+
+        try:
+            with rawpy.imread(first_raw_file_path_str) as raw:
+                is_raw_compatible = True
+                original_width = raw.sizes.width
+                original_height = raw.sizes.height
+                if original_width > 0 and original_height > 0:
+                    original_resolution_str = f"{original_width}x{original_height}"
+                
+                make = raw.camera_manufacturer.strip() if hasattr(raw, 'camera_manufacturer') and raw.camera_manufacturer else ""
+                model = raw.model.strip() if hasattr(raw, 'model') and raw.model else ""
+                camera_model_name = format_camera_name(make, model)
+                rawpy_exif_data["exif_make"] = make
+                rawpy_exif_data["exif_model"] = model
+        except Exception as e_rawpy:
+            is_raw_compatible = False
+            logging.warning(f"rawpy로 첫 파일 분석 중 오류: {e_rawpy}")
+
+        if (not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라") or original_resolution_str == "-") and exiftool_available:
+            try:
+                cmd = [exiftool_path, "-json", "-Model", "-ImageWidth", "-ImageHeight", "-Make", first_raw_file_path_str]
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                process = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, creationflags=creationflags)
+                if process.returncode == 0 and process.stdout:
+                    exif_data = json.loads(process.stdout)[0]
+                    model = exif_data.get("Model")
+                    make = exif_data.get("Make")
+                    if not rawpy_exif_data.get("exif_model") and model:
+                        rawpy_exif_data["exif_model"] = model.strip()
+                    if not rawpy_exif_data.get("exif_make") and make:
+                        rawpy_exif_data["exif_make"] = make.strip()
+                    if not camera_model_name or camera_model_name == LanguageManager.translate("알 수 없는 카메라"):
+                         camera_model_name = format_camera_name(make, model)
+                    if original_resolution_str == "-":
+                        width = exif_data.get("ImageWidth")
+                        height = exif_data.get("ImageHeight")
+                        if width and height and int(width) > 0 and int(height) > 0:
+                            original_resolution_str = f"{width}x{height}"
+            except Exception as e_exiftool:
+                logging.error(f"Exiftool로 정보 추출 중 오류: {e_exiftool}")
+
+        final_camera_model_display = camera_model_name if camera_model_name else LanguageManager.translate("알 수 없는 카메라")
+        
+        preview_pixmap, preview_width, preview_height = self.image_loader._load_raw_preview_with_orientation(first_raw_file_path_str)
+        if preview_pixmap and not preview_pixmap.isNull() and preview_width and preview_height:
+            preview_resolution_str = f"{preview_width}x{preview_height}"
+        else:
+            preview_resolution_str = LanguageManager.translate("정보 없음")
+
+        return is_raw_compatible, final_camera_model_display, original_resolution_str, preview_resolution_str
+
+    def _get_user_raw_method_choice(self, is_compatible, model_name, orig_res, prev_res):
+        """저장된 설정을 확인하거나 사용자에게 RAW 처리 방식을 묻는 다이얼로그를 표시합니다."""
+        chosen_method = None
+        dont_ask = False
+        if model_name != LanguageManager.translate("알 수 없는 카메라"):
+            saved_setting = self.get_camera_raw_setting(model_name)
+            if saved_setting and saved_setting.get("dont_ask"):
+                chosen_method = saved_setting.get("method")
+                dont_ask = True
+                logging.info(f"'{model_name}' 모델에 저장된 '다시 묻지 않음' 설정 사용: {chosen_method}")
+                return chosen_method, dont_ask
+        
+        # 저장된 설정이 없거나 '다시 묻지 않음'이 아닌 경우
+        result = self._show_raw_processing_choice_dialog(is_compatible, model_name, orig_res, prev_res)
+        if result:
+            chosen_method, dont_ask = result
+        
+        return chosen_method, dont_ask
 
     def _handle_category_folder_drop(self, folder_path, folder_index):
         """분류 폴더 드랍 처리"""
@@ -6193,17 +6245,9 @@ class PhotoSortApp(QMainWindow):
             return None
 
     def _handle_canvas_folder_drop(self, folder_path):
-        """캔버스 영역 폴더 드랍 메인 처리 로직 (사용자 확인 기능 추가)"""
+        """캔버스 영역 폴더 드랍 메인 처리 로직 (비동기 로딩 적용)"""
         try:
-            analysis = self._analyze_folder_contents(folder_path)
-            if not analysis:
-                return False
-
-            was_in_grid_mode = self.grid_mode != "Off"
-            current_has_images = bool(self.image_files)
-
-            # 1. 작업이 이미 진행 중인 경우, 사용자에게 확인을 받습니다.
-            if current_has_images:
+            if self.image_files:
                 reply = self.show_themed_message_box(
                     QMessageBox.Question,
                     LanguageManager.translate("새 폴더 불러오기"),
@@ -6212,68 +6256,45 @@ class PhotoSortApp(QMainWindow):
                     QMessageBox.Cancel
                 )
                 if reply == QMessageBox.Cancel:
-                    logging.info("사용자가 새 폴더 불러오기를 취소했습니다.")
-                    return False # 사용자가 취소했으므로 아무 작업도 하지 않음
-                
-                # 사용자가 "예"를 선택한 경우, 작업 공간을 초기화합니다.
-                logging.info("사용자가 새 폴더 불러오기를 승인했습니다. 기존 작업을 초기화합니다.")
+                    return False
                 self._reset_workspace()
-                # UI를 초기 상태로 업데이트 (라디오 버튼 등)
-                self.grid_off_radio.setChecked(True)
-                self.update_all_folder_labels_state()
-                self.update_match_raw_button_state()
-
-                # 작업 공간 초기화 후, 드롭 이벤트를 처음부터 다시 처리하도록 재귀 호출합니다.
-                # 이때는 current_has_images가 False이므로 확인창이 다시 뜨지 않습니다.
-                return self._handle_canvas_folder_drop(folder_path)
-
-            # 2. 작업이 없는 상태에서 폴더를 드롭한 경우 (기존 로직)
-            success = False
-            if analysis['has_raw'] and not analysis['has_images']:
-                success = self._handle_raw_folder_drop(folder_path)
-            elif analysis['has_images'] and not analysis['has_raw']:
-                success = self._handle_image_folder_drop(folder_path)
-            elif analysis['has_raw'] and analysis['has_images']:
-                choice_dialog_result = self._show_folder_choice_dialog(has_matching=analysis['has_matching'])
-                if choice_dialog_result is None: return False
-                
-                options = {0: "match", 1: "image_only", 2: "raw_only"}
-                if not analysis['has_matching']:
-                    options = {0: "image_only", 1: "raw_only"}
-                
-                choice = options.get(choice_dialog_result)
-                
-                if choice == "match":
-                    if self._handle_image_folder_drop(folder_path):
-                        success = self._handle_raw_folder_drop(folder_path)
-                elif choice == "image_only":
-                    success = self._handle_image_folder_drop(folder_path)
-                elif choice == "raw_only":
-                    success = self._handle_raw_folder_drop(folder_path)
-            else:
-                self.show_themed_message_box(
-                    QMessageBox.Warning, 
-                    LanguageManager.translate("경고"), 
-                    LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다.")
-                )
+                # 초기화 후, 함수를 처음부터 다시 실행하는 것처럼 동작해야 함
+                # 재귀 호출 대신 바로 이어서 로직을 실행
+            
+            analysis = self._analyze_folder_contents(folder_path)
+            if not analysis:
                 return False
 
-            # 3. 로드 성공 후 UI 조정 (기존 로직)
-            if success and was_in_grid_mode:
-                logging.info("그리드 모드에서 폴더 드롭: Grid Off로 전환하고 뷰를 업데이트합니다.")
-                self.grid_mode = "Off"
-                self.grid_off_radio.setChecked(True)
-                self.update_zoom_radio_buttons_state()
-                self.update_thumbnail_panel_visibility()
-                self.update_grid_view()
-                self.update_counter_layout()
+            # 로딩 모드 결정 및 비동기 로딩 호출
+            if analysis['has_raw'] and not analysis['has_images']:
+                return self._handle_raw_folder_drop(folder_path)
             
-            return success
+            elif analysis['has_images'] and not analysis['has_raw']:
+                self.start_background_loading(folder_path, None, mode='jpg_only', raw_file_list=None)
+                return True
+
+            elif analysis['has_raw'] and analysis['has_images']:
+                choice_id = self._show_folder_choice_dialog(has_matching=analysis['has_matching'])
+                if choice_id is None: return False
+
+                if choice_id == 0: # 매칭
+                    self.start_background_loading(folder_path, folder_path, mode='jpg_with_raw', raw_file_list=None)
+                elif choice_id == 1: # JPG만
+                    self.start_background_loading(folder_path, None, mode='jpg_only', raw_file_list=None)
+                elif choice_id == 2: # RAW만
+                    return self._handle_raw_folder_drop(folder_path)
+                return True
+            
+            else:
+                self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 지원하는 파일이 없습니다."))
+                return False
 
         except Exception as e:
             logging.error(f"_handle_canvas_folder_drop 오류: {e}")
+            # 에러 로그에 스택 트레이스를 추가하여 더 자세한 정보 확인
+            import traceback
+            traceback.print_exc()
             return False
-
     # === 캔버스 영역 드래그 앤 드랍 관련 코드 끝 === #
 
     def on_extension_checkbox_changed(self, state):
@@ -8697,30 +8718,20 @@ class PhotoSortApp(QMainWindow):
                 self.close_compare_button.move(new_x, new_y)
     
     def load_jpg_folder(self):
-        """JPG 등 이미지 파일이 있는 폴더 선택 및 로드"""
+        """JPG 등 이미지 파일이 있는 폴더 선택 및 백그라운드 로드 시작"""
         folder_path = QFileDialog.getExistingDirectory(
             self, LanguageManager.translate("이미지 파일이 있는 폴더 선택"), "",
             QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
         )
-
         if folder_path:
             logging.info(f"이미지(JPG) 폴더 선택: {folder_path}")
-            self.clear_raw_folder()  # 새 JPG 폴더 지정 시 RAW 폴더 초기화
-
-            if self.load_images_from_folder(folder_path):
-                self.current_folder = folder_path
-                self.folder_path_label.setText(folder_path)
-                self.update_jpg_folder_ui_state() # UI 상태 업데이트
-                self.save_state() # <<< 저장
-                if self.session_management_popup and self.session_management_popup.isVisible():
-                    self.session_management_popup.update_all_button_states()
-            else:
-                # 로드 실패 시 상태 초기화 반영
-                self.current_folder = ""
-                # 실패 시 load_images_from_folder 내부에서도 호출하지만 여기서도 명시적으로 호출
-                self.update_jpg_folder_ui_state()
-                if self.session_management_popup and self.session_management_popup.isVisible():
-                    self.session_management_popup.update_all_button_states()
+            self.clear_raw_folder()
+            self.start_background_loading(
+                jpg_folder_path=folder_path, 
+                raw_folder_path=None, 
+                mode='jpg_only', 
+                raw_file_list=None
+            )
 
     def on_match_raw_button_clicked(self):
         """ "JPG - RAW 연결" 또는 "RAW 불러오기" 버튼 클릭 시 호출 """
@@ -8778,106 +8789,56 @@ class PhotoSortApp(QMainWindow):
         return datetime.fromtimestamp(file_path.stat().st_mtime)
 
     def load_images_from_folder(self, folder_path):
-        """폴더에서 JPG 이미지 파일 목록 로드 및 유효성 검사"""
+        """
+        폴더에서 이미지 로드를 시작하는 통합 트리거 함수.
+        실제 로딩은 백그라운드에서 수행됩니다.
+        """
         if not folder_path:
-            return False # 유효하지 않은 경로면 실패
-
-        # 임시 이미지 목록 생성
-        temp_image_files = []
-
-        # JPG 파일 검색 - 대소문자 구분 없이 중복 방지
-        target_path = Path(folder_path)
-
-        # 대소문자 구분 없이 지원 이미지 파일 검색
-        all_image_files = []
-        for file_path in target_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
-                all_image_files.append(file_path)
-
-        # 파일명을 소문자로 변환하여 set으로 중복 제거 후 원본 경로 유지
-        seen_files = set()
-        for file_path in all_image_files:
-            lower_name = file_path.name.lower()
-            if lower_name not in seen_files:
-                seen_files.add(lower_name)
-                temp_image_files.append(file_path)
-
-        # --- 이미지 파일 유무 검사 추가 ---
-        if not temp_image_files:
-            logging.warning(f"선택한 폴더에 지원하는 이미지 파일이 없습니다: {folder_path}")
-            self.show_themed_message_box(QMessageBox.Warning, LanguageManager.translate("경고"), LanguageManager.translate("선택한 폴더에 지원하는 이미지 파일이 없습니다."))
-            # UI 초기화
-            self.image_files = [] # 내부 목록도 비움
-            self.current_image_index = -1
-            self.is_raw_only_mode = False # <--- 모드 해제
-            self.image_label.clear() # 캔버스 비우기
-            self.image_label.setStyleSheet("background-color: black;") # 검은 배경 유지
-            self.setWindowTitle("PhotoSort") # 창 제목 초기화
-            self.update_counters() # 카운터 업데이트
-            self.update_file_info_display(None) # 파일 정보 초기화
-            self.update_jpg_folder_ui_state() # 실패 시 X 버튼 비활성화
-            self.update_match_raw_button_state() # <--- RAW 버튼 상태 업데이트
-            self.load_button.setEnabled(True) # <--- JPG 버튼 활성화 (실패 시)
-            self.update_raw_folder_ui_state() # <--- RAW 토글 상태 업데이트
-            self.update_all_folder_labels_state() 
-            return False # 파일 로드 실패 반환
-        # --- 검사 끝 ---
-
-        # 파일이 있으면 내부 목록 업데이트 및 정렬
-        self.image_files = sorted(temp_image_files, key=self.get_datetime_from_file_fast)
-        self.is_raw_only_mode = False # <--- JPG 로드 성공 시 RAW 전용 모드 해제
-
-        # 그리드 상태 초기화
-        self.grid_page_start_index = 0
-        self.current_grid_index = 0
-
-        # 이미지 캐시 초기화
-        self.image_loader.clear_cache()
-
-        # === Zoom과 Grid 모드 초기화 ===
-        self.zoom_mode = "Fit"
-        self.fit_radio.setChecked(True)
+            return False
         
-        self.grid_mode = "Off"
-        self.grid_off_radio.setChecked(True)
-        self.update_zoom_radio_buttons_state()
-
-        # 이전 폴더의 백그라운드 작업이 있다면 취소
-        for future in self.active_thumbnail_futures:
-            future.cancel()
-        self.active_thumbnail_futures.clear()
-
-        # 로드된 이미지 수 출력 (디버깅용)
-        logging.info(f"로드된 이미지 파일 수: {len(self.image_files)}")
-
-        # 첫 번째 이미지 표시
-        self.current_image_index = 0
-
-        # 그리드 모드일 경우 일정 시간 후 강제 업데이트
-        if self.grid_mode != "Off":
-           QTimer.singleShot(100, self.force_grid_refresh)
-
-        self.display_current_image() # 내부에서 카운터 및 정보 업데이트 호출됨
-
-        self.update_jpg_folder_ui_state() # 성공 시 X 버튼 활성화
-        self.update_match_raw_button_state() # <--- RAW 버튼 상태 업데이트 ("JPG - RAW 연결"로)
-        self.update_raw_folder_ui_state() # <--- RAW 토글 상태 업데이트
-
-        # Grid Off 상태이면 백그라운드 썸네일 생성 시작
-        if self.grid_mode == "Off":
-            self.start_background_thumbnail_preloading()
-
-        # 이미지 로드 성공 시 썸네일 패널에 이미지 파일 목록 설정
-        self.thumbnail_panel.set_image_files(self.image_files)
-        # Grid Off 모드에서 썸네일 패널 표시 및 현재 인덱스 설정
-        self.update_thumbnail_panel_visibility()
-        if self.current_image_index >= 0:
-            self.thumbnail_panel.set_current_index(self.current_image_index)
-
-        self.update_all_folder_labels_state() 
-        return True  # 파일 로드 성공 반환
+        self.start_background_loading(
+            jpg_folder_path=folder_path, 
+            raw_folder_path=self.raw_folder, 
+            mode='jpg_with_raw', 
+            raw_file_list=None
+        )
+        return True
 
     
+    def start_background_loading(self, jpg_folder_path, raw_folder_path, mode, raw_file_list=None):
+        """백그라운드 로딩을 시작하고 로딩창을 표시합니다."""
+        self._reset_workspace()
+
+        self.loading_progress_dialog = QProgressDialog(
+            LanguageManager.translate("폴더를 읽는 중입니다..."),
+            "", 0, 0, self
+        )
+        self.loading_progress_dialog.setCancelButton(None)
+        self.loading_progress_dialog.setWindowModality(Qt.WindowModal)
+        self.loading_progress_dialog.setMinimumDuration(0)
+        apply_dark_title_bar(self.loading_progress_dialog)
+        self.loading_progress_dialog.setStyleSheet(f"""
+            QProgressDialog {{
+                background-color: {ThemeManager.get_color('bg_primary')};
+                color: {ThemeManager.get_color('text')};
+            }}
+            QProgressBar {{
+                text-align: center;
+            }}
+        """)
+        self.loading_progress_dialog.show()
+
+        # 이 방식은 복잡한 Python 타입을 더 안정적으로 처리합니다.
+        jpg_path_str = jpg_folder_path if jpg_folder_path is not None else ""
+        raw_path_str = raw_folder_path if raw_folder_path is not None else ""
+        
+        self.folder_loader_worker.startProcessing.emit(
+            jpg_path_str,
+            raw_path_str,
+            mode,
+            raw_file_list if raw_file_list is not None else []
+        )
+
     def force_grid_refresh(self):
         """그리드 뷰를 강제로 리프레시"""
         if self.grid_mode != "Off":
@@ -9833,54 +9794,23 @@ class PhotoSortApp(QMainWindow):
             else:
                 return None, False # 대화상자 닫힘
 
-    def match_raw_files(self, folder_path, silent=False): # <<< silent 파라미터 추가
-        """JPG 파일과 RAW 파일 매칭 및 결과 처리"""
-        if not folder_path or not self.image_files:
-            return
-
-        temp_raw_files = {}
-        jpg_filenames = {jpg_path.stem: jpg_path for jpg_path in self.image_files}
-        matched_count = 0
-        raw_folder_path = Path(folder_path)
-
-        for file_path in raw_folder_path.iterdir():
-            if not file_path.is_file():
-                continue
-
-            if file_path.suffix.lower() in self.raw_extensions:
-                base_name = file_path.stem
-                if base_name in jpg_filenames:
-                    temp_raw_files[base_name] = file_path
-                    matched_count += 1
-
-        if matched_count == 0:
-            # <<< silent 모드에서는 팝업을 표시하지 않음 >>>
+    def match_raw_files(self, folder_path, silent=False):
+        """JPG 파일과 RAW 파일 매칭 (백그라운드에서 실행)"""
+        if not folder_path or not self.current_folder:
             if not silent:
-                self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("정보"), LanguageManager.translate("선택한 RAW 폴더에서 매칭되는 파일을 찾을 수 없습니다."))
-            self.raw_folder = ""
-            self.raw_files = {}
-            self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
-            self.update_raw_folder_ui_state()
+                self.show_themed_message_box(QMessageBox.Warning, "경고", "먼저 JPG 폴더를 로드해야 합니다.")
             return False
-
-        self.raw_folder = folder_path
-        self.raw_files = temp_raw_files
-        self.raw_folder_path_label.setText(folder_path)
-        self.move_raw_files = True
-        self.update_raw_folder_ui_state()
-        self.update_match_raw_button_state()
-
-        # <<< silent 모드에서는 팝업을 표시하지 않음 >>>
-        if not silent:
-            self.show_themed_message_box(QMessageBox.Information, LanguageManager.translate("RAW 파일 매칭 결과"), f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {len(self.image_files)}")
+            
+        logging.info(f"RAW 폴더 매칭 시작: {folder_path}")
         
-        current_displaying_image_path_str = self.get_current_image_path()
-        if current_displaying_image_path_str:
-            self.update_file_info_display(current_displaying_image_path_str)
-        else:
-            self.update_file_info_display(None)
-
-        self.save_state()
+        self._is_silent_load = silent
+        
+        self.start_background_loading(
+            jpg_folder_path=self.current_folder, 
+            raw_folder_path=folder_path, 
+            mode='jpg_with_raw',
+            raw_file_list=None
+        )
         return True
 
 
@@ -14484,6 +14414,16 @@ class PhotoSortApp(QMainWindow):
         if hasattr(self, 'resource_manager'):
             self.resource_manager.shutdown()
 
+        # 폴더 로더 스레드를 종료.
+        if hasattr(self, 'folder_loader_thread') and self.folder_loader_thread.isRunning():
+            logging.info("폴더 로더 스레드 종료 중...")
+            if hasattr(self, 'folder_loader_worker'):
+                self.folder_loader_worker.stop() # 진행 중인 작업을 중단하도록 신호
+            self.folder_loader_thread.quit()     # 스레드의 이벤트 루프 종료
+            if not self.folder_loader_thread.wait(1000): # 1초간 기다림
+                self.folder_loader_thread.terminate()    # 응답 없으면 강제 종료
+            logging.info("폴더 로더 스레드 종료 완료")
+
         # === EXIF 스레드 정리 ===
         if hasattr(self, 'exif_thread') and self.exif_thread.isRunning():
             logging.info("EXIF 워커 스레드 종료 중...")
@@ -14905,22 +14845,27 @@ class PhotoSortApp(QMainWindow):
 
     def update_raw_toggle_state(self):
         """RAW 폴더 유효성 및 RAW 전용 모드에 따라 'RAW 이동' 체크박스 상태 업데이트"""
-        if self.is_raw_only_mode:
-            # RAW 전용 모드일 때: 항상 체크됨 + 비활성화
-            self.raw_toggle_button.setChecked(True)
-            self.raw_toggle_button.setEnabled(False)
-            self.move_raw_files = True # 내부 상태도 강제 설정
-        else:
-            # JPG 모드일 때: RAW 폴더 유효성에 따라 활성화/비활성화 및 상태 반영
-            is_raw_folder_valid = bool(self.raw_folder and Path(self.raw_folder).is_dir())
-            self.raw_toggle_button.setEnabled(is_raw_folder_valid)
-            if is_raw_folder_valid:
-                # 폴더가 유효하면 저장된 self.move_raw_files 상태 반영
-                self.raw_toggle_button.setChecked(self.move_raw_files)
+        self.raw_toggle_button.blockSignals(True)
+        try:
+            if self.is_raw_only_mode:
+                # RAW 전용 모드일 때는 항상 체크되고 비활성화되어야 함
+                self.raw_toggle_button.setChecked(True)
+                self.raw_toggle_button.setEnabled(False)
+                self.move_raw_files = True # 내부 상태도 강제로 동기화
             else:
-                # 폴더가 유효하지 않으면 체크 해제
-                self.raw_toggle_button.setChecked(False)
-                # self.move_raw_files = False # 내부 상태도 해제할 수 있음 (선택적)
+                # JPG 모드일 때
+                is_raw_folder_valid = bool(self.raw_folder and Path(self.raw_folder).is_dir())
+                self.raw_toggle_button.setEnabled(is_raw_folder_valid)
+                if is_raw_folder_valid:
+                    # 유효한 RAW 폴더가 연결되면, 저장된 내부 상태를 UI에 반영
+                    self.raw_toggle_button.setChecked(self.move_raw_files)
+                else:
+                    # 유효한 RAW 폴더가 없으면 체크박스는 비활성화되고 체크 해제됨
+                    # 이때 내부 상태(self.move_raw_files)는 변경하지 않아야 함
+                    self.raw_toggle_button.setChecked(False)
+        finally:
+            # try...finally 구문을 사용하여 어떤 경우에도 시그널 차단이 해제되도록 보장
+            self.raw_toggle_button.blockSignals(False)
 
     def update_match_raw_button_state(self):
         """ JPG 로드 상태에 따라 RAW 관련 버튼의 텍스트/상태 업데이트 """
@@ -15454,6 +15399,11 @@ def main():
         "모든 설정을 초기화하고 프로그램을 재시작하시겠습니까?\n이 작업은 되돌릴 수 없습니다.": "Are you sure you want to reset all settings and restart the application?\nThis action cannot be undone.",
         "재시작 중...": "Restarting...",
         "설정이 초기화되었습니다. 프로그램을 재시작합니다.": "Settings have been reset. The application will now restart.",
+        "폴더를 읽는 중입니다...": "Reading folder...",
+        "이미지 파일 스캔 중...": "Scanning image files...",
+        "파일 정렬 중...": "Sorting files...",
+        "RAW 파일 매칭 중...": "Matching RAW files...",
+        "RAW 파일 정렬 중...": "Sorting RAW files...",
     }
     
     LanguageManager.initialize_translations(translations)
