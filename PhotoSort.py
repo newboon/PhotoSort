@@ -61,7 +61,7 @@ def setup_logger():
     log_dir = app_dir / "logs"
     os.makedirs(log_dir, exist_ok=True)
 
-    # --- [추가] 오래된 로그 파일 정리 로직 ---
+    # --- 오래된 로그 파일 정리 로직 ---
     try:
         # 1. 로그 디렉토리 내의 모든 파일 목록 가져오기
         log_files = [f for f in os.listdir(log_dir) if f.startswith("photosort_") and f.endswith(".log")]
@@ -85,7 +85,6 @@ def setup_logger():
     except Exception as e:
         # 이 과정에서 오류가 발생해도 로깅 시스템의 핵심 기능은 계속되어야 함
         logging.warning(f"오래된 로그 파일 정리 중 오류 발생: {e}")
-    # --- [추가] 로직 끝 ---
 
     # 현재 날짜로 로그 파일명 생성
     log_filename = datetime.now().strftime("photosort_%Y%m%d.log")
@@ -143,7 +142,7 @@ class UIScaleManager:
         "control_panel_margins": (8, 9, 8, 9), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
         "control_layout_spacing": 8,               # 컨트롤 레이아웃 위젯 간 기본 간격
         "button_min_height": 30,                   # 일반 버튼 최소 높이
-        "button_padding": 8,                       # 일반 버튼 내부 패딩
+        "button_padding": 6,                       # 일반 버튼 내부 패딩 (원래 8)
         "delete_button_width": 45,                 # 분류폴더 번호 및 삭제(X) 버튼 너비
         "JPG_RAW_spacing": 8,
         "section_spacing": 20,                     # 구분선(HorizontalLine) 주변 간격
@@ -161,10 +160,11 @@ class UIScaleManager:
         "sort_folder_label_padding": 25,           # 분류폴더 레이블 패딩
         "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
         "info_container_width": 300,
-        "combobox_padding": 4,
         "settings_label_width": 250,               # 설정 창 라벨 최소 너비
         "control_panel_min_width": 316,            # 컨트롤 패널 최소 너비
-        "control_panel_max_width": 450,            # 컨트롤 패널 최대 너비
+        "control_panel_max_width": 362,            # 컨트롤 패널 최대 너비
+        "combobox_padding": 5,
+        "spinbox_padding": 3,
         # 라디오 버튼 스타일 관련 키
         "radiobutton_size": 13,
         "radiobutton_border": 2,
@@ -189,14 +189,14 @@ class UIScaleManager:
         "info_bottom_margin": 30,
         "info_donation_spacing": 35,
         # 썸네일 패널 관련 키 추가
-        "thumbnail_item_height": 180,          # 썸네일 아이템 높이
+        "thumbnail_image_size": 150,           # 썸네일 이미지 크기
+        "thumbnail_item_height": 195,          # 썸네일 아이템 높이
         "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
-        "thumbnail_image_size": 140,           # 썸네일 이미지 크기
         "thumbnail_text_height": 24,           # 파일명 텍스트 영역 높이
         "thumbnail_padding": 6,                # 썸네일 내부 패딩
         "thumbnail_border_width": 2,           # 선택 테두리 두께
-        "thumbnail_panel_min_width": 160,      # 썸네일 패널 최소 너비
-        "thumbnail_panel_max_width": 350,      # 썸네일 패널 최대 너비
+        "thumbnail_panel_min_width": 197,      # 썸네일 패널 최소 너비
+        "thumbnail_panel_max_width": 197,      # 썸네일 패널 최대 너비
         # 
         "compare_filename_padding": 5,
     }
@@ -224,10 +224,11 @@ class UIScaleManager:
         "sort_folder_label_padding": 20,           # 분류폴더 레이블 패딩
         "category_folder_vertical_spacing": 6,     # 분류 폴더 UI 사이 간격
         "info_container_width": 200,
-        "combobox_padding": 3,
         "settings_label_width": 180,               # 설정 창 라벨 최소 너비
         "control_panel_min_width": 220,            # 컨트롤 패널 최소 너비
         "control_panel_max_width": 350,            # 컨트롤 패널 최대 너비
+        "combobox_padding": 4,
+        "spinbox_padding": 1,
         # 라디오 버튼 스타일 관련 키
         "radiobutton_size": 9,
         "radiobutton_border": 2,
@@ -252,14 +253,14 @@ class UIScaleManager:
         "info_bottom_margin": 20,
         "info_donation_spacing": 25,
         # 썸네일 패널 관련 설정 (컴팩트 모드에서는 더 작게)
-        "thumbnail_item_height": 160,          # 썸네일 아이템 높이
+        "thumbnail_image_size": 100,           # 썸네일 이미지 크기
+        "thumbnail_item_height": 135,          # 썸네일 아이템 높이
         "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
-        "thumbnail_image_size": 120,           # 썸네일 이미지 크기
         "thumbnail_text_height": 20,           # 파일명 텍스트 영역 높이
         "thumbnail_padding": 5,                # 썸네일 내부 패딩
         "thumbnail_border_width": 2,           # 선택 테두리 두께
-        "thumbnail_panel_min_width": 150,      # 썸네일 패널 최소 너비
-        "thumbnail_panel_max_width": 280,      # 썸네일 패널 최대 너비 (컴팩트 모드)
+        "thumbnail_panel_min_width": 145,      # 썸네일 패널 최소 너비
+        "thumbnail_panel_max_width": 145,      # 썸네일 패널 최대 너비 (컴팩트 모드)
         # 
         "compare_filename_padding": 5,
     }
@@ -1301,7 +1302,6 @@ class EditableFolderPathLabel(QLineEdit):
     def apply_drag_hover_style(self):
         """드래그 호버 시 테두리만 강조하는 스타일을 적용합니다."""
         hover_style = ""
-        # <<< 수정 시작: 각 상태에 맞는 완전한 호버 스타일을 정의 >>>
         if self._current_state == self.STATE_DISABLED:
             hover_style = f"""
                 QLineEdit {{
@@ -1330,7 +1330,6 @@ class EditableFolderPathLabel(QLineEdit):
                     padding: 4px; border-radius: 1px;
                 }}
             """
-        # <<< 수정 끝 >>>
         if hover_style:
             self.setStyleSheet(hover_style)
 
@@ -1891,7 +1890,7 @@ class ExifWorker(QObject):
 
             # PHASE 1: Piexif로 EXIF 정보 추출 시도
             piexif_success = False
-            if self._running and suffix not in skip_piexif_formats: # <<< HEIC 파일이면 piexif 시도 건너뛰기
+            if self._running and suffix not in skip_piexif_formats: # HEIC 파일이면 piexif 시도 건너뛰기
                 try:
                     # JPG 이미지 크기 (RAW는 위에서 추출)
                     if not is_raw and not result["exif_resolution"]:
@@ -1965,7 +1964,7 @@ class ExifWorker(QObject):
                 
             needs_exiftool = False
             if self.exiftool_available:
-                if is_heic: # <<< HEIC 파일은 항상 ExifTool 필요
+                if is_heic: # HEIC 파일은 항상 ExifTool 필요
                     needs_exiftool = True
                 elif is_raw and result["exif_orientation"] is None:
                     needs_exiftool = True
@@ -2508,15 +2507,14 @@ class ResourceManager:
             return
             
         print("ResourceManager: 리소스 종료 중...")
-        self._running = False # <<< 종료 플래그 설정
+        self._running = False # 종료 플래그 설정
         
         # 활성 작업 취소 (기존 로직 유지)
         self.cancel_all_tasks() 
         
         # 스레드 풀 종료
         logging.info("ResourceManager: 이미징 스레드 풀 종료 시도 (wait=True)...")
-        # self.imaging_thread_pool.shutdown(wait=False, cancel_futures=True) # 이전 코드
-        self.imaging_thread_pool.shutdown(wait=True, cancel_futures=True) # <<< wait=True로 변경
+        self.imaging_thread_pool.shutdown(wait=True, cancel_futures=True)
         logging.info("ResourceManager: 이미징 스레드 풀 종료 완료.")
         
         # RAW 디코더 풀 종료 (기존 로직 유지)
@@ -3100,7 +3098,7 @@ class ImageLoader(QObject):
         if strategy in ["preview", "decode"]:
             old_strategy = self._raw_load_strategy
             self._raw_load_strategy = strategy
-            logging.info(f"ImageLoader ({id(self)}): RAW 처리 방식 변경됨: {old_strategy} -> {self._raw_load_strategy}") # <<< 상세 로그 추가
+            logging.info(f"ImageLoader ({id(self)}): RAW 처리 방식 변경됨: {old_strategy} -> {self._raw_load_strategy}")
         else:
             logging.warning(f"ImageLoader ({id(self)}): 알 수 없는 RAW 처리 방식 '{strategy}'. 변경 안 함. 현재: {self._raw_load_strategy}")
     
@@ -3823,7 +3821,7 @@ class SessionManagementDialog(QDialog):
         main_layout.addLayout(buttons_layout)
         
         self.populate_session_list() # 처음 열릴 때 목록 채우기
-        self.update_all_button_states() # <<< 추가: 초기 버튼 상태 설정
+        self.update_all_button_states() # 초기 버튼 상태 설정
 
     def populate_session_list(self):
         """PhotoSortApp의 saved_sessions를 가져와 목록 위젯을 채웁니다."""
@@ -3851,7 +3849,7 @@ class SessionManagementDialog(QDialog):
         self.update_all_button_states()
 
 
-    def update_all_button_states(self): # <<< 새로운 메서드 또는 기존 update_button_states 확장
+    def update_all_button_states(self): # 새로운 메서드 또는 기존 update_button_states 확장
         """세션 목록 선택 상태 및 이미지 로드 상태에 따라 모든 버튼의 활성화 상태를 업데이트합니다."""
         # 1. 불러오기/삭제 버튼 상태 업데이트 (기존 로직)
         selected_item = self.session_list_widget.currentItem()
@@ -3927,26 +3925,26 @@ def format_camera_name(make, model):
 
 class FolderLoaderWorker(QObject):
     """백그라운드 스레드에서 폴더 스캔, 파일 매칭, 정렬 작업을 수행하는 워커"""
-    startProcessing = Signal(str, str, str, list)
+    startProcessing = Signal(str, str, str, list, list)
     
     finished = Signal(list, dict, str, str, str)
     progress = Signal(str)
     error = Signal(str, str)
 
-    def __init__(self, supported_extensions, raw_extensions, get_datetime_func):
+    def __init__(self, raw_extensions, get_datetime_func):
         super().__init__()
-        self.supported_image_extensions = supported_extensions
         self.raw_extensions = raw_extensions
         self.get_datetime_from_file_fast = get_datetime_func
         self._is_running = True
         
         self.startProcessing.connect(self.process_folders)
 
+
     def stop(self):
         self._is_running = False
 
-    @Slot(str, str, str, list)
-    def process_folders(self, jpg_folder_path, raw_folder_path, mode, raw_file_list_from_main):
+    @Slot(str, str, str, list, list)
+    def process_folders(self, jpg_folder_path, raw_folder_path, mode, raw_file_list_from_main, supported_extensions):
         """메인 처리 함수 (mode에 따라 분기)"""
         self._is_running = True
         try:
@@ -3963,7 +3961,7 @@ class FolderLoaderWorker(QObject):
                 temp_image_files = []
                 for file_path in target_path.iterdir():
                     if not self._is_running: return
-                    if file_path.is_file() and file_path.suffix.lower() in self.supported_image_extensions:
+                    if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
                         temp_image_files.append(file_path)
                 
                 if not temp_image_files:
@@ -4203,7 +4201,7 @@ class PhotoSortApp(QMainWindow):
         self.image_loader.imageLoaded.connect(self.on_image_loaded)
         self.image_loader.loadCompleted.connect(self._on_image_loaded_for_display)  # 새 시그널 연결
         self.image_loader.loadFailed.connect(self._on_image_load_failed)  # 새 시그널 연결
-        self.image_loader.decodingFailedForFile.connect(self.handle_raw_decoding_failure) # <<< 새 시그널 연결
+        self.image_loader.decodingFailedForFile.connect(self.handle_raw_decoding_failure) # 새 시그널 연결
 
         self.is_input_dialog_active = False # 플래그 초기화 (세션창 QInputDialog가 떠 있는지 여부)
         
@@ -4237,6 +4235,7 @@ class PhotoSortApp(QMainWindow):
         self.image_B_path = None          # B 패널에 표시될 이미지 경로
         self.original_pixmap_B = None     # B 패널의 원본 QPixmap
 
+        self._is_reorganizing_layout = False
         
         # ==================== 여기서부터 UI 관련 코드 ====================
 
@@ -4602,15 +4601,6 @@ class PhotoSortApp(QMainWindow):
         # 초기에는 2패널 구조로 시작 (썸네일 패널은 숨김)
         self.thumbnail_panel.hide()
         
-        if getattr(self, 'control_panel_on_right', False):
-            # 우측 컨트롤 패널: [이미지] [컨트롤]
-            self.splitter.addWidget(self.image_panel)      # 인덱스 0
-            self.splitter.addWidget(self.control_panel)    # 인덱스 1
-        else:
-            # 좌측 컨트롤 패널: [컨트롤] [이미지]
-            self.splitter.addWidget(self.control_panel)    # 인덱스 0
-            self.splitter.addWidget(self.image_panel)      # 인덱스 1
-        
         # 화면 크기가 변경되면 레이아웃 다시 조정
         QGuiApplication.instance().primaryScreen().geometryChanged.connect(self.adjust_layout)
 
@@ -4733,7 +4723,7 @@ class PhotoSortApp(QMainWindow):
         # --- 백그라운드 폴더 로더 설정 ---
         self.folder_loader_thread = QThread()
         self.folder_loader_worker = FolderLoaderWorker(
-            self.supported_image_extensions, self.raw_extensions, self.get_datetime_from_file_fast
+            self.raw_extensions, self.get_datetime_from_file_fast
         )
         self.folder_loader_worker.moveToThread(self.folder_loader_thread)
 
@@ -4792,16 +4782,22 @@ class PhotoSortApp(QMainWindow):
 
         logging.info(f"백그라운드 로딩 완료 (모드: {final_mode}): {len(self.image_files)}개 이미지, {len(self.raw_files)}개 RAW 매칭")
 
-        # [BUG FIX] 상태 복원 중이 아닐 때만 초기화 및 메시지 표시
         if not self._is_silent_load:
             if final_mode == 'jpg_with_raw':
-                # ... (메시지 박스 로직은 이전과 동일, 생략) ...
                 matched_count = len(raw_files)
                 total_jpg_count = len(image_files)
                 if matched_count > 0:
-                    self.show_themed_message_box(QMessageBox.Information, "RAW File Matching Results", f"RAW files matched.\n{matched_count} / {total_jpg_count}")
+                    self.show_themed_message_box(
+                        QMessageBox.Information,
+                        LanguageManager.translate("RAW 파일 매칭 결과"),
+                        f"{LanguageManager.translate('RAW 파일이 매칭되었습니다.')}\n{matched_count} / {total_jpg_count}"
+                    )
                 else:
-                    self.show_themed_message_box(QMessageBox.Information, "Info", "No matching files found in the selected RAW folder.")
+                    self.show_themed_message_box(
+                        QMessageBox.Information,
+                        LanguageManager.translate("정보"),
+                        LanguageManager.translate("선택한 RAW 폴더에서 매칭되는 파일을 찾을 수 없습니다.")
+                    )
             
             # 상태 복원 중이 아닐 때만 UI 상태를 기본값으로 리셋
             self.grid_page_start_index = 0
@@ -4818,7 +4814,6 @@ class PhotoSortApp(QMainWindow):
         if self.raw_folder: self.raw_folder_path_label.setText(self.raw_folder)
         else: self.raw_folder_path_label.setText(LanguageManager.translate("폴더 경로"))
         
-        # [BUG FIX] 상태 복원 로직
         if self._is_silent_load:
             # ImageLoader 전략 설정
             if hasattr(self, 'last_loaded_raw_method_from_state'):
@@ -5154,7 +5149,7 @@ class PhotoSortApp(QMainWindow):
                     "raw_source": str(raw_path_before_move) if raw_path_before_move else None,
                     "raw_target": str(moved_raw_path) if moved_raw_path and raw_moved_successfully else None,
                     "index_before_move": image_to_move_index, # 이동된 B 이미지의 인덱스
-                    "a_index_before_move": self.current_image_index, # <<< 추가: 당시 A 이미지의 인덱스
+                    "a_index_before_move": self.current_image_index, # 당시 A 이미지의 인덱스
                     "mode": "CompareB"
                 }
                 self.add_move_history(history_entry)
@@ -5212,7 +5207,6 @@ class PhotoSortApp(QMainWindow):
             }}
         """)
         
-        # <<< 로직을 create_context_menu와 동일하게 수정 >>>
         for i in range(self.folder_count):
             folder_path = self.target_folders[i] if i < len(self.target_folders) else ""
             
@@ -5310,7 +5304,6 @@ class PhotoSortApp(QMainWindow):
             self.first_raw_load_progress.setMinimumDuration(0)
             apply_dark_title_bar(self.first_raw_load_progress)
             
-            # [FIX] start_background_loading과 동일한 스타일시트 적용
             self.first_raw_load_progress.setStyleSheet(f"""
                 QProgressDialog {{
                     background-color: {ThemeManager.get_color('bg_primary')};
@@ -5429,7 +5422,7 @@ class PhotoSortApp(QMainWindow):
 
         thumbnail_size = UIScaleManager.get("thumbnail_image_size")
 
-        # --- [핵심 수정] future가 None이 아닌지 확인하는 방어 코드 추가 ---
+        # --- future가 None이 아닌지 확인하는 방어 코드 추가 ---
         future = self.resource_manager.submit_imaging_task_with_priority(
             'low',
             self._generate_thumbnail_task,
@@ -5437,7 +5430,7 @@ class PhotoSortApp(QMainWindow):
             thumbnail_size
         )
         
-        if future: # <<< future가 유효할 때만 콜백을 연결합니다.
+        if future: # future가 유효할 때만 콜백을 연결합니다.
             future.add_done_callback(
                 lambda f, path=file_path: self._on_thumbnail_generated(f, path)
             )
@@ -5559,31 +5552,31 @@ class PhotoSortApp(QMainWindow):
             # 레이아웃 재조정
             self.adjust_layout()
 
-    def update_thumbnail_panel_visibility(self):
-        """Grid 모드에 따른 썸네일 패널 표시 상태 업데이트 (최적화)"""
-        thumbnail_should_be_visible = (self.grid_mode == "Off")
-        
-        # 현재 스플리터 구조가 올바른지 확인 (위젯 순서 및 개수)
-        # _need_splitter_reorganization 헬퍼 함수를 재활용합니다.
-        reorganization_needed = self._need_splitter_reorganization()
+    def update_thumbnail_panel_style(self):
+        """Grid 모드에 따라 썸네일 패널의 내부 스타일(배경색, 리스트뷰 가시성)을 업데이트합니다."""
+        if not hasattr(self, 'thumbnail_panel'):
+            return
 
-        if reorganization_needed:
-            # 구조 변경이 필요할 때만 (예: 컨트롤 패널 위치 변경 후) 무거운 재구성 실행
-            logging.info("스플리터 구조 변경이 필요하여 재구성합니다.")
-            self._reorganize_splitter_widgets(thumbnail_should_be_visible, self.control_panel_on_right)
+        panel = self.thumbnail_panel
+        list_view = self.thumbnail_panel.list_view
+
+        # QPalette를 직접 제어하여 배경색을 설정합니다.
+        palette = panel.palette()
+
+        if self.grid_mode == "Off":
+            # Grid Off (일반) 모드: 리스트뷰를 표시하고 테마 기본 배경색으로 설정
+            list_view.show()
+            bg_color = QColor(ThemeManager.get_color('bg_primary'))
+            palette.setColor(QPalette.Window, bg_color)
         else:
-            # 구조가 올바르다면, 단순히 썸네일 패널의 가시성만 변경 (가볍고 빠름)
-            if self.thumbnail_panel.isVisible() != thumbnail_should_be_visible:
-                logging.info(f"썸네일 패널 가시성 변경: {'표시' if thumbnail_should_be_visible else '숨김'}")
-                self.thumbnail_panel.setVisible(thumbnail_should_be_visible)
-                if thumbnail_should_be_visible:
-                    # 표시될 때 데이터 설정
-                    self.thumbnail_panel.set_image_files(self.image_files)
-                    if self.current_image_index >= 0:
-                        self.thumbnail_panel.set_current_index(self.current_image_index)
+            # Grid On 또는 Compare 모드: 리스트뷰를 숨기고 #222222 배경색으로 설정
+            list_view.hide()
+            bg_color = QColor("#222222")
+            palette.setColor(QPalette.Window, bg_color)
 
-        # 레이아웃 크기 재조정은 항상 필요
-        self.adjust_layout()
+        # setAutoFillBackground(True)를 호출하여 팔레트 변경 사항을 위젯에 그리도록 지시합니다.
+        panel.setAutoFillBackground(True)
+        panel.setPalette(palette)
         
     def update_thumbnail_current_index(self):
         """현재 이미지 인덱스가 변경될 때 썸네일 패널 업데이트"""
@@ -5632,7 +5625,6 @@ class PhotoSortApp(QMainWindow):
 
             self.category_folder_container = self.setup_folder_selection_ui()
 
-            # <<< [수정] 로직 단순화: 구분선(line_before_folders) 바로 아래에 삽입 >>>
             try:
                 # 구분선의 인덱스를 찾아서 그 바로 아래(+2, 구분선과 그 아래 spacing)에 삽입
                 insertion_index = self.control_layout.indexOf(self.line_before_folders) + 2
@@ -6017,7 +6009,6 @@ class PhotoSortApp(QMainWindow):
             if not self.image_files: # RAW 단독 로드
                 raw_files_to_load, chosen_method = self._prepare_raw_only_load(folder_path)
                 if raw_files_to_load and chosen_method:
-                    # [TypeError FIX] 올바른 인자 순서로 호출
                     self.start_background_loading(
                         mode='raw_only',
                         jpg_folder_path=folder_path,
@@ -6027,7 +6018,6 @@ class PhotoSortApp(QMainWindow):
                     return True
                 return False
             else: # JPG-RAW 매칭
-                # [TypeError FIX] 올바른 인자 순서로 호출
                 self.start_background_loading(
                     mode='jpg_with_raw',
                     jpg_folder_path=self.current_folder,
@@ -6124,10 +6114,8 @@ class PhotoSortApp(QMainWindow):
         try:
             if 0 <= folder_index < len(self.target_folders):
                 self.target_folders[folder_index] = folder_path
-                # <<< 수정 시작 >>>
                 # setText 대신 set_state를 사용하여 UI와 상태를 한 번에 업데이트합니다.
                 self.folder_path_labels[folder_index].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
-                # <<< 수정 끝 >>>
                 self.save_state()
                 logging.info(f"드래그 앤 드랍으로 분류 폴더 {folder_index+1} 설정 완료: {folder_path}")
                 return True
@@ -6398,7 +6386,6 @@ class PhotoSortApp(QMainWindow):
                 return self._handle_raw_folder_drop(folder_path)
             
             elif analysis['has_images'] and not analysis['has_raw']:
-                # [TypeError FIX] 올바른 인자 순서로 호출
                 self.start_background_loading(
                     mode='jpg_only',
                     jpg_folder_path=folder_path,
@@ -6412,7 +6399,6 @@ class PhotoSortApp(QMainWindow):
                 if choice_id is None: return False
 
                 if choice_id == 0: # 매칭
-                    # [TypeError FIX] 올바른 인자 순서로 호출
                     self.start_background_loading(
                         mode='jpg_with_raw',
                         jpg_folder_path=folder_path,
@@ -6420,7 +6406,6 @@ class PhotoSortApp(QMainWindow):
                         raw_file_list=None
                     )
                 elif choice_id == 1: # JPG만
-                    # [TypeError FIX] 올바른 인자 순서로 호출
                     self.start_background_loading(
                         mode='jpg_only',
                         jpg_folder_path=folder_path,
@@ -6465,7 +6450,7 @@ class PhotoSortApp(QMainWindow):
             "TIFF": ['.tif', '.tiff']
         }
 
-        # 1. 현재 UI에 표시된 모든 체크박스의 상태를 다시 확인
+        # 1. 현재 UI에 표시된 모든 체크박스의 상태를 다시 확인하여 새 목록 생성
         new_supported_extensions = set()
         checked_count = 0
         for name, checkbox in self.ext_checkboxes.items():
@@ -6473,16 +6458,17 @@ class PhotoSortApp(QMainWindow):
                 checked_count += 1
                 new_supported_extensions.update(extension_groups[name])
 
-        # 2. 체크된 박스가 하나도 없는지 검증
+        # 2. 체크된 박스가 하나도 없는지 검증 (사용자가 마지막 남은 하나를 해제하려는 경우)
         if checked_count == 0:
             logging.warning("모든 확장자 선택 해제 감지됨. JPG를 강제로 다시 선택합니다.")
             jpg_checkbox = self.ext_checkboxes.get("JPG")
             if jpg_checkbox:
-                # 이 시점에서는 이미 모든 체크가 해제된 상태이므로,
-                # 시그널을 막을 필요 없이 그냥 켜기만 하면 됩니다.
+                # 시그널을 막고 UI를 강제로 다시 체크 상태로 변경
+                jpg_checkbox.blockSignals(True)
                 jpg_checkbox.setChecked(True)
+                jpg_checkbox.blockSignals(False)
             
-            # JPG가 다시 켜졌으므로, 지원 확장자 목록을 JPG만 포함하도록 재설정
+            # 지원 확장자 목록을 JPG만 포함하도록 재설정
             self.supported_image_extensions = set(extension_groups["JPG"])
         else:
             # 체크된 박스가 하나 이상 있으면, 그 상태를 그대로 데이터에 반영
@@ -6518,7 +6504,6 @@ class PhotoSortApp(QMainWindow):
         view_rect = self.scroll_area.viewport().rect()
         image_label_pos = self.image_label.pos()
         
-        # <<<--- 줌 배율 계산 로직 수정 ---<<<
         if self.zoom_mode == "100%":
             current_zoom_factor = 1.0
         elif self.zoom_mode == "Spin":
@@ -6745,10 +6730,8 @@ class PhotoSortApp(QMainWindow):
         for i in range(self.folder_count):
             if i < len(self.target_folders) and self.target_folders[i] and Path(self.target_folders[i]).is_dir():
                 folder_path = self.target_folders[i]
-                # <<< 수정 시작 >>>
                 # 복잡한 setText 호출 대신 set_state를 사용합니다.
                 self.folder_path_labels[i].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
-                # <<< 수정 끝 >>>
             else:
                 # 경로가 없거나 유효하지 않으면 상태에 따라 editable 또는 disabled로 설정
                 if self.image_files:
@@ -7075,7 +7058,7 @@ class PhotoSortApp(QMainWindow):
                 "dont_ask": dont_ask
             }
             logging.info(f"카메라별 RAW 설정 업데이트됨 (메모리): {camera_model} -> {self.camera_raw_settings[camera_model]}")
-            self.save_state() # <<< 변경 사항을 photosort_data.json에 즉시 저장
+            self.save_state() # 변경 사항을 photosort_data.json에 즉시 저장
 
 
     def reset_all_camera_raw_settings(self):
@@ -7089,7 +7072,7 @@ class PhotoSortApp(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 self.camera_raw_settings = {} # 메모리 내 설정 초기화
-                self.save_state() # <<< 변경 사항을 photosort_data.json에 즉시 저장
+                self.save_state()
                 logging.info("모든 카메라별 RAW 처리 설정이 초기화되었습니다 (메인 상태 파일에 반영).")
 
 
@@ -7189,7 +7172,7 @@ class PhotoSortApp(QMainWindow):
 
 
     def show_first_run_settings_popup(self):
-        """프로그램 최초 실행 시 설정 팝업을 표시(좌우 패널 구조)"""
+        """프로그램 최초 실행 시 설정 팝업을 표시"""
         # 설정 팝업창 생성
         self.settings_popup = QDialog(self)
         self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
@@ -7242,37 +7225,39 @@ class PhotoSortApp(QMainWindow):
         # 🎯 언어 변경 콜백 등록 - 첫 실행 팝업의 텍스트 업데이트
         def update_first_run_popup_texts():
             if hasattr(self, 'settings_popup') and self.settings_popup and self.settings_popup.isVisible():
-                # 팝업 제목 업데이트
                 self.settings_popup.setWindowTitle(LanguageManager.translate("초기 설정"))
-                # 환영 메시지 업데이트
                 if hasattr(self.settings_popup, 'welcome_label'):
                     self.settings_popup.welcome_label.setText(LanguageManager.translate("기본 설정을 선택해주세요."))
-                # 확인 버튼 텍스트 업데이트
                 if hasattr(self, 'first_run_confirm_button'):
                     self.first_run_confirm_button.setText(LanguageManager.translate("확인"))
+                self.update_settings_labels_texts(self.settings_popup)
+
         LanguageManager.register_language_change_callback(update_first_run_popup_texts)
+        
         button_layout.addStretch(1)
         button_layout.addWidget(self.first_run_confirm_button)
         button_layout.addStretch(1)
         main_layout.addWidget(button_container)
-        # --- dialog.exec_() 호출 및 결과에 따른 save_state() 실행 ---
-        result = self.settings_popup.exec_() # 모달로 실행하고 결과 받기
-        # 🎯 팝업이 닫힌 후 콜백 제거 및 멤버 변수 정리
+        
+        self.update_all_settings_controls_text()
+        self.update_settings_labels_texts(self.settings_popup) # 팝업 내부 라벨도 업데이트
+
+        result = self.settings_popup.exec_()
+        
         if update_first_run_popup_texts in LanguageManager._language_change_callbacks:
             LanguageManager._language_change_callbacks.remove(update_first_run_popup_texts)
         if hasattr(self, 'first_run_confirm_button'):
             delattr(self, 'first_run_confirm_button')
         
-        # [BUG FIX] "초기 설정" 창의 참조를 제거하여 다음번에는 "설정 및 정보" 창이 생성되도록 함
         self.settings_popup = None
 
-        if result == QDialog.Accepted: # 사용자가 "확인" 버튼을 눌렀다면
+        if result == QDialog.Accepted:
             logging.info("첫 실행 설정: '확인' 버튼 클릭됨. 상태 저장 실행.")
-            self.save_state() # photosort_data.json 파일 생성 및 현재 설정 저장
-            return True # <<< "확인" 눌렀음을 알림
-        else: # 사용자가 "확인" 버튼을 누르지 않았다면 (팝업 닫기, ESC 키 등)
+            self.save_state()
+            return True
+        else:
             logging.info("첫 실행 설정: '확인' 버튼을 누르지 않음. 상태 저장 안함.")
-            return False # <<< "확인" 누르지 않았음을 알림
+            return False
 
     def show_first_run_settings_popup_delayed(self):
         """메인 윈도우 표시 후 첫 실행 설정 팝업을 표시"""
@@ -8205,7 +8190,6 @@ class PhotoSortApp(QMainWindow):
             }}
         """)
         
-        # ... 기타 UI 요소 업데이트
         # 메시지 표시
         print(f"테마가 변경되었습니다: {ThemeManager.get_current_theme_name()}")
 
@@ -8441,11 +8425,11 @@ class PhotoSortApp(QMainWindow):
         qr_path_kakaopay_ko = self.resource_path("resources/kakaopay_qr.png")
         kakaopay_label = QRLinkLabel(LanguageManager.translate("카카오페이"), "", qr_path=qr_path_kakaopay_ko, qr_display_size=400, parent=self.settings_popup)
         kakaopay_label.setAlignment(Qt.AlignCenter)
-        kakaopay_label.setObjectName("kakaopay_label") # [추가] 객체 이름 설정
+        kakaopay_label.setObjectName("kakaopay_label")
         qr_path_naverpay_ko = self.resource_path("resources/naverpay_qr.png")
         naverpay_label = QRLinkLabel(LanguageManager.translate("네이버페이"), "", qr_path=qr_path_naverpay_ko, qr_display_size=250, parent=self.settings_popup)
         naverpay_label.setAlignment(Qt.AlignCenter)
-        naverpay_label.setObjectName("naverpay_label") # [추가] 객체 이름 설정
+        naverpay_label.setObjectName("naverpay_label")
         ko_row1_container.addWidget(kakaopay_label)
         ko_row1_container.addWidget(naverpay_label)
         ko_links_layout.addLayout(ko_row1_container)
@@ -8523,7 +8507,7 @@ class PhotoSortApp(QMainWindow):
         layout.addWidget(text_browser)
 
         close_button = QPushButton(LanguageManager.translate("닫기"))
-        # ... (닫기 버튼 스타일 설정 - 기존 설정 팝업의 버튼 스타일 재사용 가능) ...
+        # 닫기 버튼 스타일 설정
         button_style = f"""
             QPushButton {{
                 background-color: {ThemeManager.get_color('bg_secondary')}; color: {ThemeManager.get_color('text')};
@@ -8742,27 +8726,6 @@ class PhotoSortApp(QMainWindow):
                 selection-color: {ThemeManager.get_color('text')};
             }}
         """
-    
-    # def generate_combobox_style(self):
-    #     """현재 테마에 맞는 콤보박스 스타일 생성"""
-    #     return f"""
-    #         QComboBox {{
-    #             background-color: {ThemeManager.get_color('bg_primary')};
-    #             color: {ThemeManager.get_color('text')};
-    #             border: 1px solid {ThemeManager.get_color('border')};
-    #             border-radius: 1px;
-    #             padding: {UIScaleManager.get("combobox_padding")}px;
-    #         }}
-    #         QComboBox:hover {{
-    #             background-color: #555555;
-    #         }}
-    #         QComboBox QAbstractItemView {{
-    #             background-color: {ThemeManager.get_color('bg_secondary')};
-    #             color: {ThemeManager.get_color('text')};
-    #             selection-background-color: #505050;
-    #             selection-color: {ThemeManager.get_color('text')};
-    #         }}
-    #     """
 
     def setup_dark_theme(self):
         """다크 테마 설정"""
@@ -8812,7 +8775,6 @@ class PhotoSortApp(QMainWindow):
         """(비율 기반) 이미지 영역 3:2 비율 유지 및 좌우 패널 크기 동적 조절 (최대/최소 너비 적용)"""
         window_width = self.width()
         window_height = self.height()
-        thumbnail_visible = self.thumbnail_panel.isVisible()
 
         # 1. 패널들의 최소/최대 너비와 비율 정의
         control_min_width = UIScaleManager.get("control_panel_min_width")
@@ -8822,8 +8784,8 @@ class PhotoSortApp(QMainWindow):
         control_ratio = 2
         thumbnail_ratio = 1
 
-        # 2. 캔버스 크기 우선 결정 (기존 로직 유지)
-        side_panels_min_width = control_min_width + (thumbnail_min_width if thumbnail_visible else 0)
+        # 2. 캔버스 크기 우선 결정
+        side_panels_min_width = control_min_width + thumbnail_min_width
         available_for_canvas_width = window_width - side_panels_min_width
         canvas_ideal_width = window_height * 1.5
         canvas_width = max(100, min(canvas_ideal_width, available_for_canvas_width))
@@ -8831,44 +8793,38 @@ class PhotoSortApp(QMainWindow):
         # 3. 남은 공간을 컨트롤/썸네일 패널에 비율대로 배분
         remaining_width = window_width - canvas_width
         
-        # 초기 계산된 너비
-        calculated_control_width = 0
-        calculated_thumbnail_width = 0
-
-        if thumbnail_visible:
-            total_ratio = control_ratio + thumbnail_ratio
-            if total_ratio > 0:
-                calculated_control_width = remaining_width * (control_ratio / total_ratio)
-                calculated_thumbnail_width = remaining_width * (thumbnail_ratio / total_ratio)
+        total_ratio = control_ratio + thumbnail_ratio
+        if total_ratio > 0:
+            calculated_control_width = remaining_width * (control_ratio / total_ratio)
+            calculated_thumbnail_width = remaining_width * (thumbnail_ratio / total_ratio)
         else:
             calculated_control_width = remaining_width
+            calculated_thumbnail_width = 0
 
-        # 4. (핵심 수정) 계산된 너비를 min/max 범위 내로 제한(clamp)
+        # 4. 계산된 너비를 min/max 범위 내로 제한(clamp)
         final_control_width = max(control_min_width, min(control_max_width, calculated_control_width))
-        final_thumbnail_width = 0
-        if thumbnail_visible:
-            final_thumbnail_width = max(thumbnail_min_width, min(thumbnail_max_width, calculated_thumbnail_width))
+        final_thumbnail_width = max(thumbnail_min_width, min(thumbnail_max_width, calculated_thumbnail_width))
 
-        # 5. (핵심 수정) 제한된 패널 너비를 기준으로 캔버스 너비를 최종 조정
+        # 5. 제한된 패널 너비를 기준으로 캔버스 너비를 최종 조정
         final_canvas_width = window_width - final_control_width - final_thumbnail_width
         
-        # 6. 스플리터에 최종 크기 적용
-        sizes = []
-        if thumbnail_visible:
-            sizes = [int(final_control_width), int(final_canvas_width), int(final_thumbnail_width)]
-        else:
-            sizes = [int(final_control_width), int(final_canvas_width)]
+        # 6. 스플리터에 최종 크기 적용 (항상 3개 패널)
+        sizes = [int(final_control_width), int(final_canvas_width), int(final_thumbnail_width)]
             
         # 컨트롤 패널 위치에 따라 순서 조정
         control_on_right = getattr(self, 'control_panel_on_right', False)
         if control_on_right:
-            sizes.reverse()
+            # 오른쪽 배치: [썸네일], [캔버스], [컨트롤]
+            sizes = [int(final_thumbnail_width), int(final_canvas_width), int(final_control_width)]
+        else:
+            # 왼쪽 배치: [컨트롤], [캔버스], [썸네일]
+            sizes = [int(final_control_width), int(final_canvas_width), int(final_thumbnail_width)]
 
         if self.splitter.count() == len(sizes):
             self.splitter.setSizes(sizes)
         else:
             logging.warning("스플리터 위젯 수와 크기 목록 불일치. 재구성합니다.")
-            self._reorganize_splitter_widgets(thumbnail_visible, control_on_right)
+            self._reorganize_splitter_widgets(control_on_right)
             QTimer.singleShot(0, self.adjust_layout)
             return
 
@@ -8879,75 +8835,49 @@ class PhotoSortApp(QMainWindow):
     def _need_splitter_reorganization(self):
         """스플리터 재구성이 필요한지 확인"""
         try:
-            # 위젯 순서가 올바른지 확인
+            # 이제 스플리터는 항상 3개의 위젯을 가져야 합니다.
+            if self.splitter.count() != 3:
+                return True
+
             control_on_right = getattr(self, 'control_panel_on_right', False)
-            thumbnail_visible = (self.grid_mode == "Off")
             
-            if self.splitter.count() == 3 and thumbnail_visible:
-                # 3패널일 때 순서 확인
-                if control_on_right:
-                    # 예상 순서: [썸네일] [이미지] [컨트롤]
-                    return (self.splitter.widget(0) != self.thumbnail_panel or
-                            self.splitter.widget(1) != self.image_panel or
-                            self.splitter.widget(2) != self.control_panel)
-                else:
-                    # 예상 순서: [컨트롤] [이미지] [썸네일]
-                    return (self.splitter.widget(0) != self.control_panel or
-                            self.splitter.widget(1) != self.image_panel or
-                            self.splitter.widget(2) != self.thumbnail_panel)
-            elif self.splitter.count() == 2 and not thumbnail_visible:
-                # 2패널일 때 순서 확인
-                if control_on_right:
-                    # 예상 순서: [이미지] [컨트롤]
-                    return (self.splitter.widget(0) != self.image_panel or
-                            self.splitter.widget(1) != self.control_panel)
-                else:
-                    # 예상 순서: [컨트롤] [이미지]
-                    return (self.splitter.widget(0) != self.control_panel or
-                            self.splitter.widget(1) != self.image_panel)
-            
-            return True  # 패널 수가 맞지 않으면 재구성 필요
+            # 3패널일 때 순서 확인
+            if control_on_right:
+                # 예상 순서: [썸네일] [이미지] [컨트롤]
+                return (self.splitter.widget(0) != self.thumbnail_panel or
+                        self.splitter.widget(1) != self.image_panel or
+                        self.splitter.widget(2) != self.control_panel)
+            else:
+                # 예상 순서: [컨트롤] [이미지] [썸네일]
+                return (self.splitter.widget(0) != self.control_panel or
+                        self.splitter.widget(1) != self.image_panel or
+                        self.splitter.widget(2) != self.thumbnail_panel)
         except:
             return True  # 오류 발생 시 재구성
 
-    def _reorganize_splitter_widgets(self, thumbnail_visible, control_on_right):
-        """스플리터 위젯 재구성"""
+    def _reorganize_splitter_widgets(self, control_on_right):
+        """스플리터 위젯 재구성 (항상 3패널 구조)"""
         # 모든 위젯을 스플리터에서 제거
         while self.splitter.count() > 0:
             widget = self.splitter.widget(0)
             if widget:
                 widget.setParent(None)
         
-        # 썸네일 패널 표시/숨김 설정
-        if thumbnail_visible:
-            self.thumbnail_panel.show()
-        else:
-            self.thumbnail_panel.hide()
+        # 썸네일 패널은 항상 보이도록 설정
+        self.thumbnail_panel.show()
         
-        # 위젯을 올바른 순서로 다시 추가
-        if thumbnail_visible:
-            # 3패널 구조
-            if control_on_right:
-                # [썸네일] [이미지] [컨트롤]
-                self.splitter.addWidget(self.thumbnail_panel)
-                self.splitter.addWidget(self.image_panel)
-                self.splitter.addWidget(self.control_panel)
-            else:
-                # [컨트롤] [이미지] [썸네일]
-                self.splitter.addWidget(self.control_panel)
-                self.splitter.addWidget(self.image_panel)
-                self.splitter.addWidget(self.thumbnail_panel)
+        # 위젯을 올바른 순서로 다시 추가 (항상 3패널)
+        if control_on_right:
+            # [썸네일] [이미지] [컨트롤]
+            self.splitter.addWidget(self.thumbnail_panel)
+            self.splitter.addWidget(self.image_panel)
+            self.splitter.addWidget(self.control_panel)
         else:
-            # 2패널 구조
-            if control_on_right:
-                # [이미지] [컨트롤]
-                self.splitter.addWidget(self.image_panel)
-                self.splitter.addWidget(self.control_panel)
-            else:
-                # [컨트롤] [이미지]
-                self.splitter.addWidget(self.control_panel)
-                self.splitter.addWidget(self.image_panel)
-    
+            # [컨트롤] [이미지] [썸네일]
+            self.splitter.addWidget(self.control_panel)
+            self.splitter.addWidget(self.image_panel)
+            self.splitter.addWidget(self.thumbnail_panel)
+
     def resizeEvent(self, event):
             """창 크기 변경 이벤트 처리"""
             super().resizeEvent(event)
@@ -8972,7 +8902,6 @@ class PhotoSortApp(QMainWindow):
         if folder_path:
             logging.info(f"이미지(JPG) 폴더 선택: {folder_path}")
             self.clear_raw_folder()
-            # [TypeError FIX] 올바른 인자 순서로 호출
             self.start_background_loading(
                 mode='jpg_only',
                 jpg_folder_path=folder_path, 
@@ -9043,7 +8972,6 @@ class PhotoSortApp(QMainWindow):
         if not folder_path:
             return False
         
-        # [TypeError FIX] 올바른 인자 순서로 호출
         self.start_background_loading(
             mode='jpg_with_raw',
             jpg_folder_path=folder_path, 
@@ -9055,7 +8983,6 @@ class PhotoSortApp(QMainWindow):
     
     def start_background_loading(self, mode, jpg_folder_path, raw_folder_path, raw_file_list=None):
         """백그라운드 로딩을 시작하고 로딩창을 표시합니다."""
-        # [BUG FIX] 상태 복원 중이 아닐 때만 작업 공간을 초기화합니다.
         if not self._is_silent_load:
             self._reset_workspace()
 
@@ -9077,7 +9004,7 @@ class PhotoSortApp(QMainWindow):
             }}
         """)
         
-        # [추가] 대화상자를 메인 윈도우 중앙에 위치시키는 로직
+        # 대화상자를 메인 윈도우 중앙에 위치시키는 로직
         parent_geometry = self.geometry()
         self.loading_progress_dialog.adjustSize()
         dialog_size = self.loading_progress_dialog.size()
@@ -9089,11 +9016,13 @@ class PhotoSortApp(QMainWindow):
         # 이 방식은 복잡한 Python 타입을 더 안정적으로 처리합니다.
         jpg_path_str = jpg_folder_path if jpg_folder_path is not None else ""
         raw_path_str = raw_folder_path if raw_folder_path is not None else ""
+        current_supported_extensions = list(self.supported_image_extensions)
         self.folder_loader_worker.startProcessing.emit(
             jpg_path_str,
             raw_path_str,
             mode,
-            raw_file_list if raw_file_list is not None else []
+            raw_file_list if raw_file_list is not None else [],
+            current_supported_extensions
         )
 
     def force_grid_refresh(self):
@@ -9172,7 +9101,6 @@ class PhotoSortApp(QMainWindow):
             final_target_rel_center = QPointF(0.5, 0.5)
             trigger = self.zoom_change_trigger
             image_orientation_type = self.current_image_orientation
-            # ... (기존 apply_zoom_to_image의 뷰포트 계산 로직 전체) ...
             if trigger == "double_click":
                 scaled_fit_pixmap = self.high_quality_resize_to_fit(original_pixmap, scroll_area)
                 fit_img_rect = QRect((view_width - scaled_fit_pixmap.width()) // 2, (view_height - scaled_fit_pixmap.height()) // 2, scaled_fit_pixmap.width(), scaled_fit_pixmap.height())
@@ -9236,6 +9164,11 @@ class PhotoSortApp(QMainWindow):
 
     def apply_zoom_to_image(self):
         """A 캔버스에 줌을 적용하고, 비교 모드이면 B 캔버스도 동기화하는 래퍼 함수."""
+        # 레이아웃 재구성 중에는 이미지 업데이트를 건너뛰어 캐시 오염 방지
+        if self._is_reorganizing_layout:
+            logging.debug("apply_zoom_to_image: 레이아웃 재구성 중이므로 건너뜁니다.")
+            return
+
         if self.grid_mode != "Off": return
         
         # 1. A 캔버스에 줌/뷰포트 적용
@@ -9669,7 +9602,7 @@ class PhotoSortApp(QMainWindow):
 
         if folder_path:
             if self.match_raw_files(folder_path): # match_raw_files가 성공 여부 반환하도록 수정 필요
-                self.save_state() # <<< 저장
+                self.save_state()
 
     def load_raw_only_folder(self):
         """ RAW 파일만 로드하는 기능, 첫 파일 분석 및 사용자 선택 요청 """
@@ -9848,7 +9781,7 @@ class PhotoSortApp(QMainWindow):
                 logging.info("RAW 처리 방식 선택되지 않음 (대화상자 닫힘 등). 로드 취소.")
                 return
             
-            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}") # <<< 로그 추가
+            logging.info(f"사용자 선택 RAW 처리 방식: {chosen_method}")
 
             # --- "decode" 모드일 경우 진행률 대화상자 표시 ---
             if chosen_method == "decode":
@@ -9867,7 +9800,7 @@ class PhotoSortApp(QMainWindow):
                 self.last_processed_camera_model = None
             
             # --- 4. ImageLoader에 선택된 처리 방식 설정 및 나머지 파일 로드 ---
-            self.image_loader.set_raw_load_strategy(chosen_method) # <<< 중요!
+            self.image_loader.set_raw_load_strategy(chosen_method)
             logging.info(f"ImageLoader 처리 방식 설정 (새 로드): {chosen_method}")
 
             # --- RAW 로드 성공 시 ---
@@ -9899,11 +9832,11 @@ class PhotoSortApp(QMainWindow):
             self.grid_mode = "Off"
             self.grid_off_radio.setChecked(True)
             self.update_zoom_radio_buttons_state()
-            self.save_state() # <<< 저장
+            self.save_state()
 
             self.current_image_index = 0
             # display_current_image() 호출 전에 ImageLoader의 _raw_load_strategy가 설정되어 있어야 함
-            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})") # <<< 로그 추가
+            logging.info(f"display_current_image 호출 직전 ImageLoader 전략: {self.image_loader._raw_load_strategy} (ID: {id(self.image_loader)})")
             self.display_current_image() 
 
             if self.grid_mode == "Off":
@@ -9929,7 +9862,7 @@ class PhotoSortApp(QMainWindow):
         message_label = QLabel()
         message_label.setWordWrap(True)
         message_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        message_label.setTextFormat(Qt.RichText) # <<< RichText 사용 명시
+        message_label.setTextFormat(Qt.RichText)
 
         radio_group = QButtonGroup(dialog)
         preview_radio = QRadioButton()
@@ -10000,13 +9933,13 @@ class PhotoSortApp(QMainWindow):
             preview_radio.setChecked(True) # 기본 선택: 미리보기
 
             layout.addWidget(message_label)
-            layout.addSpacing(25) # <<< message_label과 첫 번째 라디오 버튼 사이 간격
+            layout.addSpacing(25) # message_label과 첫 번째 라디오 버튼 사이 간격
             layout.addWidget(preview_radio)
             layout.addSpacing(10)
             layout.addWidget(decode_radio)
             layout.addSpacing(25) # 두 번째 라디오버튼과 don't ask 체크박스 사이 간격
             layout.addWidget(dont_ask_checkbox)
-            layout.addSpacing(15) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addSpacing(15) # don't ask 체크박스와 확인 버튼 사이 간격
             layout.addWidget(confirm_button, 0, Qt.AlignCenter)
 
             if dialog.exec() == QDialog.Accepted:
@@ -10028,9 +9961,9 @@ class PhotoSortApp(QMainWindow):
             message_label.setText(f"{html_wrapper_start}{formatted_text}{html_wrapper_end}")
 
             layout.addWidget(message_label)
-            layout.addSpacing(20) # <<< message_label과 don't ask 체크박스 사이 간격
+            layout.addSpacing(20) # message_label과 don't ask 체크박스 사이 간격
             layout.addWidget(dont_ask_checkbox) # 이 경우에도 다시 묻지 않음은 유효
-            layout.addSpacing(15) # <<< don't ask 체크박스와 확인 버튼 사이 간격
+            layout.addSpacing(15) # don't ask 체크박스와 확인 버튼 사이 간격
             layout.addWidget(confirm_button, 0, Qt.AlignCenter)
 
             if dialog.exec() == QDialog.Accepted:
@@ -10050,7 +9983,6 @@ class PhotoSortApp(QMainWindow):
         
         self._is_silent_load = silent
         
-        # [TypeError FIX] 올바른 인자 순서로 호출
         self.start_background_loading(
             mode='jpg_with_raw',
             jpg_folder_path=self.current_folder, 
@@ -10553,10 +10485,8 @@ class PhotoSortApp(QMainWindow):
         )
         if folder_path:
             self.target_folders[index] = folder_path
-            # <<< 수정 시작 >>>
             # setText 대신 set_state를 사용하여 UI와 상태를 한 번에 업데이트합니다.
             self.folder_path_labels[index].set_state(EditableFolderPathLabel.STATE_SET, folder_path)
-            # <<< 수정 끝 >>>
             self.save_state()
     
     def clear_category_folder(self, index):
@@ -10631,13 +10561,10 @@ class PhotoSortApp(QMainWindow):
     
     def set_current_image_from_dialog(self, index):
         if not (0 <= index < len(self.image_files)): return
-        self._prepare_for_photo_change() # <<< 사진 변경 전 처리
-        # ... (나머지 로직) ...
+        self._prepare_for_photo_change()
         self.current_image_index = index
         self.force_refresh = True
-        # ... (Grid 모드/Off 모드에 따른 display_current_image 또는 update_grid_view 호출) ...
         if self.grid_mode != "Off":
-            # ... (그리드 인덱스 설정) ...
             self.update_grid_view()
         else:
             self.display_current_image()
@@ -10668,17 +10595,13 @@ class PhotoSortApp(QMainWindow):
         current_image_path = self.image_files[self.current_image_index]
         current_index = self.current_image_index # 이동 전 인덱스 저장
 
-        # ======================================================================== #
-        # ========== UNDO/REDO VARIABLES START ==========
         moved_jpg_path = None # 이동된 JPG 경로 저장 변수
         moved_raw_path = None # 이동된 RAW 경로 저장 변수
         raw_path_before_move = None # 이동 전 RAW 경로 저장 변수
-        # ========== UNDO/REDO VARIABLES END ==========
-        # ======================================================================== #
 
         try:
             # --- JPG 파일 이동 ---
-            moved_jpg_path = self.move_file(current_image_path, target_folder) # <<< 반환값 저장
+            moved_jpg_path = self.move_file(current_image_path, target_folder)
 
             # --- 이동 실패 시 처리 ---
             if moved_jpg_path is None:
@@ -10691,7 +10614,7 @@ class PhotoSortApp(QMainWindow):
                 base_name = current_image_path.stem
                 if base_name in self.raw_files:
                     raw_path_before_move = self.raw_files[base_name] # 이동 전 경로 저장
-                    moved_raw_path = self.move_file(raw_path_before_move, target_folder) # <<< 반환값 저장
+                    moved_raw_path = self.move_file(raw_path_before_move, target_folder)
                     if moved_raw_path is None:
                         # RAW 이동 실패 시 사용자에게 알리고 계속 진행할지, 아니면 JPG 이동을 취소할지 결정해야 함
                         # 여기서는 RAW 이동 실패 메시지만 보여주고 계속 진행 (JPG는 이미 이동됨)
@@ -10765,17 +10688,16 @@ class PhotoSortApp(QMainWindow):
     def move_file(self, source_path, target_folder):
         """파일을 대상 폴더로 이동하고, 이동된 최종 경로를 반환"""
         if not source_path or not target_folder:
-            return None # <<< 실패 시 None 반환
-
+            return None
         # 대상 폴더 존재 확인
         target_dir = Path(target_folder)
         if not target_dir.exists():
-            try: # <<< 폴더 생성 시 오류 처리 추가
+            try: # 폴더 생성 시 오류 처리 추가
                 target_dir.mkdir(parents=True)
                 logging.info(f"대상 폴더 생성됨: {target_dir}")
             except Exception as e:
                 logging.error(f"대상 폴더 생성 실패: {target_dir}, 오류: {e}")
-                return None # <<< 폴더 생성 실패 시 None 반환
+                return None # 폴더 생성 실패 시 None 반환
 
         # 대상 경로 생성
         target_path = target_dir / source_path.name
@@ -10793,23 +10715,23 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
 
         # 파일 이동
-        delay = 0.1 # <<< 재시도 대기 시간
+        delay = 0.1 # 재시도 대기 시간
         for attempt in range(20): # 최대 20번 재시도 (초 단위 2초 대기)
         # 재시도 로직 추가
-            try: # <<< 파일 이동 시 오류 처리 추가
+            try: #  파일 이동 시 오류 처리 추가
                 shutil.move(str(source_path), str(target_path))
                 logging.info(f"파일 이동: {source_path} -> {target_path}")
-                return target_path # <<< 이동 성공 시 최종 target_path 반환
+                return target_path # 이동 성공 시 최종 target_path 반환
             except PermissionError as e:
                 if hasattr(e, 'winerror') and e.winerror == 32:
                     print(f"[{attempt+1}] 파일 점유 중 (WinError 32), 재시도 대기: {source_path}")
                     time.sleep(delay)
                 else:
                     print(f"[{attempt+1}] PermissionError: {e}")
-                    return None # <<< 권한 오류 발생 시 None 반환
+                    return None # 권한 오류 발생 시 None 반환
             except Exception as e:
                 logging.error(f"파일 이동 실패: {source_path} -> {target_path}, 오류: {e}")
-                return None # <<< 이동 실패 시 None 반환
+                return None # 이동 실패 시 None 반환
 
         # 대상 경로 생성
         target_path = target_dir / source_path.name
@@ -10826,13 +10748,13 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"파일명 중복 처리: {source_path.name} -> {target_path.name}")
 
         # 파일 이동
-        try: # <<< 파일 이동 시 오류 처리 추가
+        try: #  파일 이동 시 오류 처리 추가
             shutil.move(str(source_path), str(target_path))
             logging.info(f"파일 이동: {source_path} -> {target_path}")
-            return target_path # <<< 이동 성공 시 최종 target_path 반환
+            return target_path # 이동 성공 시 최종 target_path 반환
         except Exception as e:
             logging.error(f"파일 이동 실패: {source_path} -> {target_path}, 오류: {e}")
-            return None # <<< 이동 실패 시 None 반환
+            return None #  이동 실패 시 None 반환
     
     def setup_zoom_ui(self):
         """줌 UI 설정"""
@@ -10840,7 +10762,7 @@ class PhotoSortApp(QMainWindow):
         zoom_label = QLabel("Zoom")
         zoom_label.setAlignment(Qt.AlignCenter) # --- 가운데 정렬 추가 ---
         zoom_label.setStyleSheet(f"color: {ThemeManager.get_color('text')};")
-        font = QFont(self.font()) # <<< 현재 위젯(PhotoSortApp)의 폰트를 가져와서 복사
+        font = QFont(self.font()) # 현재 위젯(PhotoSortApp)의 폰트를 가져와서 복사
         # font.setBold(True) # 이 새 폰트 객체에만 볼드 적용
         font.setPointSize(UIScaleManager.get("zoom_grid_font_size")) # 이 새 폰트 객체에만 크기 적용
         zoom_label.setFont(font) # 수정된 새 폰트를 레이블에 적용
@@ -10880,7 +10802,7 @@ class PhotoSortApp(QMainWindow):
                 color: {ThemeManager.get_color('text')};
                 border: 1px solid {ThemeManager.get_color('border')};
                 border-radius: 1px;
-                padding: 2px;
+                padding: {UIScaleManager.get("spinbox_padding")}px;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 background-color: {ThemeManager.get_color('bg_primary')};
@@ -10913,7 +10835,6 @@ class PhotoSortApp(QMainWindow):
         zoom_layout.addStretch()
         zoom_layout.addWidget(self.fit_radio)
         zoom_layout.addWidget(self.zoom_100_radio)
-        # <<<--- 중첩 레이아웃으로 Spin UI 묶기 ---<<<
         spin_widget_container = QWidget()
         spin_layout = QHBoxLayout(spin_widget_container)
         spin_layout.setContentsMargins(0,0,0,0)
@@ -10922,7 +10843,6 @@ class PhotoSortApp(QMainWindow):
         spin_layout.addWidget(self.zoom_spin)
 
         zoom_layout.addWidget(spin_widget_container) # 묶인 위젯을 한 번에 추가
-        # <<<----중첩 레이아웃으로 Spin UI 묶기 끝 ----<<<
         zoom_layout.addStretch()
         
         self.control_layout.addWidget(zoom_container)
@@ -10949,7 +10869,7 @@ class PhotoSortApp(QMainWindow):
         new_zoom_mode = ""
         if button == self.fit_radio:
             new_zoom_mode = "Fit"
-            self.update_thumbnail_panel_visibility()
+            self.update_thumbnail_panel_style()
         elif button == self.zoom_100_radio:
             new_zoom_mode = "100%"
         elif button == self.zoom_spin_btn:
@@ -11498,7 +11418,7 @@ class PhotoSortApp(QMainWindow):
         self.compare_radio = QRadioButton("A | B")
         self.compare_radio.setStyleSheet(radio_style)
         self.grid_mode_group.addButton(self.compare_radio, 2) # ID 2: 비교 모드 
-        grid_layout_h.addWidget(self.compare_radio) # <<< 레이아웃에 추가
+        grid_layout_h.addWidget(self.compare_radio) 
         grid_layout_h.addStretch()
 
         self.control_layout.addWidget(grid_container)
@@ -11555,8 +11475,7 @@ class PhotoSortApp(QMainWindow):
         """Grid 크기 콤보박스 변경 시 호출"""
         new_mode = text.replace(" ", "")
         self.last_active_grid_mode = new_mode
-        
-        # <<< 수정: 콤보박스 변경은 항상 Grid On 상태를 의미하도록 함 >>>
+
         if not self.grid_on_radio.isChecked():
             self.grid_on_radio.setChecked(True)
             # setChecked(True)가 _on_grid_mode_toggled를 호출하므로,
@@ -11601,7 +11520,7 @@ class PhotoSortApp(QMainWindow):
             self.image_label_B.clear()
 
         QTimer.singleShot(10, update_ui_after_resize)
-        self.update_thumbnail_panel_visibility()
+        self.update_thumbnail_panel_style()
         
         if self.grid_mode != "Off":
             # Grid On으로 전환/유지 시 인덱스 계산
@@ -11707,7 +11626,7 @@ class PhotoSortApp(QMainWindow):
                     color: {ThemeManager.get_color('text_disabled')};
                     border: 1px solid {ThemeManager.get_color('border')};
                     border-radius: 1px;
-                    padding: 2px;
+                    padding: {UIScaleManager.get("spinbox_padding")}px;
                 }}
                 QSpinBox::up-button, QSpinBox::down-button {{
                     background-color: {ThemeManager.get_color('bg_primary')};
@@ -11741,7 +11660,7 @@ class PhotoSortApp(QMainWindow):
                     color: {ThemeManager.get_color('text')};
                     border: 1px solid {ThemeManager.get_color('border')};
                     border-radius: 1px;
-                    padding: 2px;
+                    padding: {UIScaleManager.get("spinbox_padding")}px;
                 }}
                 QSpinBox::up-button, QSpinBox::down-button {{
                     background-color: {ThemeManager.get_color('bg_primary')};
@@ -12177,7 +12096,7 @@ class PhotoSortApp(QMainWindow):
 
         # 1. 좌/우 이동 처리 (Left/A 또는 Right/D)
         if delta == -1: # 왼쪽
-            if current_global_index == 0: # <<< 전체 첫 이미지에서 왼쪽: 마지막 이미지로 순환
+            if current_global_index == 0:
                 self.grid_page_start_index = ((total_images - 1) // num_cells) * num_cells
                 self.current_grid_index = (total_images - 1) % num_cells
                 page_changed = True
@@ -12194,7 +12113,7 @@ class PhotoSortApp(QMainWindow):
                 logging.debug(f"Navigating grid: Move left within page to {new_grid_index}") # 디버깅 로그
 
         elif delta == 1: # 오른쪽
-            if current_global_index == total_images - 1: # <<< 전체 마지막 이미지에서 오른쪽: 첫 이미지로 순환
+            if current_global_index == total_images - 1:
                 self.grid_page_start_index = 0
                 self.current_grid_index = 0
                 page_changed = True
@@ -12446,7 +12365,7 @@ class PhotoSortApp(QMainWindow):
                     
                     # 2. UI 컨트롤 및 구조 변경
                     self.grid_off_radio.setChecked(True)
-                    self.update_thumbnail_panel_visibility()
+                    self.update_thumbnail_panel_style()
                     self.update_grid_view()
                     self.update_zoom_radio_buttons_state()
                     self.update_counter_layout()
@@ -12472,9 +12391,7 @@ class PhotoSortApp(QMainWindow):
             current_orientation = self.current_image_orientation
             if self.zoom_mode == "Fit":
                 self.double_click_pos = event.position().toPoint()
-                # <<< 수정 시작: target_widget 인자 추가 >>>
                 scaled_fit_pixmap = self.high_quality_resize_to_fit(self.original_pixmap, self.scroll_area)
-                # <<< 수정 끝 >>>
                 view_width = self.scroll_area.width()
                 view_height = self.scroll_area.height()
                 fit_img_width = scaled_fit_pixmap.width()
@@ -12577,7 +12494,7 @@ class PhotoSortApp(QMainWindow):
         self.move_history = []
         self.history_pointer = -1
         # 3. 상태 변수 초기화 (이미지 목록을 먼저 비웁니다)
-        self.image_files = [] # <<< 중요: UI 업데이트 전에 데이터부터 비웁니다.
+        self.image_files = [] # UI 업데이트 전에 데이터부터 비웁니다.
         self.current_folder = ""
         self.raw_folder = ""
         self.raw_files = {}
@@ -12593,7 +12510,7 @@ class PhotoSortApp(QMainWindow):
             for key in self.grid_thumbnail_cache:
                 self.grid_thumbnail_cache[key].clear()
         # 5. 뷰 및 UI 상태 초기화 (grid_mode를 먼저 Off로 설정)
-        self.grid_mode = "Off" # <<< 중요: update_grid_view가 참조할 상태를 먼저 설정합니다.
+        self.grid_mode = "Off" # update_grid_view가 참조할 상태를 먼저 설정합니다.
         self.grid_page_start_index = 0
         self.current_grid_index = 0
         self.previous_grid_mode = None
@@ -12608,17 +12525,17 @@ class PhotoSortApp(QMainWindow):
         self.update_raw_folder_ui_state()
         self.update_match_raw_button_state()
         self.update_all_folder_labels_state()
+        self.update_file_info_display(None)
 
         # [수정] display_current_image() 대신 update_grid_view()를 호출합니다.
         # self.grid_mode가 "Off"로 설정되었으므로, 이 함수는 그리드를 정리하고
         # 빈 단일 이미지 뷰로 전환하는 작업을 올바르게 수행합니다.
         self.update_grid_view()
 
-        # [추가] update_grid_view 호출 후, 나머지 UI 컨트롤 상태도 동기화합니다.
         if hasattr(self, 'grid_off_radio'):
             self.grid_off_radio.setChecked(True)
         self.update_zoom_radio_buttons_state()
-        self.update_thumbnail_panel_visibility()
+        self.update_thumbnail_panel_style()
         
         logging.info("작업 공간 초기화 완료.")
 
@@ -12929,7 +12846,6 @@ class PhotoSortApp(QMainWindow):
             base_folder = self.raw_folder
         else:
             base_folder = self.current_folder
-        # --- 결정 끝 ---
 
         if not base_folder or not filename: # 기준 폴더나 파일명이 없으면 중단
             logging.warning("기준 폴더 또는 파일명이 없어 파일을 열 수 없습니다.")
@@ -13103,7 +13019,6 @@ class PhotoSortApp(QMainWindow):
             resource_manager = ResourceManager.instance()
             if not resource_manager._running:
                 logging.info(f"PhotoSortApp._load_image_task: ResourceManager가 종료 중이므로 작업 중단 ({Path(image_path).name})")
-                # ... (기존 종료 시그널 처리) ...
                 if hasattr(self, 'image_loader'):
                     QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
                                              Q_ARG(str, "ResourceManager_shutdown"),
@@ -13143,7 +13058,6 @@ class PhotoSortApp(QMainWindow):
                 pixmap = self.image_loader.load_image_with_orientation(image_path)
 
                 if not resource_manager._running: # 로드 후 다시 확인
-                    # ... (기존 종료 시그널 처리) ...
                     if hasattr(self, 'image_loader'):
                         QMetaObject.invokeMethod(self.image_loader, "loadFailed", Qt.QueuedConnection,
                                                  Q_ARG(str, "ResourceManager_shutdown_post"),
@@ -13159,7 +13073,6 @@ class PhotoSortApp(QMainWindow):
                 return True
 
         except Exception as e:
-            # ... (기존 오류 처리) ...
             if ResourceManager.instance()._running:
                 logging.error(f"_load_image_task 오류 ({Path(image_path).name if image_path else 'N/A'}): {e}")
                 import traceback
@@ -13175,7 +13088,7 @@ class PhotoSortApp(QMainWindow):
 
 
     def _on_image_loaded_for_display(self, pixmap, image_path_str_loaded, requested_index):
-        if self.current_image_index != requested_index: # ... (무시 로직) ...
+        if self.current_image_index != requested_index:
             return
         if hasattr(self, 'loading_indicator_timer'): self.loading_indicator_timer.stop()
         if pixmap.isNull():
@@ -13209,7 +13122,6 @@ class PhotoSortApp(QMainWindow):
         # else: 사진 변경 아님 (zoom_change_trigger는 다른 곳에서 설정되어 apply_zoom_to_image로 전달됨)
 
         # 라디오 버튼 UI 동기화 및 나머지 로직 (original_pixmap 설정, apply_zoom_to_image 호출 등)
-        # ... (이전 답변의 _on_image_loaded_for_display 나머지 부분과 유사하게 진행) ...
         if self.zoom_mode == "Fit": self.fit_radio.setChecked(True)
         elif self.zoom_mode == "100%": self.zoom_100_radio.setChecked(True)
         elif self.zoom_mode == "Spin": self.zoom_spin_btn.setChecked(True)
@@ -13381,7 +13293,6 @@ class PhotoSortApp(QMainWindow):
         # 로드 요청 제출
         for idx, priority in to_preload:
             img_path = str(self.image_files[idx])
-            # ... (기존과 동일하게 RAW/JPG 구분하여 작업 제출) ...
             # 여기서는 _preload_image_for_grid를 사용하여 preview만 로드하는 것으로 단순화
             self.resource_manager.submit_imaging_task_with_priority(
                 priority,
@@ -13560,7 +13471,7 @@ class PhotoSortApp(QMainWindow):
             "minimap_visible": self.minimap_toggle.isChecked(),
             "grid_mode": self.grid_mode,
             # "current_image_index": self.current_image_index, # 이전 방식
-            "current_image_index": actual_current_image_list_index, # <<< 수정: 실제로 보고 있던 이미지의 전역 인덱스 저장
+            "current_image_index": actual_current_image_list_index, # 실제로 보고 있던 이미지의 전역 인덱스 저장
             "current_grid_index": self.current_grid_index, # Grid 모드일 때의 페이지 내 인덱스 (복원 시 참고용)
             "grid_page_start_index": self.grid_page_start_index, # Grid 모드일 때의 페이지 시작 인덱스 (복원 시 참고용)
             "previous_grid_mode": self.previous_grid_mode,
@@ -13580,7 +13491,6 @@ class PhotoSortApp(QMainWindow):
             "supported_image_extensions": sorted(list(self.supported_image_extensions)),
             "saved_sessions": self.saved_sessions,
             "performance_profile": HardwareProfileManager.get_current_profile_key(),
-            # [BUG 3 FIX] Compare 모드 상태와 Canvas B 이미지 경로 저장
             "compare_mode_active": self.compare_mode_active,
             "image_B_path": str(self.image_B_path) if self.image_B_path else "",
         }
@@ -13629,8 +13539,7 @@ class PhotoSortApp(QMainWindow):
             with open(load_path, 'r', encoding='utf-8') as f:
                 loaded_data = json.load(f)
             logging.info(f"PhotoSortApp.load_state: 상태 파일 로드 완료 ({load_path})")
-            
-            # [BUG FIX] 상태 복원 플래그를 여기서 바로 설정
+
             self._is_silent_load = True
 
             # 1. 기본 설정 복원
@@ -13651,6 +13560,13 @@ class PhotoSortApp(QMainWindow):
             default_extensions = {'.jpg', '.jpeg'}
             loaded_extensions = loaded_data.get("supported_image_extensions", list(default_extensions))
             self.supported_image_extensions = set(loaded_extensions)
+            if hasattr(self, 'ext_checkboxes'):
+                extension_groups = {"JPG": ['.jpg', '.jpeg'], "PNG": ['.png'], "WebP": ['.webp'], "HEIC": ['.heic', '.heif'], "BMP": ['.bmp'], "TIFF": ['.tif', '.tiff']}
+                for name, checkbox in self.ext_checkboxes.items():
+                    is_checked = any(ext in self.supported_image_extensions for ext in extension_groups[name])
+                    checkbox.blockSignals(True)  # 시그널 차단
+                    checkbox.setChecked(is_checked)
+                    checkbox.blockSignals(False) # 시그널 복구
             self.folder_count = loaded_data.get("folder_count", 3)
             loaded_folders = loaded_data.get("target_folders", [])
             self.target_folders = (loaded_folders + [""] * self.folder_count)[:self.folder_count]
@@ -13705,7 +13621,6 @@ class PhotoSortApp(QMainWindow):
             self.is_raw_only_mode = loaded_data.get("is_raw_only_mode", False)
             self.last_loaded_raw_method_from_state = loaded_data.get("last_used_raw_method", "preview")
 
-            # 4. [BUG 1,2,3 FIX] 뷰 상태 변수 설정
             self.current_image_index = loaded_data.get("current_image_index", -1)
             self.current_grid_index = loaded_data.get("current_grid_index", 0)
             self.grid_page_start_index = loaded_data.get("grid_page_start_index", 0)
@@ -13740,7 +13655,6 @@ class PhotoSortApp(QMainWindow):
                 if self.raw_folder and Path(self.raw_folder).is_dir():
                     raw_files_to_load = self.reload_raw_files_from_state(self.raw_folder)
                     if raw_files_to_load:
-                        # [TypeError FIX] 올바른 인자 순서로 호출
                         self.start_background_loading(
                             mode='raw_only',
                             jpg_folder_path=self.raw_folder,
@@ -13755,7 +13669,6 @@ class PhotoSortApp(QMainWindow):
                     self.update_all_ui_after_load_failure_or_first_run()
             elif self.current_folder and Path(self.current_folder).is_dir():
                 mode_on_load = 'jpg_with_raw' if self.raw_folder and Path(self.raw_folder).is_dir() else 'jpg_only'
-                # [TypeError FIX] 올바른 인자 순서로 호출
                 self.start_background_loading(
                     mode=mode_on_load,
                     jpg_folder_path=self.current_folder,
@@ -13770,8 +13683,8 @@ class PhotoSortApp(QMainWindow):
             saved_profile = loaded_data.get("performance_profile")
             if saved_profile: HardwareProfileManager.set_profile_manually(saved_profile)
             self._sync_performance_profile_ui()
-
             self.update_all_settings_controls_text()
+            self._apply_panel_position()
             return True
         except Exception as e:
             logging.error(f"PhotoSortApp.load_state: 상태 불러오는 중 예외 발생: {e}", exc_info=True)
@@ -13783,6 +13696,7 @@ class PhotoSortApp(QMainWindow):
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
             self.update_all_settings_controls_text()
+            self._apply_panel_position()
             return True
 
     def _sync_performance_profile_ui(self):
@@ -14069,14 +13983,12 @@ class PhotoSortApp(QMainWindow):
             self.compare_radio.setChecked(True)
             self._update_view_for_grid_change()
             
-            # <<< 수정 시작: B 캔버스 복원 로직을 타이머로 지연 >>>
             def restore_compare_view():
                 self.display_current_image()
                 self._apply_zoom_to_canvas('B')
                 self._sync_viewports() # 타이머 콜백 내에서 동기화
 
             QTimer.singleShot(20, restore_compare_view) # 20ms 지연으로 안정성 확보
-            # <<< 수정 끝 >>>
 
         elif mode_before_move == "Off":
             self.current_image_index = index_before_move
@@ -14700,7 +14612,7 @@ class PhotoSortApp(QMainWindow):
 
                         # 2. UI 컨트롤 및 구조 변경
                         self.grid_off_radio.setChecked(True)
-                        self.update_thumbnail_panel_visibility()
+                        self.update_thumbnail_panel_style()
                         self.update_grid_view()
                         self.update_zoom_radio_buttons_state()
                         self.update_counter_layout()
@@ -14866,7 +14778,7 @@ class PhotoSortApp(QMainWindow):
 
     def update_jpg_folder_ui_state(self):
         is_valid = bool(self.current_folder and Path(self.current_folder).is_dir())
-        self.update_info_folder_label_style(self.folder_path_label, self.current_folder) # <<< 수정
+        self.update_info_folder_label_style(self.folder_path_label, self.current_folder)
         if hasattr(self, 'jpg_clear_button'):
             self.jpg_clear_button.setEnabled(is_valid)
         if hasattr(self, 'load_button'):
@@ -14874,7 +14786,7 @@ class PhotoSortApp(QMainWindow):
             
     def update_raw_folder_ui_state(self):
         is_valid = bool(self.raw_folder and Path(self.raw_folder).is_dir())
-        self.update_info_folder_label_style(self.raw_folder_path_label, self.raw_folder) # <<< 수정
+        self.update_info_folder_label_style(self.raw_folder_path_label, self.raw_folder)
         if hasattr(self, 'raw_clear_button'):
             self.raw_clear_button.setEnabled(is_valid)
         self.update_raw_toggle_state()
@@ -14940,7 +14852,7 @@ class PhotoSortApp(QMainWindow):
             if self.session_management_popup and self.session_management_popup.isVisible():
                 self.session_management_popup.update_all_button_states()
 
-            self.save_state() # <<< 상태 변경 후 저장
+            self.save_state()
             logging.info("RAW 폴더 지정 해제 완료.")
 
 
@@ -15103,7 +15015,7 @@ class PhotoSortApp(QMainWindow):
 
     def _apply_panel_position(self):
         """현재 self.control_panel_on_right 상태에 따라 패널 위치 및 크기 적용"""
-        print(f"_apply_panel_position 호출됨: 오른쪽 배치 = {self.control_panel_on_right}")
+        logging.info(f"_apply_panel_position 호출됨: 오른쪽 배치 = {self.control_panel_on_right}")
 
         if not hasattr(self, 'splitter') or not self.splitter:
             logging.warning("Warning: Splitter가 아직 준비되지 않았습니다.")
@@ -15113,33 +15025,41 @@ class PhotoSortApp(QMainWindow):
             return
 
         try:
-            # 현재 썸네일 패널 표시 상태 확인
-            thumbnail_visible = (self.grid_mode == "Off")
-            
-            # 스플리터 재구성
-            self._reorganize_splitter_widgets(thumbnail_visible, self.control_panel_on_right)
-            
-            # 레이아웃 크기 재조정
-            print("  -> adjust_layout 호출")
-            self.adjust_layout()
+            self._is_reorganizing_layout = True
 
-            print("_apply_panel_position 완료")
+            # 스플리터 재구성 (이제 썸네일 패널은 항상 존재)
+            self._reorganize_splitter_widgets(self.control_panel_on_right)
+            
+            # 카운터 레이아웃을 스플리터 재구성 *후*, adjust_layout *전*에 업데이트합니다.
+            self.update_counter_layout()
+
+            def finalize_layout_change():
+                # adjust_layout을 타이머 콜백 안으로 이동시켜
+                # 스플리터 구조가 완전히 적용된 후 크기를 계산하도록 합니다.
+                self.adjust_layout()
+                self._is_reorganizing_layout = False
+                
+                if self.grid_mode == "Off":
+                    self.apply_zoom_to_image()
+                else:
+                    self.update_grid_view()
+                logging.info("_apply_panel_position 완료 및 뷰 업데이트")
+
+            QTimer.singleShot(0, finalize_layout_change)
 
         except Exception as e:
-            logging.error(f"_apply_panel_position 오류: {e}")
-            print(f"ERROR in _apply_panel_position: {e}")
+            logging.error(f"_apply_panel_position 오류: {e}", exc_info=True)
+            self._is_reorganizing_layout = False # 오류 발생 시 플래그 해제
 
 def main():
     # PyInstaller로 패키징된 실행 파일을 위한 멀티프로세싱 지원 추가
     freeze_support()  # 이 호출이 멀티프로세싱 무한 재귀 문제를 해결합니다
 
-    # <<<--- HEIC 플러그인 등록 코드를 여기로 이동 ---<<<
     try:
         pillow_heif.register_heif_opener()
         logging.info("HEIF/HEIC 지원이 활성화되었습니다. (main에서 등록)")
     except Exception as e:
         logging.error(f"HEIF/HEIC 플러그인 등록 실패: {e}")
-    # <<<--------------------------------------------<<<
 
     # 로그 레벨 설정: 개발 환경에서는 DEBUG, 배포 환경에서는 INFO로 설정
     # 실제 환경에 따라 조정 가능
