@@ -135,206 +135,168 @@ def apply_dark_title_bar(widget):
             logging.error(f"{type(widget).__name__} 제목 표시줄 다크 테마 적용 실패: {e}")
 
 class UIScaleManager:
-    """해상도에 따른 UI 크기를 관리하는 클래스"""
+    """해상도와 화면 비율에 따라 UI 크기를 동적으로 관리하는 클래스"""
 
-    # 기본 UI 크기 설정
+    # min/max 너비 개념을 다시 사용합니다.
     NORMAL_SETTINGS = {
-        "control_panel_margins": (8, 9, 8, 9), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
-        "control_layout_spacing": 8,               # 컨트롤 레이아웃 위젯 간 기본 간격
-        "button_min_height": 30,                   # 일반 버튼 최소 높이
-        "button_padding": 6,                       # 일반 버튼 내부 패딩 (원래 8)
-        "delete_button_width": 45,                 # 분류폴더 번호 및 삭제(X) 버튼 너비
-        "JPG_RAW_spacing": 8,
-        "section_spacing": 20,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 15,                   # 라디오 버튼 등 그룹 내 간격
-        "title_spacing": 10,                       # Zoom, Grid 등 섹션 제목 아래 간격
-        "settings_button_size": 35,                # 설정(톱니바퀴) 버튼 크기
-        "filename_label_padding": 40,              # 파일명 레이블 상하 패딩
-        "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
-        "font_size": 10,                           # 기본 폰트 크기
-        "zoom_grid_font_size": 11,                 # Zoom, Grid 등 섹션 제목 폰트 크기
-        "zoom_spinbox_width": 85,                 # Zoom Spinbox 너비
-        "filename_font_size": 11,                  # 파일명 폰트 크기
-        "folder_container_spacing": 6,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
-        "folder_label_padding": 13,                # 폴더 경로 레이블 높이 계산용 패딩
-        "sort_folder_label_padding": 25,           # 분류폴더 레이블 패딩
-        "category_folder_vertical_spacing": 10,    # 분류 폴더 UI 사이 간격
-        "info_container_width": 300,
-        "settings_label_width": 250,               # 설정 창 라벨 최소 너비
-        "control_panel_min_width": 316,            # 컨트롤 패널 최소 너비
-        "control_panel_max_width": 362,            # 컨트롤 패널 최대 너비
-        "combobox_padding": 5,
-        "spinbox_padding": 3,
-        # 라디오 버튼 스타일 관련 키
-        "radiobutton_size": 13,
-        "radiobutton_border": 2,
-        "radiobutton_border_radius": 8,
-        "radiobutton_padding": 0,
-        # 체크박스 스타일 관련 키
-        "checkbox_size": 12,
-        "checkbox_border": 2,
-        "checkbox_border_radius": 2,
-        "checkbox_padding": 0,
-        # 설정 창 관련 키 추가
-        "settings_popup_width": 1280,
-        "settings_popup_height": 1120,
-        "settings_layout_vspace": 18,
-        "settings_group_title_spacing": 15,
-        "infotext_licensebutton": 30,
-        "donation_between_tworows": 25,
-        "bottom_space": 25,
-        # 정보 텍스트 여백 관련 키 추가
-        "info_version_margin": 30,
-        "info_paragraph_margin": 30,
-        "info_bottom_margin": 30,
-        "info_donation_spacing": 35,
-        # 썸네일 패널 관련 키 추가
-        "thumbnail_image_size": 150,           # 썸네일 이미지 크기
-        "thumbnail_item_height": 195,          # 썸네일 아이템 높이
-        "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
-        "thumbnail_text_height": 24,           # 파일명 텍스트 영역 높이
-        "thumbnail_padding": 6,                # 썸네일 내부 패딩
-        "thumbnail_border_width": 2,           # 선택 테두리 두께
-        "thumbnail_panel_min_width": 197,      # 썸네일 패널 최소 너비
-        "thumbnail_panel_max_width": 197,      # 썸네일 패널 최대 너비
-        # 
+        "control_panel_margins": (8, 9, 8, 9), "control_layout_spacing": 8, "button_padding": 7,
+        "delete_button_width": 45, "JPG_RAW_spacing": 8, "section_spacing": 20, "group_box_spacing": 15,
+        "title_spacing": 10, "settings_button_size": 35, "filename_label_padding": 40, "info_label_padding": 5,
+        "font_size": 10, "zoom_grid_font_size": 11, "filename_font_size": 11, "folder_container_spacing": 6,
+        "folder_label_padding": 20, "sort_folder_label_padding": 25, "category_folder_vertical_spacing": 10,
+        "info_container_width": 300, "settings_label_width": 250,
+        "control_panel_min_width": 362, "control_panel_max_width": 550, # 범위로 설정
+        "combobox_padding": 5, "spinbox_padding": 3, "radiobutton_size": 13, "radiobutton_border": 2,
+        "radiobutton_border_radius": 8, "radiobutton_padding": 0, "checkbox_size": 12, "checkbox_border": 2,
+        "checkbox_border_radius": 2, "checkbox_padding": 0, "settings_popup_width": 1280,
+        "settings_popup_height": 1120, "settings_layout_vspace": 18, "settings_group_title_spacing": 15,
+        "infotext_licensebutton": 30, "donation_between_tworows": 25, "bottom_space": 25,
+        "info_version_margin": 30, "info_paragraph_margin": 30, "info_bottom_margin": 30,
+        "info_donation_spacing": 35, "thumbnail_image_size": 150, "thumbnail_item_height": 195,
+        "thumbnail_item_spacing": 2, "thumbnail_text_height": 24, "thumbnail_padding": 6,
+        "thumbnail_border_width": 2,
+        "thumbnail_panel_min_width": 197, "thumbnail_panel_max_width": 300, # 범위로 설정
         "compare_filename_padding": 5,
     }
-
-    # 컴팩트 모드 UI 크기 설정
     COMPACT_SETTINGS = {
-        "control_panel_margins": (6, 6, 6, 6), # 컨트롤 패널 내부 여백 (좌, 상, 우, 하)
-        "control_layout_spacing": 6,               # 컨트롤 레이아웃 위젯 간 기본 간격
-        "button_min_height": 20,                   # 일반 버튼 최소 높이
-        "button_padding": 6,                       # 일반 버튼 내부 패딩
-        "delete_button_width": 35,                 # 분류폴더 번호 및 삭제(X) 버튼 너비
-        "JPG_RAW_spacing": 6, 
-        "section_spacing": 12,                     # 구분선(HorizontalLine) 주변 간격
-        "group_box_spacing": 10,                   # 라디오 버튼 등 그룹 내 간격
-        "title_spacing": 7,                        # Zoom, Grid 등 섹션 제목 아래 간격
-        "settings_button_size": 25,                # 설정(톱니바퀴) 버튼 크기
-        "filename_label_padding": 25,              # 파일명 레이블 상하 패딩
-        "info_label_padding": 5,                   # 파일 정보 레이블 좌측 패딩
-        "font_size": 9,                            # 기본 폰트 크기
-        "zoom_grid_font_size": 10,                 # Zoom, Grid 등 섹션 제목 폰트 크기
-        "zoom_spinbox_width": 70,                 # Zoom Spinbox 너비
-        "filename_font_size": 10,                  # 파일명 폰트 크기
-        "folder_container_spacing": 4,             # 분류폴더 번호버튼 - 레이블 - X버튼 간격
-        "folder_label_padding": 10,                # 폴더 경로 레이블 높이 계산용 패딩
-        "sort_folder_label_padding": 20,           # 분류폴더 레이블 패딩
-        "category_folder_vertical_spacing": 6,     # 분류 폴더 UI 사이 간격
-        "info_container_width": 200,
-        "settings_label_width": 180,               # 설정 창 라벨 최소 너비
-        "control_panel_min_width": 220,            # 컨트롤 패널 최소 너비
-        "control_panel_max_width": 350,            # 컨트롤 패널 최대 너비
-        "combobox_padding": 4,
-        "spinbox_padding": 1,
-        # 라디오 버튼 스타일 관련 키
-        "radiobutton_size": 9,
-        "radiobutton_border": 2,
-        "radiobutton_border_radius": 6,
-        "radiobutton_padding": 0,
-        # 체크박스 스타일 관련 키
-        "checkbox_size": 8,
-        "checkbox_border": 2,
-        "checkbox_border_radius": 1,
-        "checkbox_padding": 0,
-        # 설정 창 관련 키 추가 (컴팩트 모드에서는 더 작게)
-        "settings_popup_width": 1000,
-        "settings_popup_height": 870,
-        "settings_layout_vspace": 12,
-        "settings_group_title_spacing": 10,
-        "infotext_licensebutton": 20,
-        "donation_between_tworows": 17,
-        "bottom_space": 15,
-        # 정보 텍스트 여백 관련 키 추가 (컴팩트 모드에서는 여백 축소)
-        "info_version_margin": 20,
-        "info_paragraph_margin": 20,
-        "info_bottom_margin": 20,
-        "info_donation_spacing": 25,
-        # 썸네일 패널 관련 설정 (컴팩트 모드에서는 더 작게)
-        "thumbnail_image_size": 100,           # 썸네일 이미지 크기
-        "thumbnail_item_height": 135,          # 썸네일 아이템 높이
-        "thumbnail_item_spacing": 2,           # 썸네일 아이템 간 간격
-        "thumbnail_text_height": 20,           # 파일명 텍스트 영역 높이
-        "thumbnail_padding": 5,                # 썸네일 내부 패딩
-        "thumbnail_border_width": 2,           # 선택 테두리 두께
-        "thumbnail_panel_min_width": 145,      # 썸네일 패널 최소 너비
-        "thumbnail_panel_max_width": 145,      # 썸네일 패널 최대 너비 (컴팩트 모드)
-        # 
+        "control_panel_margins": (6, 6, 6, 6), "control_layout_spacing": 6, "button_padding": 6,
+        "delete_button_width": 35, "JPG_RAW_spacing": 6, "section_spacing": 12, "group_box_spacing": 10,
+        "title_spacing": 7, "settings_button_size": 25, "filename_label_padding": 25, "info_label_padding": 5,
+        "font_size": 9, "zoom_grid_font_size": 10, "filename_font_size": 10, "folder_container_spacing": 4,
+        "folder_label_padding": 10, "sort_folder_label_padding": 20, "category_folder_vertical_spacing": 6,
+        "info_container_width": 200, "settings_label_width": 180,
+        "control_panel_min_width": 290, "control_panel_max_width": 450, # 범위로 설정
+        "combobox_padding": 4, "spinbox_padding": 1, "radiobutton_size": 9, "radiobutton_border": 2,
+        "radiobutton_border_radius": 6, "radiobutton_padding": 0, "checkbox_size": 8, "checkbox_border": 2,
+        "checkbox_border_radius": 1, "checkbox_padding": 0, "settings_popup_width": 1000,
+        "settings_popup_height": 870, "settings_layout_vspace": 12, "settings_group_title_spacing": 10,
+        "infotext_licensebutton": 20, "donation_between_tworows": 17, "bottom_space": 15,
+        "info_version_margin": 20, "info_paragraph_margin": 20, "info_bottom_margin": 20,
+        "info_donation_spacing": 25, "thumbnail_image_size": 110, "thumbnail_item_height": 145,
+        "thumbnail_item_spacing": 1, "thumbnail_text_height": 20, "thumbnail_padding": 5,
+        "thumbnail_border_width": 1,
+        "thumbnail_panel_min_width": 145, "thumbnail_panel_max_width": 250, # 범위로 설정
         "compare_filename_padding": 5,
     }
 
-    _current_settings = NORMAL_SETTINGS # 초기값은 Normal로 설정
+    _current_settings = NORMAL_SETTINGS
+
+    @classmethod
+    def _calculate_thumbnail_metrics(cls, image_size):
+        """주어진 썸네일 이미지 크기를 기반으로 관련 UI 수치들을 계산합니다."""
+        metrics = {}
+        image_size = int(image_size)
+        metrics["thumbnail_image_size"] = image_size
+        
+        panel_min_width = int(image_size * 1.31)
+        metrics["thumbnail_panel_min_width"] = panel_min_width
+        metrics["thumbnail_panel_max_width"] = int(panel_min_width * 1.5)
+        
+        text_height = max(20, int(24 * (image_size / 150.0)))
+        metrics["thumbnail_text_height"] = text_height
+        metrics["thumbnail_item_height"] = panel_min_width + text_height + 10
+
+        scale_factor = image_size / 150.0
+        metrics["thumbnail_padding"] = max(5, int(6 * scale_factor))
+        metrics["thumbnail_item_spacing"] = max(1, int(2 * scale_factor))
+        metrics["thumbnail_border_width"] = max(1, int(2 * scale_factor))
+        
+        return metrics
+
+    @classmethod
+    def _get_system_dpi_scale(cls):
+        """Qt의 스케일링 비활성화와 무관하게 실제 시스템의 DPI 배율을 가져옵니다."""
+        if sys.platform == "win32":
+            try:
+                # Windows API를 직접 호출하여 DPI를 가져옵니다.
+                import ctypes
+                user32 = ctypes.windll.user32
+                # 화면 전체에 대한 Device Context를 가져옵니다.
+                hdc = user32.GetDC(0)
+                # LOGPIXELSX(88)는 수평 DPI, LOGPIXELSY(90)는 수직 DPI입니다.
+                # 보통 두 값은 같으므로 하나만 사용합니다.
+                current_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)
+                user32.ReleaseDC(0, hdc)
+                # Windows의 표준 DPI는 96입니다.
+                scale = current_dpi / 96.0
+                logging.info(f"Windows API로 감지된 DPI 배율: {scale:.2f} ({current_dpi} DPI)")
+                return scale
+            except Exception as e:
+                logging.error(f"Windows DPI 배율 감지 실패: {e}. 기본값 1.0 사용.")
+                return 1.0
+        else:
+            # Windows가 아닌 OS에서는 devicePixelRatio가 정상적으로 동작할 가능성이 높습니다.
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                scale = screen.devicePixelRatio()
+                logging.info(f"Qt API로 감지된 DPI 배율: {scale:.2f}")
+                return scale
+            return 1.0
+
+    @classmethod
+    def _update_settings_for_horizontal_resolution(cls, settings, width, height):
+        aspect_ratio = width / height if height > 0 else 16/9
+        if abs(aspect_ratio - 1.6) < 0.05:
+            if width == 2560:
+                settings["thumbnail_panel_min_width"], settings["control_panel_min_width"] = 197, 316
+            elif width == 1920:
+                settings["thumbnail_panel_min_width"], settings["control_panel_min_width"] = 145, 220
+            return
+        if width >= 3440:
+            thumbnail_metrics = cls._calculate_thumbnail_metrics(width * 0.058)
+            settings.update(thumbnail_metrics)
+            settings["control_panel_min_width"] = 380
 
     @classmethod
     def initialize(cls):
-        """애플리케이션 시작 시 호출되어 화면 해상도 확인 및 모드 설정"""
+        """애플리케이션 시작 시 UI 스케일을 최종 결정합니다."""
         try:
             screen = QGuiApplication.primaryScreen()
             if not screen:
-                logging.warning("Warning: Primary screen not found. Using default UI scale.")
                 cls._current_settings = cls.NORMAL_SETTINGS.copy()
                 return
 
-            screen_geometry = screen.geometry()
-            vertical_resolution = screen_geometry.height()
-            is_compact = vertical_resolution < 1201 
+            geo = screen.geometry()
+            width, height = geo.width(), geo.height()
 
-            if is_compact:
-                cls._current_settings = cls.COMPACT_SETTINGS.copy()
-                logging.info(f"세로 해상도: {vertical_resolution}px / Compact UI 모드 활성")
+            if height < 1201:
+                base_settings = cls.COMPACT_SETTINGS.copy()
             else:
-                cls._current_settings = cls.NORMAL_SETTINGS.copy()
-                logging.info(f"세로 해상도: {vertical_resolution}px / Normal UI 모드 활성")
+                base_settings = cls.NORMAL_SETTINGS.copy()
+            
+            # 폰트 크기 조정 로직 (해상도 및 DPI)
+            if width >= 3840 and base_settings["font_size"] < 11:
+                base_settings["font_size"] += 1; base_settings["zoom_grid_font_size"] += 1; base_settings["filename_font_size"] += 1
 
-            # # 화면 비율에 따른 group_box_spacing 조정
-            # if cls.is_16_10_or_less():
-            #     cls._current_settings["group_box_spacing"] = 15
-            #     logging.info("화면 비율 16:10 이하: group_box_spacing = 15")
-            # else:
-            #     cls._current_settings["group_box_spacing"] = 15
-            #     logging.info("화면 비율 16:10 초과: group_box_spacing = 40")
+            dpi_scale = cls._get_system_dpi_scale()
+            if dpi_scale >= 2.0 and base_settings["font_size"] > 9:
+                logging.info(f"시스템 DPI 배율 {dpi_scale*100:.0f}% 감지. 폰트 크기 -1 적용.")
+                base_settings["font_size"] -= 1; base_settings["zoom_grid_font_size"] -= 1; base_settings["filename_font_size"] -= 1
+            elif dpi_scale == 1.0 and base_settings["font_size"] < 11:
+                logging.info(f"시스템 DPI 배율 100% 감지. 폰트 크기 +1 적용.")
+                base_settings["font_size"] += 2; base_settings["zoom_grid_font_size"] += 2; base_settings["filename_font_size"] += 2
+
+            # 해상도 기반 너비 조정 (폰트 크기 조정 후)
+            cls._update_settings_for_horizontal_resolution(base_settings, width, height)
+            
+            cls._current_settings = base_settings
+            logging.info(f"UI 스케일 초기화 완료: 해상도={width}x{height}, 최종 폰트 크기={base_settings['font_size']}")
 
         except Exception as e:
-            logging.error(f"Error initializing UIScaleManager: {e}. Using default UI scale.")
+            logging.error(f"UIScaleManager 초기화 중 오류: {e}. 기본 UI 스케일을 사용합니다.")
             cls._current_settings = cls.NORMAL_SETTINGS.copy()
 
     @classmethod
     def is_compact_mode(cls):
-        """현재 컴팩트 모드 여부 반환"""
-        # _current_settings가 COMPACT_SETTINGS와 같은 객체인지 비교하여 확인
-        return cls._current_settings is cls.COMPACT_SETTINGS
+        return cls._current_settings["font_size"] < 10
 
     @classmethod
     def get(cls, key, default=None):
-        """현재 모드에 맞는 UI 크기 값 반환"""
-        # cls._current_settings에서 직접 값을 가져옴
         return cls._current_settings.get(key, default)
 
     @classmethod
     def get_margins(cls):
-        """현재 모드에 맞는 마진 튜플 반환"""
-        # 마진 값은 튜플이므로 직접 반환
         return cls._current_settings.get("control_panel_margins")
-    
-    @classmethod
-    def is_16_10_or_less(cls):
-        """
-        화면의 가로/세로 비율이 16:10(1.6)과 같거나 그보다 작은지 판별.
-        약간의 오차 허용 (1.6 이하 또는 1.6±0.05 이내면 True)
-        """
-        screen = QGuiApplication.primaryScreen()
-        if not screen:
-            return False
-        geometry = screen.geometry()
-        width = geometry.width()
-        height = geometry.height()
-        if height == 0:
-            return False
-        aspect_ratio = width / height
-        # 16:10(1.6)과 같거나 그보다 작으면 True, 1.6±0.05 이내도 허용
-        return aspect_ratio <= 1.6 or abs(aspect_ratio - 1.6) < 0.05
 
 class ThemeManager:
 
@@ -484,17 +446,17 @@ class ThemeManager:
 
     # 모든 테마 저장
     THEMES = {
-        "default": _UI_COLORS_DEFAULT, # 또는 ThemeManager._UI_COLORS_DEFAULT
-        "sony": _UI_COLORS_SONY,
-        "canon": _UI_COLORS_CANON,
-        "nikon": _UI_COLORS_NIKON,
-        "fujifilm": _UI_COLORS_FUJIFILM,
-        "panasonic": _UI_COLORS_PANASONIC,
-        "ricoh": _UI_COLORS_RICOH,
-        "leica": _UI_COLORS_LEICA,
-        "olympus": _UI_COLORS_OLYMPUS,
-        "pentax": _UI_COLORS_PENTAX,
-        "samsung": _UI_COLORS_SAMSUNG,
+        "default": _UI_COLORS_DEFAULT,
+        "SONY": _UI_COLORS_SONY,
+        "CANON": _UI_COLORS_CANON,
+        "NIKON": _UI_COLORS_NIKON,
+        "FUJIFILM": _UI_COLORS_FUJIFILM,
+        "PANASONIC": _UI_COLORS_PANASONIC,
+        "RICOH": _UI_COLORS_RICOH,
+        "LEICA": _UI_COLORS_LEICA,
+        "OLYMPUS": _UI_COLORS_OLYMPUS,
+        "PENTAX": _UI_COLORS_PENTAX,
+        "SAMSUNG": _UI_COLORS_SAMSUNG,
     }
     
     _current_theme = "default"  # 현재 테마
@@ -572,6 +534,32 @@ class ThemeManager:
                 padding: {UIScaleManager.get("button_padding")}px;
                 border-radius: 1px;
                 min-height: {UIScaleManager.get("button_min_height")}px;
+            }}
+            QPushButton:hover {{
+                background-color: {cls.get_color('accent_hover')};
+            }}
+            QPushButton:pressed {{
+                background-color: {cls.get_color('accent_pressed')};
+            }}
+            QPushButton:disabled {{
+                background-color: {cls.get_color('bg_disabled')};
+                color: {cls.get_color('text_disabled')};
+                opacity: 0.7;
+            }}
+        """
+
+    @classmethod
+    def generate_dynamic_height_button_style(cls):
+        """수직 패딩이 없고 수평 패딩만 있는 버튼 스타일을 생성합니다."""
+        horizontal_padding = UIScaleManager.get("button_padding")
+        return f"""
+            QPushButton {{
+                background-color: {cls.get_color('bg_secondary')};
+                color: {cls.get_color('text')};
+                border: none;
+                /* 수직 패딩은 0, 수평 패딩은 유지 */
+                padding: 0px {horizontal_padding}px;
+                border-radius: 1px;
             }}
             QPushButton:hover {{
                 background-color: {cls.get_color('accent_hover')};
@@ -1660,76 +1648,6 @@ class GridCellWidget(QWidget):
             logging.error(f"get_parent_app 오류: {e}")
             return None
 
-
-
-    # 그리드 파일명 상단 중앙
-    # def paintEvent(self, event):
-    #     painter = QPainter(self)
-    #     painter.setRenderHint(QPainter.Antialiasing, True)
-    #     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-
-    #     rect = self.rect() # 현재 위젯의 전체 영역
-
-    #     # 1. 배경색 설정 (기본 검정)
-    #     painter.fillRect(rect, QColor("black"))
-
-    #     # 2. 이미지 그리기 (비율 유지, 중앙 정렬)
-    #     if not self._pixmap.isNull():
-    #         # 위젯 크기에 맞춰 픽스맵 스케일링 (Qt.KeepAspectRatio)
-    #         scaled_pixmap = self._pixmap.scaled(rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-    #         # 중앙에 그리기 위한 위치 계산
-    #         x = (rect.width() - scaled_pixmap.width()) / 2
-    #         y = (rect.height() - scaled_pixmap.height()) / 2
-    #         painter.drawPixmap(int(x), int(y), scaled_pixmap)
-
-    #     # 3. 파일명 그리기 (show_filename이 True이고 filename이 있을 때)
-    #     if self._show_filename and self._filename:
-    #         # 텍스트 배경 (이미지 위에 반투명 검정)
-    #         # 파일명 길이에 따라 배경 너비 조절 가능 또는 셀 상단 전체에 고정 너비
-    #         font_metrics = QFontMetrics(painter.font())
-    #         text_width = font_metrics.horizontalAdvance(self._filename)
-    #         text_height = font_metrics.height()
-            
-    #         # 배경 사각형 위치 및 크기 (상단 중앙)
-    #         bg_rect_height = text_height + 4 # 상하 패딩
-    #         bg_rect_y = 1 # 테두리 바로 아래부터 시작하도록 수정 (테두리 두께 1px 가정)
-    #         # 배경 너비는 텍스트 너비에 맞추거나, 셀 너비에 맞출 수 있음
-    #         # 여기서는 텍스트 너비 + 좌우 패딩으로 설정
-    #         bg_rect_width = min(text_width + 10, rect.width() - 4) # 셀 너비 초과하지 않도록
-    #         bg_rect_x = (rect.width() - bg_rect_width) / 2
-            
-    #         text_bg_rect = QRect(int(bg_rect_x), bg_rect_y, int(bg_rect_width), bg_rect_height)
-    #         painter.fillRect(text_bg_rect, QColor(0, 0, 0, 150)) # 반투명 검정 (alpha 150)
-
-    #         # 텍스트 그리기 설정
-    #         painter.setPen(QColor("white"))
-    #         font = QFont("Arial", 10) # 파일명 폰트
-    #         painter.setFont(font)
-            
-    #         # 텍스트를 배경 사각형 중앙에 그리기
-    #         # QPainter.drawText()는 다양한 오버로드가 있음
-    #         # QRectF와 플래그를 사용하는 것이 정렬에 용이
-    #         text_rect = QRect(int(bg_rect_x + 2), bg_rect_y + 2, int(bg_rect_width - 4), text_height) # 패딩 고려
-    #         painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignVCenter, self._filename)
-
-
-    #     # 4. 테두리 그리기 (선택 상태에 따라 다름)
-    #     pen_color = QColor("white") if self._is_selected else QColor("#555555")
-    #     pen = QPen(pen_color)
-    #     pen.setWidth(1) # 테두리 두께
-    #     painter.setPen(pen)
-    #     painter.drawRect(rect.adjusted(0, 0, -1, -1)) # adjusted로 테두리가 위젯 안쪽에 그려지도록
-
-    #     painter.end()
-
-    # 마우스 이벤트 처리를 위해 기존 QLabel과 유사하게 이벤트 핸들러 추가 가능
-    # (PhotoSortApp의 on_grid_cell_clicked 등에서 사용하기 위해)
-    # 하지만 GridCellWidget 자체가 이벤트를 직접 처리하도록 하는 것이 더 일반적입니다.
-    # 여기서는 PhotoSortApp에서 처리하는 방식을 유지하기 위해 추가하지 않겠습니다.
-    # 대신, GridCellWidget에 인덱스나 경로 정보를 저장하고,
-    # PhotoSortApp에서 클릭된 GridCellWidget을 식별하는 방식이 필요합니다.
-
     # 그리드 파일명 상단 좌측
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1747,7 +1665,7 @@ class GridCellWidget(QWidget):
             painter.drawPixmap(int(x), int(y), scaled_pixmap)
 
         if self._show_filename and self._filename:
-            font = QFont("Arial", 10) # 파일명 폰트 먼저 설정
+            font = QFont("Arial", UIScaleManager.get("font_size", 10)) # 파일명 폰트 먼저 설정
             if self._is_selected:
                 font.setBold(True)  # 선택된 셀이면 볼드체 적용
             else:
@@ -3211,8 +3129,8 @@ class ThumbnailDelegate(QStyledItemDelegate):
         return pixmap
     
     def paint(self, painter, option, index):
-        """썸네일 아이템 렌더링 (중앙 정렬 보장)"""
-        painter.save()  # 페인터 상태 저장
+        """썸네일 아이템 렌더링 (테두리 보존 하이라이트)"""
+        painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
         
         # --- 기본 변수 설정 ---
@@ -3222,56 +3140,50 @@ class ThumbnailDelegate(QStyledItemDelegate):
         text_height = UIScaleManager.get("thumbnail_text_height")
         border_width = UIScaleManager.get("thumbnail_border_width")
         
-        # --- 1. 배경 그리기 ---
+        # --- 상태 확인 ---
         is_current = index.data(Qt.UserRole + 1)
         is_selected = option.state & QStyle.State_Selected
         
-        # 선택 상태에 따른 배경색 설정
+        # --- 1. 테두리 그리기 (모든 아이템에 동일한 테두리) ---
+        # 테두리 색상으로 전체 아이템 영역을 먼저 칠합니다.
+        border_color = QColor("#505050")
+        painter.fillRect(rect, border_color)
+
+        # --- 2. 배경 그리기 (테두리 안쪽으로) ---
+        # 배경을 칠할 영역을 테두리 두께만큼 안쪽으로 축소합니다.
+        # rect.adjusted(left, top, right, bottom) - right, bottom은 음수여야 축소됨
+        inner_bg_rect = rect.adjusted(border_width, border_width, -border_width, -border_width)
+
+        # 선택 상태에 따라 배경색 결정
         if is_current or is_selected:
-            bg_color = "#444444"  # 선택된 아이템은 배경색 변경
+            bg_color = QColor("#525252") # 선택 시 밝은 회색
         else:
-            bg_color = ThemeManager.get_color('bg_primary')
-            
-        painter.fillRect(rect, QColor(bg_color))
+            bg_color = QColor(ThemeManager.get_color('bg_primary'))   # 비선택 시 어두운 배경색
         
-        # painter.setRenderHint(QPainter.Antialiasing, False)
-        # --- 2. 테두리 그리기 (모든 아이템에 동일한 테두리) ---
-        border_color = "#474747"  # 고정 테두리 색상
-        painter.setPen(QPen(QColor(border_color), border_width))
-        painter.drawRect(rect.adjusted(1, 1, -1, -1))
+        # 축소된 영역에 배경색을 칠합니다.
+        painter.fillRect(inner_bg_rect, bg_color)
             
         # --- 3. 이미지 그리기 ---
         image_path = index.data(Qt.UserRole)
         if image_path:
             pixmap = index.data(Qt.DecorationRole)
-            
-            # 사용할 픽스맵 결정 (로딩 완료 시 썸네일, 아니면 플레이스홀더)
             target_pixmap = pixmap if pixmap and not pixmap.isNull() else self._placeholder_pixmap
             
-            # 종횡비를 유지하며 스케일링
             scaled_pixmap = target_pixmap.scaled(
                 image_size, image_size,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
             
-            # 중앙 정렬을 위한 좌표 계산
-            # 아이템의 전체 너비(rect.width())를 기준으로 계산해야 합니다.
             x_pos = rect.x() + (rect.width() - scaled_pixmap.width()) // 2
-            
-            # y 좌표도 중앙 정렬을 위해 계산
-            # 이미지 영역 높이 = 전체 높이 - 텍스트 영역 높이 - 패딩*3 (상단, 이미지-텍스트 사이, 하단)
             image_area_height = rect.height() - text_height - (padding * 3)
             y_pos = rect.y() + padding + (image_area_height - scaled_pixmap.height()) // 2
             
-            # 계산된 위치에 픽스맵 그리기
             painter.drawPixmap(x_pos, y_pos, scaled_pixmap)
 
         # --- 4. 파일명 텍스트 그리기 ---
         filename = index.data(Qt.DisplayRole)
         if filename:
-            # 텍스트 영역 계산 (이미지 바로 아래)
-            # y 좌표: 이미지 시작점(padding) + 이미지 높이(image_size) + 이미지와 텍스트 사이 간격(padding)
             text_rect = QRect(
                 rect.x() + padding,
                 rect.y() + padding + image_size + padding,
@@ -3280,7 +3192,7 @@ class ThumbnailDelegate(QStyledItemDelegate):
             )
             
             painter.setPen(QColor(ThemeManager.get_color('text')))
-            font = QFont()
+            font = QFont("Arial", UIScaleManager.get("font_size", 10))
             font.setPointSize(UIScaleManager.get("font_size"))
             painter.setFont(font)
             
@@ -3288,7 +3200,8 @@ class ThumbnailDelegate(QStyledItemDelegate):
             elided_text = metrics.elidedText(filename, Qt.ElideMiddle, text_rect.width())
             painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, elided_text)
 
-        painter.restore() # 페인터 상태 복원
+        painter.restore()
+
 
     
     def sizeHint(self, option, index):
@@ -3334,7 +3247,7 @@ class DraggableThumbnailView(QListView):
             drag.setPixmap(scaled_pixmap)
             drag.setHotSpot(QPoint(32, 32))
 
-        drag.exec_(Qt.CopyAction)
+        drag.exec(Qt.CopyAction)
         self.drag_start_position = None # 드래그 후 초기화
 
     def mouseReleaseEvent(self, event):
@@ -3353,7 +3266,6 @@ class ThumbnailPanel(QWidget):
     # 시그널 정의
     thumbnailClicked = Signal(int)           # 썸네일 클릭 시 인덱스 전달
     thumbnailDoubleClicked = Signal(int)     # 썸네일 더블클릭 시 인덱스 전달
-    selectionChanged = Signal(list)          # 다중 선택 변경 시 인덱스 리스트 전달
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -3383,7 +3295,7 @@ class ThumbnailPanel(QWidget):
         self.list_view.setDragEnabled(True)
         
         # 리스트 뷰 설정
-        self.list_view.setSelectionMode(QListView.ExtendedSelection)  # 다중 선택 허용
+        self.list_view.setSelectionMode(QListView.SingleSelection)
         self.list_view.setDragDropMode(QListView.DragOnly)           # 드래그 허용
         self.list_view.setDefaultDropAction(Qt.MoveAction)
         self.list_view.setVerticalScrollMode(QListView.ScrollPerPixel)
@@ -3407,10 +3319,6 @@ class ThumbnailPanel(QWidget):
                 border: none;
                 padding: 0px;
                 margin-bottom: {item_spacing}px;
-            }}
-            QListView::item:selected {{
-                background-color: {ThemeManager.get_color('accent')};
-                background-color: rgba(255, 255, 255, 30);
             }}
             QScrollBar:vertical {{
                 border: none;
@@ -3465,11 +3373,7 @@ class ThumbnailPanel(QWidget):
         # 리스트 뷰 시그널 연결
         self.list_view.clicked.connect(self.on_thumbnail_clicked)
         self.list_view.doubleClicked.connect(self.on_thumbnail_double_clicked)
-        
-        # 선택 변경 시그널
-        selection_model = self.list_view.selectionModel()
-        if selection_model:
-            selection_model.selectionChanged.connect(self.on_selection_changed)
+
         
         logging.info("ThumbnailPanel: 모든 시그널 연결 완료")
     
@@ -3522,13 +3426,6 @@ class ThumbnailPanel(QWidget):
             index = model_index.row()
             self.thumbnailDoubleClicked.emit(index)
     
-    def on_selection_changed(self, selected, deselected):
-        """선택 변경 시 호출"""
-        selection_model = self.list_view.selectionModel()
-        selected_indexes = selection_model.selectedIndexes()
-        selected_rows = [index.row() for index in selected_indexes]
-        self.selectionChanged.emit(selected_rows)
-    
     def get_selected_indexes(self):
         """현재 선택된 인덱스들 반환"""
         selection_model = self.list_view.selectionModel()
@@ -3542,7 +3439,6 @@ class ThumbnailPanel(QWidget):
     
     def update_ui_colors(self):
         """테마 변경 시 UI 색상 업데이트"""
-        
         self.list_view.setStyleSheet(f"""
             QListView {{
                 background-color: {ThemeManager.get_color('bg_primary')};
@@ -3631,8 +3527,8 @@ class FileListDialog(QDialog):
                 color: {ThemeManager.get_color('bg_primary')};
             }}
         """)
-        list_font = parent.default_font if parent and hasattr(parent, 'default_font') else QFont("Arial", 10)
-        list_font.setPointSize(9)
+        list_font = parent.default_font if parent and hasattr(parent, 'default_font') else QFont("Arial", UIScaleManager.get("font_size", 10))
+        list_font.setPointSize(UIScaleManager.get("font_size") -1)
         self.list_widget.setFont(list_font)
 
         # 파일 목록 채우기 (이전 코드 유지)
@@ -3662,7 +3558,6 @@ class FileListDialog(QDialog):
         self.preview_timer.setInterval(200)  # 200ms 지연
         self.preview_timer.timeout.connect(self.load_preview) # 타이머 만료 시 load_preview 호출
 
-        # --- 시그널 연결 변경: currentItemChanged -> on_selection_changed ---
         self.list_widget.currentItemChanged.connect(self.on_selection_changed)
         # --- 더블클릭 시그널 연결 추가 ---
         self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
@@ -4266,7 +4161,6 @@ class PhotoSortApp(QMainWindow):
         # 썸네일 패널 시그널 연결
         self.thumbnail_panel.thumbnailClicked.connect(self.on_thumbnail_clicked)
         self.thumbnail_panel.thumbnailDoubleClicked.connect(self.on_thumbnail_double_clicked)
-        self.thumbnail_panel.selectionChanged.connect(self.on_thumbnail_selection_changed)
         self.thumbnail_panel.model.thumbnailRequested.connect(self.request_thumbnail_load)
         
         # 1. 스크롤 가능한 컨트롤 패널을 위한 QScrollArea 생성
@@ -4290,7 +4184,7 @@ class PhotoSortApp(QMainWindow):
         # 4. QScrollArea(self.control_panel)에 콘텐츠 위젯을 설정
         self.control_panel.setWidget(scroll_content_widget)
 
-        # --- [수정] 이미지 뷰 영역: 분할 가능한 구조로 변경 ---
+        # --- 이미지 뷰 영역: 분할 가능한 구조로 변경 ---
         # 1. 전체 이미지 뷰를 담을 메인 패널 (기존 image_panel 역할)
         self.image_panel = QFrame()
         self.image_panel.setFrameShape(QFrame.NoFrame)
@@ -4429,76 +4323,83 @@ class PhotoSortApp(QMainWindow):
         self.control_layout.addStretch(1)
 
         # --- JPG 폴더 섹션 ---
-        self.load_button = QPushButton(LanguageManager.translate("이미지 불러오기")) # 버튼 먼저 추가
-        self.load_button.setStyleSheet(ThemeManager.generate_main_button_style())
-        self.load_button.clicked.connect(self.load_jpg_folder)
-        self.control_layout.addWidget(self.load_button) # 컨트롤 레이아웃에 직접 추가
-
         # JPG 폴더 경로/클리어 컨테이너
         jpg_folder_container = QWidget()
         jpg_folder_layout = QHBoxLayout(jpg_folder_container)
-        jpg_folder_layout.setContentsMargins(0, 0, 0, 0)  # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
+        jpg_folder_layout.setContentsMargins(0, 0, 0, 0)
         jpg_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # JPG 폴더 경로 표시 레이블 추가
-        folder_label_padding = UIScaleManager.get("folder_label_padding")
         self.folder_path_label = InfoFolderPathLabel(LanguageManager.translate("폴더 경로"))
-        self.folder_path_label.set_folder_index(-2) # JPG 폴더 인덱스: -2
+        self.folder_path_label.set_folder_index(-2)
         self.folder_path_label.doubleClicked.connect(self.open_folder_in_explorer)
         self.folder_path_label.folderDropped.connect(self._handle_canvas_folder_drop)
 
-        # JPG 폴더 클리어 버튼 (X) 추가
+        # JPG 폴더 클리어 버튼 (X) 추가 (레이블 높이에 맞춰짐)
         self.jpg_clear_button = QPushButton("✕")
         self.jpg_clear_button.setStyleSheet(ThemeManager.generate_action_button_style())
-        fm_label = QFontMetrics(self.folder_path_label.font()) # FolderPathLabel의 폰트 기준
-        label_line_height = fm_label.height()
-        label_fixed_height = (label_line_height * 2) + UIScaleManager.get("folder_label_padding")
+        # InfoFolderPathLabel은 내부적으로 이미 높이가 고정되었으므로, 그 값을 바로 사용합니다.
+        label_fixed_height = self.folder_path_label.height()
         self.jpg_clear_button.setFixedHeight(label_fixed_height)
         self.jpg_clear_button.setFixedWidth(UIScaleManager.get("delete_button_width"))
         self.jpg_clear_button.setEnabled(False)
         self.jpg_clear_button.clicked.connect(self.clear_jpg_folder)
 
         # JPG 폴더 레이아웃에 레이블과 버튼 추가
-        jpg_folder_layout.addWidget(self.folder_path_label, 1) # 레이블 확장
+        jpg_folder_layout.addWidget(self.folder_path_label, 1)
         jpg_folder_layout.addWidget(self.jpg_clear_button)
-        self.control_layout.addWidget(jpg_folder_container) # 메인 레이아웃에 컨테이너 추가
+        
+        self.load_button = QPushButton(LanguageManager.translate("이미지 불러오기"))
+        self.load_button.setStyleSheet(ThemeManager.generate_main_button_style())
+        
+        # 레이블 높이의 0.x배로 버튼 높이를 고정합니다.
+        button_height = int(self.folder_path_label.height() * 0.72)
+        self.load_button.setFixedHeight(button_height)
+        
+        self.load_button.clicked.connect(self.load_jpg_folder)
+        
+        self.control_layout.addWidget(self.load_button)
+        self.control_layout.addWidget(jpg_folder_container)
 
         self.control_layout.addSpacing(UIScaleManager.get("JPG_RAW_spacing", 15))
 
         # --- RAW 폴더 섹션 ---
-        self.match_raw_button = QPushButton(LanguageManager.translate("JPG - RAW 연결")) # 버튼 먼저 추가
-        self.match_raw_button.setStyleSheet(ThemeManager.generate_main_button_style())
-        self.match_raw_button.clicked.connect(self.on_match_raw_button_clicked)
-        self.control_layout.addWidget(self.match_raw_button) # 컨트롤 레이아웃에 직접 추가
-
         # RAW 폴더 경로/클리어 컨테이너
         raw_folder_container = QWidget()
         raw_folder_layout = QHBoxLayout(raw_folder_container)
-        raw_folder_layout.setContentsMargins(0, 0, 0, 0) # 상하 여백 제거 (0,3,0,3)->(0,0,0,0)
+        raw_folder_layout.setContentsMargins(0, 0, 0, 0)
         raw_folder_layout.setSpacing(UIScaleManager.get("folder_container_spacing", 5))
 
         # RAW 폴더 경로 표시 레이블 추가
-        folder_label_padding = UIScaleManager.get("folder_label_padding")
         self.raw_folder_path_label = InfoFolderPathLabel(LanguageManager.translate("폴더 경로"))
-        self.raw_folder_path_label.set_folder_index(-1) # RAW 폴더 인덱스: -1
+        self.raw_folder_path_label.set_folder_index(-1)
         self.raw_folder_path_label.doubleClicked.connect(self.open_raw_folder_in_explorer)
         self.raw_folder_path_label.folderDropped.connect(lambda path: self._handle_raw_folder_drop(path))
 
         # RAW 폴더 클리어 버튼 (X) 추가
         self.raw_clear_button = QPushButton("✕")
         self.raw_clear_button.setStyleSheet(ThemeManager.generate_action_button_style())
-        fm_label = QFontMetrics(self.raw_folder_path_label.font()) # raw 폴더 레이블 폰트 기준
-        label_line_height = fm_label.height()
-        label_fixed_height = (label_line_height * 2) + UIScaleManager.get("folder_label_padding")
-        self.raw_clear_button.setFixedHeight(label_fixed_height)
+        raw_label_fixed_height = self.raw_folder_path_label.height()
+        self.raw_clear_button.setFixedHeight(raw_label_fixed_height)
         self.raw_clear_button.setFixedWidth(UIScaleManager.get("delete_button_width"))
-        self.raw_clear_button.setEnabled(False) # 초기 비활성화
-        self.raw_clear_button.clicked.connect(self.clear_raw_folder) # 시그널 연결
+        self.raw_clear_button.setEnabled(False)
+        self.raw_clear_button.clicked.connect(self.clear_raw_folder)
 
         # RAW 폴더 레이아웃에 레이블과 버튼 추가
-        raw_folder_layout.addWidget(self.raw_folder_path_label, 1) # 레이블 확장
+        raw_folder_layout.addWidget(self.raw_folder_path_label, 1)
         raw_folder_layout.addWidget(self.raw_clear_button)
-        self.control_layout.addWidget(raw_folder_container) # 메인 레이아웃에 컨테이너 추가
+        
+        self.match_raw_button = QPushButton(LanguageManager.translate("JPG - RAW 연결"))
+        self.match_raw_button.setStyleSheet(ThemeManager.generate_main_button_style())
+        
+        # raw_folder_path_label 높이의 0.x배로 버튼 높이를 고정합니다.
+        match_button_height = int(self.raw_folder_path_label.height() * 0.72)
+        self.match_raw_button.setFixedHeight(match_button_height)
+        
+        self.match_raw_button.clicked.connect(self.on_match_raw_button_clicked)
+        
+        self.control_layout.addWidget(self.match_raw_button)
+        self.control_layout.addWidget(raw_folder_container)
 
         # RAW 이동 토글 버튼을 위한 컨테이너 위젯 및 레이아웃
         self.toggle_container = QWidget()
@@ -4870,6 +4771,8 @@ class PhotoSortApp(QMainWindow):
         final_index_to_show = self.current_image_index if self.grid_mode == "Off" else self.grid_page_start_index + self.current_grid_index
         if final_index_to_show >= 0:
             self.thumbnail_panel.set_current_index(final_index_to_show)
+
+        self.update_thumbnail_panel_style()
         
         if not self._is_silent_load:
             self.save_state()
@@ -5225,7 +5128,7 @@ class PhotoSortApp(QMainWindow):
                 
             context_menu.addAction(action)
 
-        context_menu.exec_(self.image_container_B.mapToGlobal(pos))
+        context_menu.exec(self.image_container_B.mapToGlobal(pos))
 
     def _sync_viewports(self):
             """A와 B 캔버스의 스크롤 위치 및 이미지 위치를 동기화합니다."""
@@ -5530,12 +5433,6 @@ class PhotoSortApp(QMainWindow):
     def on_thumbnail_double_clicked(self, index):
         """썸네일 더블클릭 시 처리 (단일 클릭과 동일하게 처리)"""
         self.on_thumbnail_clicked(index)
-
-    def on_thumbnail_selection_changed(self, selected_indices):
-        """썸네일 다중 선택 변경 시 처리"""
-        if selected_indices:
-            # 첫 번째 선택된 이미지로 이동
-            self.on_thumbnail_clicked(selected_indices[0])
 
     def toggle_thumbnail_panel(self):
         """썸네일 패널 표시/숨김 토글 (Grid Off 모드에서만)"""
@@ -6885,7 +6782,7 @@ class PhotoSortApp(QMainWindow):
         self.session_management_popup.update_all_button_states() # 팝업 표시 직전에 버튼 상태 강제 업데이트
 
         
-        # exec_()를 사용하여 모달로 띄우면 "설정 및 정보" 팝업은 비활성화됨
+        # exec()를 사용하여 모달로 띄우면 "설정 및 정보" 팝업은 비활성화됨
         # show()를 사용하여 모달리스로 띄우면 두 팝업이 동시에 상호작용 가능할 수 있으나,
         # 이 경우 "설정 및 정보" 팝업이 닫힐 때 함께 닫히도록 처리하거나,
         # "세션 관리" 팝업이 항상 위에 오도록 setWindowFlags(Qt.WindowStaysOnTopHint) 설정 필요.
@@ -6901,7 +6798,7 @@ class PhotoSortApp(QMainWindow):
 
         # 가장 간단한 접근: "세션 관리" 팝업을 "설정 및 정보" 팝업에 대해 모달로 띄운다.
         # 이렇게 하면 "설정 및 정보"는 "세션 관리"가 닫힐 때까지 비활성화됨.
-        self.session_management_popup.exec_() # exec_()는 블로킹 호출
+        self.session_management_popup.exec() # exec()는 블로킹 호출
 
 
 
@@ -7242,7 +7139,7 @@ class PhotoSortApp(QMainWindow):
         self.update_all_settings_controls_text()
         self.update_settings_labels_texts(self.settings_popup) # 팝업 내부 라벨도 업데이트
 
-        result = self.settings_popup.exec_()
+        result = self.settings_popup.exec()
         
         if update_first_run_popup_texts in LanguageManager._language_change_callbacks:
             LanguageManager._language_change_callbacks.remove(update_first_run_popup_texts)
@@ -7543,9 +7440,14 @@ class PhotoSortApp(QMainWindow):
         # --- 테마 설정 ---
         self.theme_combo = QComboBox()
         for theme_name in ThemeManager.get_available_themes():
-            self.theme_combo.addItem(theme_name.capitalize())
+            if theme_name.lower() == "default":
+                display_text = "Default"
+            else:
+                display_text = theme_name.upper()
+            self.theme_combo.addItem(display_text, userData=theme_name)
+            
         self.theme_combo.setStyleSheet(self.generate_combobox_style())
-        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        self.theme_combo.currentIndexChanged.connect(self.on_theme_changed)
 
         # --- 컨트롤 패널 위치 설정 ---
         self.panel_position_group = QButtonGroup(self)
@@ -7746,7 +7648,7 @@ class PhotoSortApp(QMainWindow):
 
     def setup_settings_ui(self, groups_to_build=None, is_first_run=False):
         """
-        [수정] 설정 UI를 단일 그리드 레이아웃으로 구성하고 컨테이너 위젯을 반환합니다.
+        설정 UI를 단일 그리드 레이아웃으로 구성하고 컨테이너 위젯을 반환합니다.
         """
         # 메인 컨테이너와 단일 그리드 레이아웃 생성
         main_container = QWidget()
@@ -7884,7 +7786,7 @@ class PhotoSortApp(QMainWindow):
 
         # 나머지 항목들은 기존 _create_setting_row (AlignVCenter)를 사용합니다.
         self._create_setting_row(grid_layout, current_row, "분류 폴더 개수", self.folder_count_combo); current_row += 1
-        self._create_setting_row(grid_layout, current_row, "뷰포트 이동 속도", self.viewport_speed_combo); current_row += 1
+        self._create_setting_row(grid_layout, current_row, "뷰포트 이동 속도 ⓘ", self.viewport_speed_combo); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 휠 동작", self._create_mouse_wheel_radios()); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 휠 민감도", self.mouse_wheel_sensitivity_combo); current_row += 1
         self._create_setting_row(grid_layout, current_row, "마우스 패닝 감도", self.mouse_pan_sensitivity_combo); current_row += 1
@@ -7998,7 +7900,7 @@ class PhotoSortApp(QMainWindow):
         self.show_themed_message_box(QMessageBox.Information, title, message)
 
     def _create_setting_row(self, grid_layout, row_index, label_key, control_widget):
-        """[수정] 설정 항목 한 줄(라벨 + 컨트롤)을 그리드 레이아웃에 추가합니다."""
+        """설정 항목 한 줄(라벨 + 컨트롤)을 그리드 레이아웃에 추가합니다."""
         label_text = LanguageManager.translate(label_key)
         label = QLabel(label_text)
         # [변경] 라벨 내부 텍스트도 수직 중앙 정렬로 변경
@@ -8012,11 +7914,14 @@ class PhotoSortApp(QMainWindow):
             tooltip_text = LanguageManager.translate(tooltip_key)
             label.setToolTip(tooltip_text)
             label.setCursor(Qt.WhatsThisCursor)
+        elif label_key == "뷰포트 이동 속도 ⓘ":
+            tooltip_key = "사진 확대 중 Shift + WASD 또는 방향키로 뷰포트(확대 부분)를 이동할 때의 속도입니다."
+            tooltip_text = LanguageManager.translate(tooltip_key)
+            label.setToolTip(tooltip_text)
+            label.setCursor(Qt.WhatsThisCursor)
 
-        # [변경] 그리드 셀 내 위젯 정렬을 AlignTop에서 AlignVCenter로 변경
         grid_layout.addWidget(label, row_index, 0, Qt.AlignVCenter | Qt.AlignLeft)
         if control_widget:
-            # [변경] 컨트롤 위젯에도 AlignVCenter를 적용하여 수직 정렬을 맞춥니다.
             grid_layout.addWidget(control_widget, row_index, 1, Qt.AlignVCenter)
 
     def _create_language_radios(self):
@@ -8121,13 +8026,16 @@ class PhotoSortApp(QMainWindow):
             self.wheel_reset_timer.stop() # 타이머도 중지
             logging.info(f"마우스 휠 민감도 변경됨: {self.mouse_wheel_sensitivity}")
 
-    def on_theme_changed(self, theme_name):
-        """테마 변경 시 호출되는 함수"""
-        # 소문자로 변환 (ThemeManager에서는 소문자 키 사용)
-        theme_name = theme_name.lower()
-        ThemeManager.set_theme(theme_name)
-        # 모든 UI가 update_ui_colors()를 통해 자동으로 업데이트됨
-
+    def on_theme_changed(self, index):
+        """테마 변경 시 호출되는 함수 (인덱스 기반)"""
+        if index < 0:
+            return
+            
+        theme_key = self.theme_combo.itemData(index)
+        if theme_key:
+            # 현재 테마와 다를 경우에만 변경 (무한 루프 방지)
+            if ThemeManager.get_current_theme_name() != theme_key:
+                ThemeManager.set_theme(theme_key)
 
     def update_scrollbar_style(self):
         """컨트롤 패널의 스크롤바 스타일을 현재 테마에 맞게 업데이트합니다."""
@@ -8167,10 +8075,11 @@ class PhotoSortApp(QMainWindow):
     def update_ui_colors(self):
         """테마 변경 시 모든 UI 요소의 색상을 업데이트"""
         # 모든 UI 요소의 스타일시트를 다시 설정
-        self.update_button_styles()
+        self.update_button_styles() # 여기서 수정된 함수가 호출됨
         self.update_label_styles()
         self.update_folder_styles()
         self.update_scrollbar_style()
+        self.update_thumbnail_panel_style()
         
         # 설정 버튼 스타일 업데이트
         self.settings_button.setStyleSheet(f"""
@@ -8197,28 +8106,41 @@ class PhotoSortApp(QMainWindow):
         """버튼 스타일을 현재 테마에 맞게 업데이트"""
         # 기본 버튼 스타일
         button_style = ThemeManager.generate_main_button_style()
+        # 동적 높이 버튼을 위한 새 스타일
+        dynamic_button_style = ThemeManager.generate_dynamic_height_button_style()
         # 삭제 버튼 스타일
         delete_button_style = ThemeManager.generate_action_button_style()
         # 라디오 버튼 스타일
         radio_style = ThemeManager.generate_radio_button_style()
 
-        # 메인 버튼들 스타일 적용
-        if hasattr(self, 'load_button'):
-            self.load_button.setStyleSheet(button_style)
-        if hasattr(self, 'match_raw_button'):
-            self.match_raw_button.setStyleSheet(button_style)
+        if hasattr(self, 'load_button') and hasattr(self, 'folder_path_label'):
+            # 1. 수직 패딩이 없는 스타일 적용
+            self.load_button.setStyleSheet(dynamic_button_style)
+            # 2. 전체 높이를 강제 설정 (이제 패딩과 충돌하지 않음)
+            button_height = int(self.folder_path_label.height() * 0.72) # 레이블 높이의 0.x배로 버튼 높이를 고정
+            self.load_button.setFixedHeight(button_height)
+
+        if hasattr(self, 'match_raw_button') and hasattr(self, 'raw_folder_path_label'):
+            # 1. 수직 패딩이 없는 스타일 적용
+            self.match_raw_button.setStyleSheet(dynamic_button_style)
+            # 2. 전체 높이를 강제 설정
+            button_height = int(self.raw_folder_path_label.height() * 0.72) # 레이블 높이의 0.x배로 버튼 높이를 고정
+            self.match_raw_button.setFixedHeight(button_height)
+            
         # 삭제 버튼 스타일 적용
         if hasattr(self, 'jpg_clear_button'):
             self.jpg_clear_button.setStyleSheet(delete_button_style)
         if hasattr(self, 'raw_clear_button'):
             self.raw_clear_button.setStyleSheet(delete_button_style)
-        # 폴더 버튼과 삭제 버튼 스타일 적용
+            
+        # 폴더 버튼과 삭제 버튼 스타일 적용 (이 버튼들은 고정 높이가 아니므로 기존 스타일 사용)
         if hasattr(self, 'folder_buttons'):
             for button in self.folder_buttons:
                 button.setStyleSheet(button_style)
-        if hasattr(self, 'folder_action_buttons'): # folder_delete_buttons -> folder_action_buttons
+        if hasattr(self, 'folder_action_buttons'):
             for button in self.folder_action_buttons:
                 button.setStyleSheet(delete_button_style)
+                
         # 줌 라디오 버튼 스타일 적용
         if hasattr(self, 'zoom_group'):
             for button in self.zoom_group.buttons():
@@ -8335,11 +8257,17 @@ class PhotoSortApp(QMainWindow):
             self._create_settings_popup()
 
         # 팝업을 보여주기 전에 현재 상태를 UI 컨트롤에 반영
-        # (예: 테마 콤보박스)
         current_theme_name = ThemeManager.get_current_theme_name()
-        index = self.theme_combo.findText(current_theme_name.capitalize(), Qt.MatchFixedString)
+        
+        # [BUG FIX] findText 대신 findData를 사용하여 정확한 아이템을 찾음
+        index = self.theme_combo.findData(current_theme_name)
+        
         if index >= 0:
+            # setCurrentIndex가 on_theme_changed를 호출할 수 있으므로,
+            # 시그널을 잠시 막아 불필요한 재실행을 방지합니다.
+            self.theme_combo.blockSignals(True)
             self.theme_combo.setCurrentIndex(index)
+            self.theme_combo.blockSignals(False)
         
         # 현재 언어 설정 반영
         current_lang = LanguageManager.get_current_language()
@@ -8352,7 +8280,7 @@ class PhotoSortApp(QMainWindow):
         self.update_settings_labels_texts(self.settings_popup)
 
         apply_dark_title_bar(self.settings_popup)
-        self.settings_popup.exec_()
+        self.settings_popup.exec()
 
 
     def _build_info_section(self):
@@ -8525,7 +8453,7 @@ class PhotoSortApp(QMainWindow):
         button_layout.addStretch(1)
         layout.addLayout(button_layout)
 
-        self.shortcuts_info_popup.exec_()
+        self.shortcuts_info_popup.exec()
 
 
 
@@ -8704,7 +8632,7 @@ class PhotoSortApp(QMainWindow):
         main_layout.addWidget(button_container)
         
         # 팝업 표시
-        licenses_popup.exec_()
+        licenses_popup.exec()
 
     def generate_combobox_style(self):
         """현재 테마에 맞는 콤보박스 스타일 생성"""
@@ -8724,6 +8652,14 @@ class PhotoSortApp(QMainWindow):
                 color: {ThemeManager.get_color('text')};
                 selection-background-color: #505050;
                 selection-color: {ThemeManager.get_color('text')};
+                border: 1px solid {ThemeManager.get_color('border')};
+                padding: 0px; /* 메뉴 자체의 내부 여백 */
+            }}
+            /* [핵심 수정] 드롭다운 메뉴의 각 항목(item)에 대한 스타일 */
+            QComboBox QAbstractItemView::item {{
+                /* padding-top과 padding-bottom으로 상하 간격을 조절합니다. */
+                padding: 6px 10px; /* 8px 상하, 10px 좌우 여백 */
+                min-height: 25px; /* 최소 높이를 지정하여 너무 좁아지지 않게 함 (선택 사항) */
             }}
         """
 
@@ -8772,53 +8708,40 @@ class PhotoSortApp(QMainWindow):
         """)
     
     def adjust_layout(self):
-        """(비율 기반) 이미지 영역 3:2 비율 유지 및 좌우 패널 크기 동적 조절 (최대/최소 너비 적용)"""
+        """
+        UIScaleManager가 제공하는 min/max 너비 범위 내에서 
+        스플리터의 초기 레이아웃을 설정합니다.
+        """
         window_width = self.width()
-        window_height = self.height()
 
-        # 1. 패널들의 최소/최대 너비와 비율 정의
+        # 1. UIScaleManager로부터 이상적인(min) 너비와 최대(max) 너비를 가져옵니다.
         control_min_width = UIScaleManager.get("control_panel_min_width")
         control_max_width = UIScaleManager.get("control_panel_max_width")
         thumbnail_min_width = UIScaleManager.get("thumbnail_panel_min_width")
         thumbnail_max_width = UIScaleManager.get("thumbnail_panel_max_width")
-        control_ratio = 2
-        thumbnail_ratio = 1
-
-        # 2. 캔버스 크기 우선 결정
-        side_panels_min_width = control_min_width + thumbnail_min_width
-        available_for_canvas_width = window_width - side_panels_min_width
-        canvas_ideal_width = window_height * 1.5
-        canvas_width = max(100, min(canvas_ideal_width, available_for_canvas_width))
-
-        # 3. 남은 공간을 컨트롤/썸네일 패널에 비율대로 배분
-        remaining_width = window_width - canvas_width
         
-        total_ratio = control_ratio + thumbnail_ratio
-        if total_ratio > 0:
-            calculated_control_width = remaining_width * (control_ratio / total_ratio)
-            calculated_thumbnail_width = remaining_width * (thumbnail_ratio / total_ratio)
-        else:
-            calculated_control_width = remaining_width
-            calculated_thumbnail_width = 0
+        # 2. 패널 위젯에 min/max 너비 제약을 설정합니다.
+        self.control_panel.setMinimumWidth(control_min_width)
+        self.control_panel.setMaximumWidth(control_max_width)
+        self.thumbnail_panel.setMinimumWidth(thumbnail_min_width)
+        self.thumbnail_panel.setMaximumWidth(thumbnail_max_width)
 
-        # 4. 계산된 너비를 min/max 범위 내로 제한(clamp)
-        final_control_width = max(control_min_width, min(control_max_width, calculated_control_width))
-        final_thumbnail_width = max(thumbnail_min_width, min(thumbnail_max_width, calculated_thumbnail_width))
+        # 3. 스플리터의 '초기' 크기를 min_width 기준으로 설정합니다.
+        #    사용자는 이 값을 기준으로 너비를 조절할 수 있습니다.
+        initial_control_width = control_min_width
+        initial_thumbnail_width = thumbnail_min_width
+        canvas_width = window_width - initial_control_width - initial_thumbnail_width
 
-        # 5. 제한된 패널 너비를 기준으로 캔버스 너비를 최종 조정
-        final_canvas_width = window_width - final_control_width - final_thumbnail_width
+        # 4. 캔버스 너비가 너무 작아지는 것을 방지합니다.
+        if canvas_width < 100:
+            canvas_width = 100
         
-        # 6. 스플리터에 최종 크기 적용 (항상 3개 패널)
-        sizes = [int(final_control_width), int(final_canvas_width), int(final_thumbnail_width)]
-            
-        # 컨트롤 패널 위치에 따라 순서 조정
+        # 5. 스플리터에 초기 크기 목록을 적용합니다.
         control_on_right = getattr(self, 'control_panel_on_right', False)
         if control_on_right:
-            # 오른쪽 배치: [썸네일], [캔버스], [컨트롤]
-            sizes = [int(final_thumbnail_width), int(final_canvas_width), int(final_control_width)]
+            sizes = [int(initial_thumbnail_width), int(canvas_width), int(initial_control_width)]
         else:
-            # 왼쪽 배치: [컨트롤], [캔버스], [썸네일]
-            sizes = [int(final_control_width), int(final_canvas_width), int(final_thumbnail_width)]
+            sizes = [int(initial_control_width), int(canvas_width), int(initial_thumbnail_width)]
 
         if self.splitter.count() == len(sizes):
             self.splitter.setSizes(sizes)
@@ -9285,7 +9208,7 @@ class PhotoSortApp(QMainWindow):
             # 이미지가 로드된 상태에서 우클릭 시 컨텍스트 메뉴 표시
             context_menu = self.create_context_menu(event.position().toPoint())
             if context_menu:
-                context_menu.exec_(self.image_container.mapToGlobal(event.position().toPoint()))
+                context_menu.exec(self.image_container.mapToGlobal(event.position().toPoint()))
             return
         
         # === 빈 캔버스 클릭 시 폴더 선택 기능 ===
@@ -9409,7 +9332,7 @@ class PhotoSortApp(QMainWindow):
             logging.info(f"이미지 드래그 시작: {drag_image_path.name} (from: {mime_text_payload})")
             
             # 4. 드래그 실행
-            drag.exec_(Qt.MoveAction)
+            drag.exec(Qt.MoveAction)
             
         except Exception as e:
             logging.error(f"이미지 드래그 시작 오류: {e}")
@@ -10080,7 +10003,7 @@ class PhotoSortApp(QMainWindow):
         # 제목 표시줄 다크 테마 적용 (Windows용)
         apply_dark_title_bar(message_box)
 
-        return message_box.exec_() # 실행하고 결과 반환
+        return message_box.exec() # 실행하고 결과 반환
     
     def open_raw_folder_in_explorer(self, folder_path):
         """RAW 폴더 경로를 윈도우 탐색기에서 열기"""
@@ -10286,7 +10209,6 @@ class PhotoSortApp(QMainWindow):
         main_layout.setSpacing(UIScaleManager.get("category_folder_vertical_spacing"))
         
         # UIScaleManager 값 미리 가져오기
-        button_padding = UIScaleManager.get("button_padding")
         delete_button_width = UIScaleManager.get("delete_button_width")
         folder_container_spacing = UIScaleManager.get("folder_container_spacing", 5)
 
@@ -10317,7 +10239,7 @@ class PhotoSortApp(QMainWindow):
 
             action_button.clicked.connect(lambda checked=False, idx=i: self.on_folder_action_button_clicked(idx))
             
-            # 높이 동기화
+            # 버튼 높이 밑 너비 동기화
             fm_label = QFontMetrics(folder_path_label.font())
             label_line_height = fm_label.height()
             padding = UIScaleManager.get("sort_folder_label_padding")
@@ -10792,7 +10714,24 @@ class PhotoSortApp(QMainWindow):
         self.zoom_spin.setValue(int(self.zoom_spin_value * 100)) # 2.0 -> 200
         self.zoom_spin.setSuffix("%")
         self.zoom_spin.setSingleStep(10)
-        self.zoom_spin.setFixedWidth(UIScaleManager.get("zoom_spinbox_width"))
+
+        # 폰트 크기를 기반으로 너비를 동적으로 계산
+        # 1. QSpinBox의 폰트 메트릭스 가져오기
+        font_metrics = self.zoom_spin.fontMetrics()
+        
+        # 2. 표시될 가장 긴 텍스트("500%")의 너비 계산
+        #    최대값(500)과 접미사("%")를 합친 문자열로 계산합니다.
+        max_text = f"{self.zoom_spin.maximum()}{self.zoom_spin.suffix()}"
+        text_width = font_metrics.horizontalAdvance(max_text)
+        
+        # 3. 화살표 버튼, 내부 여백(padding), 테두리 등을 위한 추가 공간 확보
+        #    이 값은 OS나 스타일에 따라 다르므로 약간의 여유를 줍니다.
+        extra_space = 40
+        
+        # 4. 최종 너비를 계산하여 고정 너비로 설정
+        calculated_width = text_width + extra_space
+        self.zoom_spin.setFixedWidth(calculated_width)
+
         self.zoom_spin.lineEdit().setReadOnly(True)
         self.zoom_spin.setContextMenuPolicy(Qt.NoContextMenu)
         self.zoom_spin.valueChanged.connect(self.on_zoom_spinbox_value_changed)
@@ -10880,7 +10819,6 @@ class PhotoSortApp(QMainWindow):
         if old_zoom_mode == new_zoom_mode:
             return
 
-        # [수정] Fit이 아닌 모드로 변경될 때, 그 모드를 last_active_zoom_mode로 저장
         if new_zoom_mode != "Fit":
             self.last_active_zoom_mode = new_zoom_mode
             logging.debug(f"Last active zoom mode updated to: {self.last_active_zoom_mode}")
@@ -11366,6 +11304,27 @@ class PhotoSortApp(QMainWindow):
 
         self.grid_size_combo = QComboBox()
         self.grid_size_combo.addItems(["2 x 2", "3 x 3", "4 x 4"])
+
+        # 1. QComboBox의 폰트 메트릭스 가져오기
+        font_metrics = self.grid_size_combo.fontMetrics()
+        
+        # 2. 표시될 가장 긴 텍스트("4 x 4")의 너비 계산
+        max_text = ""
+        max_width = 0
+        for i in range(self.grid_size_combo.count()):
+            text = self.grid_size_combo.itemText(i)
+            width = font_metrics.horizontalAdvance(text)
+            if width > max_width:
+                max_width = width
+                max_text = text
+        
+        # 3. 드롭다운 화살표, 내부 여백(padding) 등을 위한 추가 공간 확보
+        extra_space = 30 # QComboBox는 화살표 때문에 SpinBox와 유사한 추가 공간이 필요
+        
+        # 4. 최종 너비를 계산하여 고정 너비로 설정
+        calculated_width = max_width + extra_space
+        self.grid_size_combo.setFixedWidth(calculated_width)
+
         self.grid_size_combo.setStyleSheet(f"""
             QComboBox {{
                 background-color: {ThemeManager.get_color('bg_primary')};
@@ -11700,7 +11659,7 @@ class PhotoSortApp(QMainWindow):
                     # 컨텍스트 메뉴 표시
                     context_menu = self.create_context_menu(event.position().toPoint())
                     if context_menu:
-                        context_menu.exec_(widget.mapToGlobal(event.position().toPoint()))
+                        context_menu.exec(widget.mapToGlobal(event.position().toPoint()))
                 return
             
             # === Fit 모드에서 드래그 앤 드롭 시작 준비 ===
@@ -12527,9 +12486,6 @@ class PhotoSortApp(QMainWindow):
         self.update_all_folder_labels_state()
         self.update_file_info_display(None)
 
-        # [수정] display_current_image() 대신 update_grid_view()를 호출합니다.
-        # self.grid_mode가 "Off"로 설정되었으므로, 이 함수는 그리드를 정리하고
-        # 빈 단일 이미지 뷰로 전환하는 작업을 올바르게 수행합니다.
         self.update_grid_view()
 
         if hasattr(self, 'grid_off_radio'):
@@ -13696,6 +13652,7 @@ class PhotoSortApp(QMainWindow):
             QTimer.singleShot(0, self._apply_panel_position)
             self.setFocus()
             self.update_all_settings_controls_text()
+            self.update_thumbnail_panel_style()
             self._apply_panel_position()
             return True
 
@@ -14940,7 +14897,7 @@ class PhotoSortApp(QMainWindow):
             "날짜_형식_label": "날짜 형식",
             "불러올_이미지_형식_label": "불러올 이미지 형식",
             "분류_폴더_개수_label": "분류 폴더 개수",
-            "뷰포트_이동_속도_label": "뷰포트 이동 속도",
+            "뷰포트_이동_속도_ⓘ_label": "뷰포트 이동 속도 ⓘ",
             "마우스_휠_동작_label": "마우스 휠 동작",
             "마우스_휠_민감도_label": "마우스 휠 민감도",
             "마우스_패닝_감도_label": "마우스 패닝 감도",
@@ -14952,6 +14909,10 @@ class PhotoSortApp(QMainWindow):
                 label.setText(LanguageManager.translate(translation_key))
                 if translation_key == "성능 설정 ⓘ":
                     tooltip_key = "프로그램을 처음 실행하면 시스템 사양에 맞춰 자동으로 설정됩니다.\n높은 옵션일수록 더 많은 메모리와 CPU 자원을 사용함으로써 더 많은 사진을 백그라운드에서 미리 로드하여 작업 속도를 높입니다.\n프로그램이 시스템을 느리게 하거나 메모리를 너무 많이 차지하는 경우 낮은 옵션으로 변경해주세요.\n특히 고용량 사진을 다루는 경우 높은 옵션은 시스템에 큰 부하를 줄 수 있습니다."
+                    tooltip_text = LanguageManager.translate(tooltip_key)
+                    label.setToolTip(tooltip_text)
+                elif translation_key == "뷰포트 이동 속도 ⓘ":
+                    tooltip_key = "사진 확대 중 Shift + WASD 또는 방향키로 뷰포트(확대 부분)를 이동할 때의 속도입니다."
                     tooltip_text = LanguageManager.translate(tooltip_key)
                     label.setToolTip(tooltip_text)
         # --- 라디오 버튼 텍스트 업데이트 (이전과 동일) ---
@@ -15071,8 +15032,10 @@ def main():
     
     # 로깅 정보 출력
     print(f"PhotoSort 실행 환경: {'개발' if is_dev_mode else '배포'}, 로그 레벨: {logging.getLevelName(log_level)}")
-    
-    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.Floor)
+
+    # QApplication 생성 전에 환경 변수를 설정하여 DPI 스케일링을 비활성화합니다.
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
 
     # 번역 데이터 초기화
     translations = {
@@ -15166,8 +15129,8 @@ def main():
         "초기화 완료": "Reset Complete",
         "모든 카메라의 RAW 처리 방식 설정이 초기화되었습니다.": "RAW processing settings for all cameras have been reset.",
         "로드된 파일과 현재 작업 상태를 초기화하시겠습니까?": "Are you sure you want to reset loaded files and the current working state?",
-        "뷰포트 이동 속도": "Viewport Move Speed",
-        "세션 저장 및 불러오기 🖜": "Save/Load Session 🖜", # 텍스트 링크용 (🖜 아이콘은 시스템/폰트 따라 다를 수 있음)
+        "뷰포트 이동 속도 ⓘ": "Viewport Move Speed ⓘ",
+        "사진 확대 중 Shift + WASD 또는 방향키로 뷰포트(확대 부분)를 이동할 때의 속도입니다.": "This is the speed at which the viewport (the zoomed-in area) moves\nwhen you use Shift + WASD or the arrow keys while an image is magnified.",
         "세션 관리": "Session Management", # 팝업창 제목
         "현재 세션 저장": "Save Current Session",
         "세션 이름": "Session Name",
