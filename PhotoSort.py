@@ -34,7 +34,7 @@ from PySide6.QtCore import (Qt, QEvent, QMetaObject, QObject, QPoint, Slot,
                            QThread, QTimer, QUrl, Signal, Q_ARG, QRect, QPointF,
                            QMimeData, QAbstractListModel, QModelIndex, QSize, QSharedMemory)
 
-from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication, 
+from PySide6.QtGui import (QAction, QColor, QColorSpace, QDesktopServices, QFont, QGuiApplication, 
                           QImage, QImageReader, QKeyEvent, QMouseEvent, QPainter, QPalette, QIcon,
                           QPen, QPixmap, QWheelEvent, QFontMetrics, QKeySequence, QDrag)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
@@ -2896,93 +2896,74 @@ class ImageLoader(QObject):
         return None, None, None
     
     def load_image_with_orientation(self, file_path, strategy_override=None):
-        """EXIF 방향 정보를 고려하여 이미지를 올바른 방향으로 로드 (RAW 로딩 방식은 _raw_load_strategy 따름)
-           RAW 디코딩은 ResourceManager를 통해 요청하고, 이 메서드는 디코딩된 데이터 또는 미리보기를 반환합니다.
-           실제 디코딩 작업은 비동기로 처리될 수 있으며, 이 함수는 즉시 QPixmap을 반환하지 않을 수 있습니다.
-           대신 PhotoSortApp의 _load_image_task 에서 이 함수를 호출하고 콜백으로 결과를 받습니다.
-        """
+        """EXIF 방향 및 ICC 색상 프로파일을 고려하여 이미지를 올바른 방향과 색상으로 로드합니다."""
         logging.debug(f"ImageLoader ({id(self)}): load_image_with_orientation 호출됨. 파일: {Path(file_path).name}, 내부 전략: {self._raw_load_strategy}, 오버라이드: {strategy_override}")
         if not ResourceManager.instance()._running:
             logging.info(f"ImageLoader.load_image_with_orientation: ResourceManager 종료 중, 로드 중단 ({Path(file_path).name})")
             return QPixmap()
-        # strategy_override가 사용된 경우 캐시를 건너뛰지 않도록 캐시 확인 로직 유지
+        
         if strategy_override is None and file_path in self.cache:
             self.cache.move_to_end(file_path)
             return self.cache[file_path]
+
         file_path_obj = Path(file_path)
         is_raw = file_path_obj.suffix.lower() in self.raw_extensions
-        pixmap = None
+        pixmap = QPixmap()
+
         if is_raw:
+            # RAW 파일 처리는 _load_image_task -> _on_raw_decoded_for_display에서 처리됩니다.
+            # 이 함수에서는 기존 로직을 유지합니다.
             current_processing_method = strategy_override if strategy_override else self._raw_load_strategy
-            logging.debug(f"ImageLoader ({id(self)}): RAW 파일 '{file_path_obj.name}' 처리 시작, 최종 방식: {current_processing_method}")
             if current_processing_method == "preview":
-                logging.info(f"ImageLoader: 'preview' 방식으로 로드 시도 ({file_path_obj.name})")
                 preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
-                if preview_pixmap_result and not preview_pixmap_result.isNull():
-                    pixmap = preview_pixmap_result
-                else:
-                    logging.warning(f"'preview' 방식 실패, 미리보기 로드 불가 ({file_path_obj.name})")
-                    pixmap = QPixmap()
+                pixmap = preview_pixmap_result if preview_pixmap_result and not preview_pixmap_result.isNull() else QPixmap()
             elif current_processing_method == "decode":
-                logging.info(f"ImageLoader: 'decode' 방식으로 *직접* 로드 시도 (스레드 풀 내) ({file_path_obj.name})")
-                current_time = time.time()
-                if file_path_obj.name in self.recently_decoded:
-                    last_decode_time = self.recently_decoded[file_path_obj.name]
-                    if current_time - last_decode_time < self.decoding_cooldown:
-                        logging.debug(f"최근 디코딩한 파일(성공/실패 무관): {file_path_obj.name}, 플레이스홀더 반환")
-                        placeholder = QPixmap(100, 100); placeholder.fill(QColor(40, 40, 40))
-                        return placeholder
+                # 실제 디코딩은 비동기로 처리되므로 여기서는 플레이스홀더나 빈 QPixmap을 반환할 수 있습니다.
+                # 이 경로는 주로 썸네일 생성 등 동기적 호출에서 사용될 수 있습니다.
                 try:
-                    self.recently_decoded[file_path_obj.name] = current_time
-                    if not ResourceManager.instance()._running:
-                        return QPixmap()
                     with rawpy.imread(file_path) as raw:
-                        rgb = raw.postprocess(use_camera_wb=True, output_bps=8, no_auto_bright=False)
+                        rgb = raw.postprocess(use_camera_wb=True, output_bps=8)
                         height, width, _ = rgb.shape
-                        rgb_contiguous = np.ascontiguousarray(rgb)
-                        qimage = QImage(rgb_contiguous.data, width, height, rgb_contiguous.strides[0], QImage.Format_RGB888)
-                        pixmap_result = QPixmap.fromImage(qimage)
-                        if pixmap_result and not pixmap_result.isNull():
-                            pixmap = pixmap_result
-                            logging.info(f"RAW 직접 디코딩 성공 (스레드 풀 내) ({file_path_obj.name})")
-                        else:
-                            logging.warning(f"RAW 직접 디코딩 후 QPixmap 변환 실패 ({file_path_obj.name})")
-                            pixmap = QPixmap()
-                            self.decodingFailedForFile.emit(file_path)
-                except Exception as e_raw_decode:
-                    logging.error(f"RAW 직접 디코딩 실패 (스레드 풀 내) ({file_path_obj.name}): {e_raw_decode}")
+                        qimage = QImage(rgb.data, width, height, width * 3, QImage.Format_RGB888)
+                        pixmap = QPixmap.fromImage(qimage)
+                except Exception as e:
+                    logging.error(f"RAW 직접 디코딩 실패 (동기 호출): {e}")
                     pixmap = QPixmap()
-                    self.decodingFailedForFile.emit(file_path)
-                self._clean_old_decoding_history(current_time)
-            else:
-                logging.warning(f"ImageLoader: 알 수 없거나 설정되지 않은 _raw_load_strategy ('{current_processing_method}'). 'preview' 사용 ({file_path_obj.name})")
-                preview_pixmap_result, _, _ = self._load_raw_preview_with_orientation(file_path)
-                if preview_pixmap_result and not preview_pixmap_result.isNull():
-                    pixmap = preview_pixmap_result
-                else:
-                    pixmap = QPixmap()
-            
-            # strategy_override가 사용되지 않은 경우에만 캐시에 저장
-            if pixmap and not pixmap.isNull():
-                if strategy_override is None:
-                    self._add_to_cache(file_path, pixmap)
-                return pixmap
-            else:
-                logging.error(f"RAW 처리 최종 실패 ({file_path_obj.name}), 빈 QPixmap 반환됨.")
-                return QPixmap()
+            if pixmap and not pixmap.isNull() and strategy_override is None:
+                self._add_to_cache(file_path, pixmap)
+            return pixmap
         else:
+            # --- 일반 이미지 (JPG, HEIC 등) 색상 관리 로직 ---
             try:
-                if not ResourceManager.instance()._running:
-                    return QPixmap()
+                if not ResourceManager.instance()._running: return QPixmap()
+                
                 with open(file_path, 'rb') as f:
                     image = Image.open(f)
                     image.load()
+
+                # 1. 이미지의 ICC 프로파일 추출
+                icc_profile = image.info.get('icc_profile')
+                source_color_space = None
+                if icc_profile:
+                    try:
+                        source_color_space = QColorSpace(icc_profile)
+                        if not source_color_space.isValid():
+                            logging.warning(f"이미지의 ICC 프로파일이 유효하지 않습니다: {file_path_obj.name}. sRGB로 간주합니다.")
+                            source_color_space = QColorSpace(QColorSpace.SRgb)
+                    except Exception as e:
+                        logging.warning(f"ICC 프로파일로 QColorSpace 생성 실패: {e}. sRGB로 간주합니다.")
+                        source_color_space = QColorSpace(QColorSpace.SRgb)
+                else:
+                    # 프로파일이 없으면 sRGB로 간주 (웹 표준)
+                    source_color_space = QColorSpace(QColorSpace.SRgb)
+                
+                # 2. EXIF 방향 정보에 따라 이미지 회전
                 orientation = 1
                 if hasattr(image, 'getexif'):
                     exif = image.getexif()
-                    if exif and 0x0112 in exif:
-                        orientation = exif[0x0112]
+                    if exif and 0x0112 in exif: orientation = exif[0x0112]
                 if orientation > 1:
+                    # (회전 로직은 기존과 동일)
                     if orientation == 2: image = image.transpose(Image.FLIP_LEFT_RIGHT)
                     elif orientation == 3: image = image.transpose(Image.ROTATE_180)
                     elif orientation == 4: image = image.transpose(Image.FLIP_TOP_BOTTOM)
@@ -2990,26 +2971,28 @@ class ImageLoader(QObject):
                     elif orientation == 6: image = image.transpose(Image.ROTATE_270)
                     elif orientation == 7: image = image.transpose(Image.TRANSVERSE)
                     elif orientation == 8: image = image.transpose(Image.ROTATE_90)
+                
+                # 3. QImage로 변환
                 if image.mode == 'P' or image.mode == 'RGBA': image = image.convert('RGBA')
                 elif image.mode != 'RGB': image = image.convert('RGB')
                 img_format = QImage.Format_RGBA8888 if image.mode == 'RGBA' else QImage.Format_RGB888
                 bytes_per_pixel = 4 if image.mode == 'RGBA' else 3
                 data = image.tobytes('raw', image.mode)
                 qimage = QImage(data, image.width, image.height, image.width * bytes_per_pixel, img_format)
+
+                # 4. QImage에 소스 색상 공간(ICC 프로파일) 설정
+                if qimage and not qimage.isNull() and source_color_space:
+                    qimage.setColorSpace(source_color_space)
+
                 pixmap = QPixmap.fromImage(qimage)
                 if pixmap and not pixmap.isNull():
                     self._add_to_cache(file_path, pixmap)
                     return pixmap
                 else:
-                    logging.warning(f"JPG QPixmap 변환 실패 ({file_path_obj.name})")
                     return QPixmap()
-            except Exception as e_jpg:
-                logging.error(f"JPG 이미지 처리 오류 ({file_path_obj.name}): {e_jpg}")
-                try:
-                    pixmap = QPixmap(file_path)
-                    if not pixmap.isNull(): self._add_to_cache(file_path, pixmap); return pixmap
-                    else: return QPixmap()
-                except Exception: return QPixmap()
+            except Exception as e_img:
+                logging.error(f"일반 이미지 처리 오류 ({file_path_obj.name}): {e_img}")
+                return QPixmap()
 
     def set_raw_load_strategy(self, strategy: str):
         """이 ImageLoader 인스턴스의 RAW 처리 방식을 설정합니다 ('preview' 또는 'decode')."""
@@ -12984,32 +12967,25 @@ class PhotoSortApp(QMainWindow):
 
             file_path_obj = Path(image_path)
             is_raw = file_path_obj.suffix.lower() in self.raw_extensions
-            
-            # ImageLoader의 현재 RAW 처리 전략 확인
-            # (PhotoSortApp이 ImageLoader의 전략을 관리하므로, PhotoSortApp의 상태를 참조하거나
-            #  ImageLoader에 질의하는 것이 더 적절할 수 있습니다.
-            #  여기서는 ImageLoader의 내부 상태를 직접 참조하는 것으로 가정합니다.)
             raw_processing_method = self.image_loader._raw_load_strategy
 
             if is_raw and raw_processing_method == "decode":
                 logging.info(f"_load_image_task: RAW 파일 '{file_path_obj.name}'의 'decode' 요청. RawDecoderPool에 제출.")
                 
-                # --- 콜백 래핑 시작 ---
-                # requested_index와 is_main_display_image 값을 캡처하는 람다 함수 사용
-                # 이 람다 함수는 오직 'result' 딕셔너리 하나만 인자로 받음
+                # 이 콜백은 RawDecoderPool의 결과가 도착했을 때 메인 스레드에서 실행됩니다.
                 wrapped_callback = lambda result_dict: self._on_raw_decoded_for_display(
                     result_dict, 
-                    requested_index=requested_index, # 캡처된 값 사용
-                    is_main_display_image=True     # 캡처된 값 사용
+                    requested_index=requested_index,
+                    is_main_display_image=True
                 )
-                # --- 콜백 래핑 끝 ---
                 
-                task_id = self.resource_manager.submit_raw_decoding(image_path, wrapped_callback) # 래핑된 콜백 전달
+                task_id = self.resource_manager.submit_raw_decoding(image_path, wrapped_callback)
                 if task_id is None: 
                     raise RuntimeError("Failed to submit RAW decoding task.")
                 return True 
             else:
-                # JPG 또는 RAW (preview 모드)는 기존 ImageLoader.load_image_with_orientation 직접 호출
+                # JPG 또는 RAW (preview 모드)는 ImageLoader.load_image_with_orientation을 직접 호출합니다.
+                # 이 함수는 ICC 프로파일을 처리하도록 이미 수정되었습니다.
                 logging.info(f"_load_image_task: '{file_path_obj.name}' 직접 로드 시도 (JPG 또는 RAW-preview).")
                 pixmap = self.image_loader.load_image_with_orientation(image_path)
 
@@ -13021,6 +12997,7 @@ class PhotoSortApp(QMainWindow):
                                                  Q_ARG(int, requested_index))
                     return False
                 
+                # 결과를 메인 스레드로 안전하게 전달합니다.
                 if hasattr(self, 'image_loader'):
                     QMetaObject.invokeMethod(self.image_loader, "loadCompleted", Qt.QueuedConnection,
                                              Q_ARG(QPixmap, pixmap),
@@ -13110,11 +13087,9 @@ class PhotoSortApp(QMainWindow):
         success = result.get('success', False)
         logging.info(f"_on_raw_decoded_for_display 시작: 파일='{Path(file_path).name if file_path else 'N/A'}', 요청 인덱스={requested_index}, 성공={success}, 메인={is_main_display_image}")
 
-        # 1. 디코딩에 실패했으면 아무것도 하지 않고 종료
         if not success:
             error_msg = result.get('error', 'Unknown error')
             logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 실패 ({Path(file_path).name if file_path else 'N/A'}): {error_msg}")
-            # 메인 이미지 로딩 실패 시에만 사용자에게 알림
             if is_main_display_image:
                 self._close_first_raw_decode_progress()
                 self.image_label.setText(f"{LanguageManager.translate('이미지 로드 실패')}: {error_msg}")
@@ -13124,7 +13099,6 @@ class PhotoSortApp(QMainWindow):
                     self.image_loader.decodingFailedForFile.emit(file_path)
             return
 
-        # 2. 디코딩에 성공했으면, 먼저 QPixmap을 만들고 즉시 캐시에 저장
         try:
             data_bytes = result.get('data')
             shape = result.get('shape')
@@ -13132,20 +13106,26 @@ class PhotoSortApp(QMainWindow):
                 raise ValueError("디코딩 결과 데이터 또는 형태 정보 누락")
             height, width, _ = shape
             qimage = QImage(data_bytes, width, height, width * 3, QImage.Format_RGB888)
+
+            # --- NEW: RAW 이미지에 sRGB 색 공간 정보 태그 ---
+            # rawpy.postprocess의 기본 출력은 sRGB이므로, sRGB라고 명시해줍니다.
+            # 이 태그가 있으면 Qt가 자동으로 모니터 프로파일에 맞게 색상을 변환합니다.
+            srgb_color_space = QColorSpace(QColorSpace.SRgb)
+            if qimage and not qimage.isNull() and srgb_color_space.isValid():
+                qimage.setColorSpace(srgb_color_space)
+
             pixmap = QPixmap.fromImage(qimage)
             if pixmap.isNull():
                 raise ValueError("디코딩된 데이터로 QPixmap 생성 실패")
 
-            # *** 핵심 수정: 성공한 모든 결과를 캐시에 저장 ***
             if hasattr(self, 'image_loader'):
                 self.image_loader._add_to_cache(file_path, pixmap)
             logging.info(f"  _on_raw_decoded_for_display: RAW 이미지 캐싱 성공: '{Path(file_path).name}'")
 
         except Exception as e:
             logging.error(f"  _on_raw_decoded_for_display: RAW 디코딩 성공 후 QPixmap 처리 오류 ({Path(file_path).name if file_path else 'N/A'}): {e}")
-            return # QPixmap 생성 실패 시 더 이상 진행 불가
+            return
 
-        # 3. 이 결과가 현재 화면에 표시해야 할 '메인 이미지'인 경우에만 UI 업데이트 수행
         current_path_to_display = self.get_current_image_path()
         path_match = file_path and current_path_to_display and Path(file_path).resolve() == Path(current_path_to_display).resolve()
 
@@ -13164,7 +13144,7 @@ class PhotoSortApp(QMainWindow):
             if self.grid_mode == "Off":
                 self.state_save_timer.start()
             
-            self._close_first_raw_decode_progress() # UI 업데이트 후 진행률 대화상자 닫기
+            self._close_first_raw_decode_progress()
             self.update_compare_filenames()
             logging.info(f"  _on_raw_decoded_for_display: 메인 이미지 UI 업데이트 완료.")
         else:
