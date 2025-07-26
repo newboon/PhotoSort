@@ -8467,8 +8467,8 @@ class PhotoSortApp(QMainWindow):
         info_text = f"""
         <h2 style="color: {accent_color};">PhotoSort</h2>
         <p style="margin-bottom: {version_margin}px;">Version: 25.07.15</p>
-        <p>{LanguageManager.translate("개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.")}</p>
-        <p>{LanguageManager.translate("상업적 이용은 허용되지 않습니다.")}</p>
+        <p>{LanguageManager.translate("자유롭게 사용, 수정, 배포할 수 있는 오픈소스 소프트웨어입니다.")}</p>
+        <p>{LanguageManager.translate("AGPL-3.0 라이선스 조건에 따라 소스 코드 공개 의무가 있습니다.")}</p>
         <p style="margin-bottom: {paragraph_margin}px;">{LanguageManager.translate("이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.")}</p>
         <p style="margin-bottom: {bottom_margin}px;">Copyright © 2025 newboon</p>
         <p>
@@ -15095,8 +15095,8 @@ def main():
         "우측": "Right",
         "닫기": "Close",
         "단축키 확인": "View Shortcuts",
-        "개인적인 용도로 자유롭게 사용할 수 있는 무료 소프트웨어입니다.": "This is free software that you can use freely for personal purposes.",
-        "상업적 이용은 허용되지 않습니다.": "Commercial use is not permitted.",
+        "자유롭게 사용, 수정, 배포할 수 있는 오픈소스 소프트웨어입니다.": "Free and open-source software that can be freely used, modified, and distributed.",
+        "AGPL-3.0 라이선스 조건에 따라 소스 코드 공개 의무가 있습니다.": "Source code disclosure is required under AGPL-3.0 license terms.",
         "이 프로그램이 마음에 드신다면, 커피 한 잔으로 응원해 주세요.": "If you truly enjoy this app, consider supporting it with a cup of coffee!",
         "QR 코드": "QR Code",
         "후원 QR 코드": "Donation QR Code",
