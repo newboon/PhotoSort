@@ -9805,7 +9805,7 @@ class PhotoSortApp(QMainWindow):
         dont_ask_checkbox.setStyleSheet(checkbox_style) # checkbox_style은 이미 정의되어 있다고 가정
 
         confirm_button = QPushButton(LanguageManager.translate("확인"))
-        confirm_button.setStyleSheet(self.load_button.styleSheet()) # 기존 버튼 스타일 재활용
+        confirm_button.setStyleSheet(ThemeManager.generate_main_button_style())
         confirm_button.clicked.connect(dialog.accept)
         
         chosen_method_on_accept = None # 확인 버튼 클릭 시 선택된 메소드 저장용
