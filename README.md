@@ -2,7 +2,6 @@
 <br><br><br><br><br><br><br>
 > ⚠️ **Important Notice:** This app has been discontinued. Development has moved to a new project called VibeCulling. Please refer to [https://github.com/newboon/VibeCulling](https://github.com/newboon/VibeCulling).
 <br><br><br><br><br><br><br>
-**Effortless Photo Sorting for Busy People!**
 
 ![PhotoSort Screenshot](./images/photosort_main.png)
 
